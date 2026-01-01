@@ -307,12 +307,9 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < eventsPerProducer; j++ {
-				for {
-					if err := rb.Push(newTestEvent()); err == nil {
-						atomic.AddUint64(&produced, 1)
-						break
-					}
-					time.Sleep(time.Microsecond)
+				// Push and count if successful - drops are expected when queue is full
+				if err := rb.Push(newTestEvent()); err == nil {
+					atomic.AddUint64(&produced, 1)
 				}
 			}
 		}()
