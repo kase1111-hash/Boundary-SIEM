@@ -4,9 +4,45 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
+
+// testConfig creates a test config with isolated persistence directory.
+func testConfig(t *testing.T) *StateManagerConfig {
+	t.Helper()
+	tmpDir := filepath.Join(os.TempDir(), "commitment-test-"+t.Name())
+	os.RemoveAll(tmpDir) // Clean up any previous test data
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	return &StateManagerConfig{
+		PersistPath:                    tmpDir,
+		MaxTransitionHistory:           100,
+		RequireApprovalForDeescalation: false,
+		HashAlgorithm:                  "sha256",
+		AutoCheckpoint:                 false,
+		CheckpointInterval:             1 * time.Hour,
+		RequirePersistence:             true,
+		PersistenceVerifyRetries:       3,
+		SyncToDisk:                     true,
+	}
+}
+
+// testConfigNoPersistence creates a test config without persistence.
+func testConfigNoPersistence(t *testing.T) *StateManagerConfig {
+	t.Helper()
+	return &StateManagerConfig{
+		PersistPath:                    "", // No persistence
+		MaxTransitionHistory:           100,
+		RequireApprovalForDeescalation: false,
+		HashAlgorithm:                  "sha256",
+		AutoCheckpoint:                 false,
+		CheckpointInterval:             1 * time.Hour,
+		RequirePersistence:             false,
+		PersistenceVerifyRetries:       0,
+		SyncToDisk:                     false,
+	}
+}
 
 func TestSecurityMode_Level(t *testing.T) {
 	tests := []struct {
@@ -321,7 +357,7 @@ func TestNewStateManager(t *testing.T) {
 }
 
 func TestNewStateManager_DefaultConfig(t *testing.T) {
-	sm, err := NewStateManager(nil, nil)
+	sm, err := NewStateManager(testConfigNoPersistence(t), nil)
 	if err != nil {
 		t.Fatalf("NewStateManager() error = %v", err)
 	}
@@ -332,7 +368,7 @@ func TestNewStateManager_DefaultConfig(t *testing.T) {
 }
 
 func TestStateManager_SetGetState(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 
 	sm.SetState("key1", "value1")
 	sm.SetState("key2", "value2")
@@ -362,7 +398,7 @@ func TestStateManager_SetGetState(t *testing.T) {
 }
 
 func TestStateManager_BeginTransition(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	transition, err := sm.BeginTransition(ctx, ModeElevated, "test", "admin")
@@ -391,7 +427,7 @@ func TestStateManager_BeginTransition(t *testing.T) {
 }
 
 func TestStateManager_CommitTransition(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	transition, _ := sm.BeginTransition(ctx, ModeElevated, "test", "admin")
@@ -422,7 +458,7 @@ func TestStateManager_CommitTransition(t *testing.T) {
 }
 
 func TestStateManager_CommitTransition_NoActive(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	err := sm.CommitTransition(ctx)
@@ -432,7 +468,7 @@ func TestStateManager_CommitTransition_NoActive(t *testing.T) {
 }
 
 func TestStateManager_RollbackTransition(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	sm.BeginTransition(ctx, ModeElevated, "test", "admin")
@@ -455,7 +491,7 @@ func TestStateManager_RollbackTransition(t *testing.T) {
 }
 
 func TestStateManager_RollbackTransition_NoActive(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	err := sm.RollbackTransition(ctx, "no transition")
@@ -511,7 +547,7 @@ func TestStateManager_ApproveTransition(t *testing.T) {
 }
 
 func TestStateManager_ApproveTransition_NoActive(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	err := sm.ApproveTransition(ctx, "some-id", "approver")
@@ -521,7 +557,7 @@ func TestStateManager_ApproveTransition_NoActive(t *testing.T) {
 }
 
 func TestStateManager_CreateCheckpoint(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	initialLen := len(sm.GetCommitmentChain().Commitments)
@@ -538,7 +574,7 @@ func TestStateManager_CreateCheckpoint(t *testing.T) {
 }
 
 func TestStateManager_VerifyChain(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	// Do some operations
@@ -555,7 +591,7 @@ func TestStateManager_VerifyChain(t *testing.T) {
 }
 
 func TestStateManager_VerifyCurrentState(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	// Create checkpoint
@@ -598,7 +634,7 @@ func TestStateManager_GetTransitionHistory(t *testing.T) {
 }
 
 func TestStateManager_ExportChain(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	sm.CreateCheckpoint(ctx, "test")
@@ -614,7 +650,7 @@ func TestStateManager_ExportChain(t *testing.T) {
 }
 
 func TestStateManager_Callbacks(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	startCalled := false
@@ -643,7 +679,7 @@ func TestStateManager_Callbacks(t *testing.T) {
 }
 
 func TestStateManager_GetActiveTransition(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	// No active transition
@@ -669,7 +705,7 @@ func TestStateManager_GetActiveTransition(t *testing.T) {
 }
 
 func TestStateManager_GenerateStateProof(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	sm.SetState("key1", "value1")
@@ -703,7 +739,7 @@ func TestStateManager_GenerateStateProof(t *testing.T) {
 }
 
 func TestStateManager_VerifyStateProof(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	sm.SetState("test", "value")
@@ -813,7 +849,7 @@ func TestComputeGenesisHash(t *testing.T) {
 }
 
 func TestStateManager_MerkleRoot(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	// Empty state should have empty merkle root
@@ -834,7 +870,7 @@ func TestStateManager_MerkleRoot(t *testing.T) {
 }
 
 func TestStateManager_ConcurrentAccess(t *testing.T) {
-	sm, _ := NewStateManager(nil, nil)
+	sm, _ := NewStateManager(testConfigNoPersistence(t), nil)
 	ctx := context.Background()
 
 	done := make(chan bool, 100)
@@ -866,5 +902,182 @@ func TestStateManager_ConcurrentAccess(t *testing.T) {
 	// Verify chain is still valid
 	if err := sm.VerifyChain(); err != nil {
 		t.Errorf("Chain invalid after concurrent access: %v", err)
+	}
+}
+
+func TestStateManager_Persistence(t *testing.T) {
+	config := testConfig(t)
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Set some state
+	sm.SetState("key1", "value1")
+	sm.SetState("key2", "value2")
+
+	// Transition to elevated mode
+	_, err = sm.BeginTransition(ctx, ModeElevated, "test", "admin")
+	if err != nil {
+		t.Fatalf("BeginTransition() error = %v", err)
+	}
+
+	err = sm.CommitTransition(ctx)
+	if err != nil {
+		t.Fatalf("CommitTransition() error = %v", err)
+	}
+
+	// Force persist
+	err = sm.ForcePersist(ctx)
+	if err != nil {
+		t.Fatalf("ForcePersist() error = %v", err)
+	}
+
+	// Check if persisted
+	persisted, err := sm.IsPersisted()
+	if err != nil {
+		t.Fatalf("IsPersisted() error = %v", err)
+	}
+	if !persisted {
+		t.Error("Expected state to be persisted")
+	}
+}
+
+func TestStateManager_PersistenceRecovery(t *testing.T) {
+	config := testConfig(t)
+	ctx := context.Background()
+
+	// Create first manager and do some transitions
+	sm1, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	sm1.SetState("recovery_key", "recovery_value")
+
+	_, err = sm1.BeginTransition(ctx, ModeLockdown, "test", "admin")
+	if err != nil {
+		t.Fatalf("BeginTransition() error = %v", err)
+	}
+
+	err = sm1.CommitTransition(ctx)
+	if err != nil {
+		t.Fatalf("CommitTransition() error = %v", err)
+	}
+
+	// Get state hash for comparison
+	chain1 := sm1.GetCommitmentChain()
+	chainLen := len(chain1.Commitments)
+	mode1 := sm1.GetCurrentMode()
+
+	// Create second manager - should recover state
+	sm2, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() second error = %v", err)
+	}
+
+	// Verify recovered state
+	if sm2.GetCurrentMode() != mode1 {
+		t.Errorf("Recovered mode = %s, want %s", sm2.GetCurrentMode(), mode1)
+	}
+
+	chain2 := sm2.GetCommitmentChain()
+	if len(chain2.Commitments) != chainLen {
+		t.Errorf("Recovered chain length = %d, want %d", len(chain2.Commitments), chainLen)
+	}
+
+	val, ok := sm2.GetState("recovery_key")
+	if !ok || val != "recovery_value" {
+		t.Errorf("Recovered state key = %q, want 'recovery_value'", val)
+	}
+}
+
+func TestStateManager_PersistenceVerification(t *testing.T) {
+	config := testConfig(t)
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Transition with persistence required
+	_, err = sm.BeginTransition(ctx, ModeElevated, "test", "admin")
+	if err != nil {
+		t.Fatalf("BeginTransition() error = %v", err)
+	}
+
+	err = sm.CommitTransition(ctx)
+	if err != nil {
+		t.Fatalf("CommitTransition() error = %v", err)
+	}
+
+	// Verify state was persisted
+	persisted, err := sm.IsPersisted()
+	if err != nil {
+		t.Fatalf("IsPersisted() error = %v", err)
+	}
+
+	if !persisted {
+		t.Error("State should be persisted after commit with RequirePersistence=true")
+	}
+}
+
+func TestStateManager_CheckpointPersistence(t *testing.T) {
+	config := testConfig(t)
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Set state and create checkpoint
+	sm.SetState("checkpoint_key", "checkpoint_value")
+
+	err = sm.CreateCheckpoint(ctx, "manual checkpoint")
+	if err != nil {
+		t.Fatalf("CreateCheckpoint() error = %v", err)
+	}
+
+	// Verify chain has checkpoint
+	chain := sm.GetCommitmentChain()
+	found := false
+	for _, c := range chain.Commitments {
+		if c.CommitmentType == "checkpoint" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected checkpoint in commitment chain")
+	}
+}
+
+func TestPersistedState_ChecksumVerification(t *testing.T) {
+	config := testConfig(t)
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Create some state
+	sm.SetState("checksum_key", "checksum_value")
+	err = sm.ForcePersist(ctx)
+	if err != nil {
+		t.Fatalf("ForcePersist() error = %v", err)
+	}
+
+	// Verify checksum is computed
+	persisted, err := sm.IsPersisted()
+	if err != nil {
+		t.Fatalf("IsPersisted() error = %v", err)
+	}
+	if !persisted {
+		t.Error("State should be persisted and verified")
 	}
 }

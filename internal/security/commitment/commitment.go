@@ -25,12 +25,14 @@ import (
 
 // Common errors.
 var (
-	ErrInvalidCommitment   = errors.New("invalid commitment")
-	ErrCommitmentMismatch  = errors.New("commitment verification failed")
-	ErrChainBroken         = errors.New("commitment chain broken")
-	ErrNoActiveTransition  = errors.New("no active mode transition")
+	ErrInvalidCommitment    = errors.New("invalid commitment")
+	ErrCommitmentMismatch   = errors.New("commitment verification failed")
+	ErrChainBroken          = errors.New("commitment chain broken")
+	ErrNoActiveTransition   = errors.New("no active mode transition")
 	ErrTransitionInProgress = errors.New("mode transition already in progress")
-	ErrStateModified       = errors.New("state was modified during transition")
+	ErrStateModified        = errors.New("state was modified during transition")
+	ErrPersistenceFailed    = errors.New("persistence verification failed")
+	ErrCorruptedState       = errors.New("persisted state is corrupted")
 )
 
 // SecurityMode represents a security mode.
@@ -269,6 +271,22 @@ type StateManagerConfig struct {
 	AutoCheckpoint bool
 	// CheckpointInterval is the interval between auto checkpoints.
 	CheckpointInterval time.Duration
+	// RequirePersistence requires successful persistence before completing transitions.
+	RequirePersistence bool
+	// PersistenceVerifyRetries is the number of retries for persistence verification.
+	PersistenceVerifyRetries int
+	// SyncToDisk forces fsync after writes for durability.
+	SyncToDisk bool
+}
+
+// PersistedState represents the complete persisted state.
+type PersistedState struct {
+	State       *State           `json:"state"`
+	Chain       *CommitmentChain `json:"chain"`
+	Transitions []ModeTransition `json:"transitions"`
+	Checksum    string           `json:"checksum"`
+	Version     int              `json:"version"`
+	Timestamp   time.Time        `json:"timestamp"`
 }
 
 // DefaultStateManagerConfig returns sensible defaults.
@@ -280,6 +298,9 @@ func DefaultStateManagerConfig() *StateManagerConfig {
 		HashAlgorithm:                  "sha256",
 		AutoCheckpoint:                 true,
 		CheckpointInterval:             1 * time.Hour,
+		RequirePersistence:             true,
+		PersistenceVerifyRetries:       3,
+		SyncToDisk:                     true,
 	}
 }
 
@@ -322,14 +343,36 @@ func NewStateManager(config *StateManagerConfig, logger *slog.Logger) (*StateMan
 		logger:      logger,
 	}
 
-	// Create initial commitment
-	if err := sm.createCheckpoint("initial"); err != nil {
-		logger.Warn("failed to create initial checkpoint", "error", err)
+	// Try to load persisted state
+	if ps, err := sm.loadPersistedState(); err != nil {
+		logger.Warn("failed to load persisted state, starting fresh",
+			"error", err)
+	} else if ps != nil {
+		// Restore state from persistence
+		if ps.State != nil {
+			sm.currentState = ps.State
+			sm.currentMode = ps.State.Mode
+		}
+		if ps.Chain != nil {
+			sm.chain = ps.Chain
+		}
+		if ps.Transitions != nil {
+			sm.transitions = ps.Transitions
+		}
+		logger.Info("restored state from persistence",
+			"mode", sm.currentMode,
+			"chain_length", len(sm.chain.Commitments),
+			"transitions", len(sm.transitions))
+	} else {
+		// No persisted state - create initial commitment
+		if err := sm.createCheckpoint("initial"); err != nil {
+			logger.Warn("failed to create initial checkpoint", "error", err)
+		}
 	}
 
 	logger.Info("state manager initialized",
 		"mode", sm.currentMode,
-		"genesis_hash", genesisHash[:16]+"...")
+		"genesis_hash", sm.chain.GenesisHash[:16]+"...")
 
 	return sm, nil
 }
@@ -355,6 +398,226 @@ func loadOrGenerateKey(basePath string) ([]byte, error) {
 	}
 
 	return key, nil
+}
+
+// persistState persists the current state to disk with verification.
+func (sm *StateManager) persistState() error {
+	if sm.config.PersistPath == "" {
+		return nil // Persistence disabled
+	}
+
+	// Create persisted state structure
+	ps := &PersistedState{
+		State:       sm.currentState,
+		Chain:       sm.chain,
+		Transitions: sm.transitions,
+		Version:     1,
+		Timestamp:   time.Now(),
+	}
+
+	// Compute checksum before marshaling
+	ps.Checksum = sm.computeStateChecksum(ps)
+
+	// Marshal to JSON
+	data, err := json.MarshalIndent(ps, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal state: %w", err)
+	}
+
+	// Ensure directory exists
+	if err := os.MkdirAll(sm.config.PersistPath, 0700); err != nil {
+		return fmt.Errorf("failed to create persist directory: %w", err)
+	}
+
+	statePath := filepath.Join(sm.config.PersistPath, "state.json")
+	tempPath := statePath + ".tmp"
+	backupPath := statePath + ".bak"
+
+	// Write to temp file first (atomic write pattern)
+	if err := sm.writeFileWithSync(tempPath, data); err != nil {
+		return fmt.Errorf("failed to write temp state file: %w", err)
+	}
+
+	// Backup existing file if present
+	if _, err := os.Stat(statePath); err == nil {
+		if err := os.Rename(statePath, backupPath); err != nil {
+			sm.logger.Warn("failed to backup state file", "error", err)
+		}
+	}
+
+	// Rename temp to final (atomic on POSIX)
+	if err := os.Rename(tempPath, statePath); err != nil {
+		// Try to restore backup
+		if _, bakErr := os.Stat(backupPath); bakErr == nil {
+			os.Rename(backupPath, statePath)
+		}
+		return fmt.Errorf("failed to finalize state file: %w", err)
+	}
+
+	sm.logger.Debug("state persisted successfully",
+		"path", statePath,
+		"checksum", ps.Checksum[:16]+"...")
+
+	return nil
+}
+
+// writeFileWithSync writes data to a file with optional fsync.
+func (sm *StateManager) writeFileWithSync(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+
+	if sm.config.SyncToDisk {
+		if err := f.Sync(); err != nil {
+			return fmt.Errorf("fsync failed: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// loadPersistedState loads the persisted state from disk.
+func (sm *StateManager) loadPersistedState() (*PersistedState, error) {
+	if sm.config.PersistPath == "" {
+		return nil, nil // Persistence disabled
+	}
+
+	statePath := filepath.Join(sm.config.PersistPath, "state.json")
+
+	data, err := os.ReadFile(statePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil // No persisted state
+		}
+		return nil, fmt.Errorf("failed to read state file: %w", err)
+	}
+
+	var ps PersistedState
+	if err := json.Unmarshal(data, &ps); err != nil {
+		return nil, fmt.Errorf("%w: failed to parse state file: %v", ErrCorruptedState, err)
+	}
+
+	// Verify checksum
+	savedChecksum := ps.Checksum
+	ps.Checksum = "" // Clear for recalculation
+	expectedChecksum := sm.computeStateChecksum(&ps)
+
+	if savedChecksum != expectedChecksum {
+		return nil, fmt.Errorf("%w: checksum mismatch (expected %s, got %s)",
+			ErrCorruptedState, expectedChecksum[:16], savedChecksum[:16])
+	}
+
+	ps.Checksum = savedChecksum
+	return &ps, nil
+}
+
+// computeStateChecksum computes a checksum of the persisted state.
+func (sm *StateManager) computeStateChecksum(ps *PersistedState) string {
+	h := sha256.New()
+
+	// Hash state
+	if ps.State != nil {
+		h.Write([]byte(ps.State.Hash()))
+	}
+
+	// Hash chain
+	if ps.Chain != nil {
+		h.Write([]byte(ps.Chain.GenesisHash))
+		for _, c := range ps.Chain.Commitments {
+			h.Write([]byte(c.ID))
+			h.Write([]byte(c.StateHash))
+			h.Write([]byte(c.Signature))
+		}
+	}
+
+	// Hash transitions count (not full content for performance)
+	h.Write([]byte(fmt.Sprintf("transitions:%d", len(ps.Transitions))))
+
+	// Hash version and timestamp
+	h.Write([]byte(fmt.Sprintf("v%d", ps.Version)))
+	h.Write([]byte(ps.Timestamp.Format(time.RFC3339Nano)))
+
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// verifyPersistence verifies that the current state matches persisted state.
+func (sm *StateManager) verifyPersistence() error {
+	if sm.config.PersistPath == "" {
+		return nil // Persistence disabled
+	}
+
+	ps, err := sm.loadPersistedState()
+	if err != nil {
+		return fmt.Errorf("%w: %v", ErrPersistenceFailed, err)
+	}
+
+	if ps == nil {
+		return fmt.Errorf("%w: no persisted state found", ErrPersistenceFailed)
+	}
+
+	// Verify state hash matches
+	if ps.State != nil {
+		persistedHash := ps.State.Hash()
+		currentHash := sm.currentState.Hash()
+		if persistedHash != currentHash {
+			return fmt.Errorf("%w: state hash mismatch (persisted: %s, current: %s)",
+				ErrPersistenceFailed, persistedHash[:16], currentHash[:16])
+		}
+	}
+
+	// Verify chain length
+	if ps.Chain != nil && len(ps.Chain.Commitments) != len(sm.chain.Commitments) {
+		return fmt.Errorf("%w: chain length mismatch (persisted: %d, current: %d)",
+			ErrPersistenceFailed, len(ps.Chain.Commitments), len(sm.chain.Commitments))
+	}
+
+	return nil
+}
+
+// persistAndVerify persists state and verifies it was written correctly.
+func (sm *StateManager) persistAndVerify() error {
+	if !sm.config.RequirePersistence {
+		return sm.persistState() // Just persist, no verification
+	}
+
+	maxRetries := sm.config.PersistenceVerifyRetries
+	if maxRetries <= 0 {
+		maxRetries = 1
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		// Persist
+		if err := sm.persistState(); err != nil {
+			lastErr = err
+			sm.logger.Warn("persistence attempt failed",
+				"attempt", attempt,
+				"max_retries", maxRetries,
+				"error", err)
+			continue
+		}
+
+		// Verify
+		if err := sm.verifyPersistence(); err != nil {
+			lastErr = err
+			sm.logger.Warn("persistence verification failed",
+				"attempt", attempt,
+				"max_retries", maxRetries,
+				"error", err)
+			continue
+		}
+
+		sm.logger.Debug("persistence verified successfully", "attempt", attempt)
+		return nil
+	}
+
+	return fmt.Errorf("%w after %d attempts: %v", ErrPersistenceFailed, maxRetries, lastErr)
 }
 
 // computeGenesisHash computes the genesis hash.
@@ -568,6 +831,14 @@ func (sm *StateManager) CommitTransition(ctx context.Context) error {
 			"current_hash", currentHash[:16])
 	}
 
+	// Save previous state in case we need to rollback due to persistence failure
+	previousMode := sm.currentMode
+	previousStateMode := sm.currentState.Mode
+	previousVersion := sm.currentState.Version
+	previousTimestamp := sm.currentState.Timestamp
+	previousNonce := sm.currentState.Nonce
+	previousChainLen := len(sm.chain.Commitments)
+
 	// Apply mode change
 	sm.currentMode = transition.ToMode
 	sm.currentState.Mode = transition.ToMode
@@ -594,13 +865,51 @@ func (sm *StateManager) CommitTransition(ctx context.Context) error {
 		sm.transitions = sm.transitions[1:]
 	}
 
+	// CRITICAL: Persist and verify state before finalizing
+	// If persistence fails, we must rollback the in-memory changes
+	if sm.config.RequirePersistence && sm.config.PersistPath != "" {
+		if err := sm.persistAndVerify(); err != nil {
+			// Rollback in-memory state
+			sm.logger.Error("persistence failed, rolling back transition",
+				"transition_id", transition.ID,
+				"error", err)
+
+			// Restore previous state
+			sm.currentMode = previousMode
+			sm.currentState.Mode = previousStateMode
+			sm.currentState.Version = previousVersion
+			sm.currentState.Timestamp = previousTimestamp
+			sm.currentState.Nonce = previousNonce
+
+			// Remove added commitments
+			if len(sm.chain.Commitments) > previousChainLen {
+				sm.chain.Commitments = sm.chain.Commitments[:previousChainLen]
+			}
+
+			// Remove from history
+			if len(sm.transitions) > 0 {
+				sm.transitions = sm.transitions[:len(sm.transitions)-1]
+			}
+
+			// Mark transition as failed
+			transition.Status = "failed"
+			transition.Reason = fmt.Sprintf("persistence failed: %v", err)
+
+			return fmt.Errorf("transition failed: %w", err)
+		}
+
+		sm.logger.Info("transition state persisted and verified",
+			"transition_id", transition.ID)
+	}
+
 	sm.activeTransition = nil
 
 	sm.logger.Info("mode transition committed",
 		"transition_id", transition.ID,
 		"from_mode", transition.FromMode,
 		"to_mode", transition.ToMode,
-		"duration", transition.Duration())
+		"duration", transition.Duration(),
+		"persisted", sm.config.RequirePersistence)
 
 	if sm.onTransitionEnd != nil {
 		go sm.onTransitionEnd(transition)
@@ -655,11 +964,62 @@ func (sm *StateManager) createCheckpoint(reason string) error {
 	return nil
 }
 
-// CreateCheckpoint creates a manual checkpoint.
+// CreateCheckpoint creates a manual checkpoint with optional persistence.
 func (sm *StateManager) CreateCheckpoint(ctx context.Context, reason string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	return sm.createCheckpoint(reason)
+
+	if err := sm.createCheckpoint(reason); err != nil {
+		return err
+	}
+
+	// Persist checkpoint if required
+	if sm.config.RequirePersistence && sm.config.PersistPath != "" {
+		if err := sm.persistAndVerify(); err != nil {
+			sm.logger.Warn("failed to persist checkpoint",
+				"reason", reason,
+				"error", err)
+			// For checkpoints, we don't fail - just warn
+		}
+	}
+
+	return nil
+}
+
+// ForcePersist forces a state persistence and verification.
+// Use this to ensure critical state changes are durably stored.
+func (sm *StateManager) ForcePersist(ctx context.Context) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	return sm.persistAndVerify()
+}
+
+// IsPersisted checks if the current state is persisted and verified.
+func (sm *StateManager) IsPersisted() (bool, error) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	if sm.config.PersistPath == "" {
+		return false, nil // Persistence disabled
+	}
+
+	ps, err := sm.loadPersistedState()
+	if err != nil {
+		return false, err
+	}
+
+	if ps == nil {
+		return false, nil
+	}
+
+	// Check if persisted state matches current state
+	if ps.State != nil {
+		persistedHash := ps.State.Hash()
+		currentHash := sm.currentState.Hash()
+		return persistedHash == currentHash, nil
+	}
+
+	return false, nil
 }
 
 // VerifyChain verifies the commitment chain integrity.
