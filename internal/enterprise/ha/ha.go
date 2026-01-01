@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"boundary-siem/internal/kafka"
 )
 
 // ClusterRole defines node roles in the cluster.
@@ -333,87 +335,110 @@ func (c *Cluster) RemoveNode(nodeID string) {
 }
 
 // KafkaConfig configures Kafka for event streaming.
-type KafkaConfig struct {
-	Brokers           []string      `json:"brokers"`
-	Topic             string        `json:"topic"`
-	ConsumerGroup     string        `json:"consumer_group"`
-	Partitions        int           `json:"partitions"`
-	ReplicationFactor int           `json:"replication_factor"`
-	RetentionMs       int64         `json:"retention_ms"`
-	MaxMessageBytes   int           `json:"max_message_bytes"`
-	CompressionType   string        `json:"compression_type"`
-	SecurityProtocol  string        `json:"security_protocol"`
-	SASLMechanism     string        `json:"sasl_mechanism,omitempty"`
-	SASLUsername      string        `json:"sasl_username,omitempty"`
-	SASLPassword      string        `json:"sasl_password,omitempty"`
-}
+// This is an alias to the kafka package Config for backwards compatibility.
+type KafkaConfig = kafka.Config
 
-// KafkaProducer produces events to Kafka.
+// KafkaProducer produces events to Kafka using the real kafka-go client.
 type KafkaProducer struct {
-	config    *KafkaConfig
-	logger    *slog.Logger
-	mu        sync.Mutex
-	msgCount  int64
-	byteCount int64
+	producer *kafka.Producer
+	config   *kafka.Config
+	logger   *slog.Logger
 }
 
-// NewKafkaProducer creates a new Kafka producer.
-func NewKafkaProducer(config *KafkaConfig, logger *slog.Logger) *KafkaProducer {
-	return &KafkaProducer{
-		config: config,
-		logger: logger,
+// NewKafkaProducer creates a new Kafka producer with real Kafka connectivity.
+func NewKafkaProducer(config *kafka.Config, logger *slog.Logger) (*KafkaProducer, error) {
+	producer, err := kafka.NewProducer(config, logger)
+	if err != nil {
+		return nil, fmt.Errorf("ha: failed to create kafka producer: %w", err)
 	}
+
+	return &KafkaProducer{
+		producer: producer,
+		config:   config,
+		logger:   logger,
+	}, nil
 }
 
 // Produce sends a message to Kafka.
-func (p *KafkaProducer) Produce(key, value []byte) error {
-	p.mu.Lock()
-	p.msgCount++
-	p.byteCount += int64(len(value))
-	p.mu.Unlock()
+func (p *KafkaProducer) Produce(ctx context.Context, key, value []byte) error {
+	return p.producer.Produce(ctx, key, value)
+}
 
-	p.logger.Debug("produced message", "topic", p.config.Topic, "key_len", len(key), "value_len", len(value))
-	return nil
+// ProduceJSON marshals and sends a JSON message to Kafka.
+func (p *KafkaProducer) ProduceJSON(ctx context.Context, key string, value interface{}) error {
+	return p.producer.ProduceJSON(ctx, key, value)
 }
 
 // GetStats returns producer statistics.
 func (p *KafkaProducer) GetStats() (int64, int64) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.msgCount, p.byteCount
+	metrics := p.producer.GetMetrics()
+	return metrics.MessagesProduced, metrics.BytesProduced
 }
 
-// KafkaConsumer consumes events from Kafka.
+// GetMetrics returns detailed producer metrics.
+func (p *KafkaProducer) GetMetrics() kafka.Metrics {
+	return p.producer.GetMetrics()
+}
+
+// HealthCheck verifies the producer can connect to Kafka.
+func (p *KafkaProducer) HealthCheck(ctx context.Context) kafka.HealthStatus {
+	return p.producer.HealthCheck(ctx)
+}
+
+// Close closes the producer and flushes any buffered messages.
+func (p *KafkaProducer) Close() error {
+	return p.producer.Close()
+}
+
+// KafkaConsumer consumes events from Kafka using the real kafka-go client.
 type KafkaConsumer struct {
-	config   *KafkaConfig
+	consumer *kafka.Consumer
+	config   *kafka.Config
 	logger   *slog.Logger
-	handler  func(key, value []byte) error
-	ctx      context.Context
-	cancel   context.CancelFunc
 }
 
-// NewKafkaConsumer creates a new Kafka consumer.
-func NewKafkaConsumer(config *KafkaConfig, handler func(key, value []byte) error, logger *slog.Logger) *KafkaConsumer {
-	ctx, cancel := context.WithCancel(context.Background())
-	return &KafkaConsumer{
-		config:  config,
-		logger:  logger,
-		handler: handler,
-		ctx:     ctx,
-		cancel:  cancel,
+// NewKafkaConsumer creates a new Kafka consumer with real Kafka connectivity.
+func NewKafkaConsumer(config *kafka.Config, handler func(key, value []byte) error, logger *slog.Logger) (*KafkaConsumer, error) {
+	// Wrap the simple handler to match the kafka.MessageHandler signature
+	wrappedHandler := func(ctx context.Context, msg kafka.Message) error {
+		return handler(msg.Key, msg.Value)
 	}
+
+	consumer, err := kafka.NewConsumer(config, wrappedHandler, logger)
+	if err != nil {
+		return nil, fmt.Errorf("ha: failed to create kafka consumer: %w", err)
+	}
+
+	return &KafkaConsumer{
+		consumer: consumer,
+		config:   config,
+		logger:   logger,
+	}, nil
 }
 
-// Start starts consuming messages.
+// Start starts consuming messages (blocking).
 func (c *KafkaConsumer) Start() error {
-	c.logger.Info("starting Kafka consumer", "topic", c.config.Topic, "group", c.config.ConsumerGroup)
-	return nil
+	return c.consumer.Start()
+}
+
+// StartAsync starts consuming messages in a background goroutine.
+func (c *KafkaConsumer) StartAsync() error {
+	return c.consumer.StartAsync()
 }
 
 // Stop stops consuming messages.
 func (c *KafkaConsumer) Stop() error {
-	c.cancel()
-	return nil
+	return c.consumer.Stop()
+}
+
+// GetMetrics returns consumer metrics.
+func (c *KafkaConsumer) GetMetrics() kafka.Metrics {
+	return c.consumer.GetMetrics()
+}
+
+// HealthCheck verifies the consumer can connect to Kafka.
+func (c *KafkaConsumer) HealthCheck(ctx context.Context) kafka.HealthStatus {
+	return c.consumer.HealthCheck(ctx)
 }
 
 // ClickHouseConfig configures ClickHouse for analytics.
@@ -567,17 +592,7 @@ func DefaultClusterConfig() *ClusterConfig {
 
 // DefaultKafkaConfig returns default Kafka configuration.
 func DefaultKafkaConfig() *KafkaConfig {
-	return &KafkaConfig{
-		Brokers:           []string{"localhost:9092"},
-		Topic:             "siem-events",
-		ConsumerGroup:     "siem-consumers",
-		Partitions:        12,
-		ReplicationFactor: 3,
-		RetentionMs:       7 * 24 * 60 * 60 * 1000, // 7 days
-		MaxMessageBytes:   1048576,                  // 1MB
-		CompressionType:   "lz4",
-		SecurityProtocol:  "PLAINTEXT",
-	}
+	return kafka.DefaultConfig()
 }
 
 // DefaultClickHouseConfig returns default ClickHouse configuration.
