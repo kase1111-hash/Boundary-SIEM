@@ -12,9 +12,11 @@ import (
 	"time"
 
 	"boundary-siem/internal/config"
+	"boundary-siem/internal/consumer"
 	"boundary-siem/internal/ingest"
 	"boundary-siem/internal/queue"
 	"boundary-siem/internal/schema"
+	"boundary-siem/internal/storage"
 )
 
 func main() {
@@ -45,6 +47,7 @@ func main() {
 		"http_port", cfg.Server.HTTPPort,
 		"queue_size", cfg.Queue.Size,
 		"auth_enabled", cfg.Auth.Enabled,
+		"storage_enabled", cfg.Storage.Enabled,
 	)
 
 	// Initialize components
@@ -77,9 +80,69 @@ func main() {
 		WriteTimeout: cfg.Server.WriteTimeout,
 	}
 
-	// Start queue consumer in background
 	ctx, cancel := context.WithCancel(context.Background())
-	go consumeQueue(ctx, eventQueue)
+
+	// Initialize storage if enabled
+	var chClient *storage.ClickHouseClient
+	var batchWriter *storage.BatchWriter
+	var queueConsumer *consumer.Consumer
+
+	if cfg.Storage.Enabled {
+		slog.Info("initializing ClickHouse storage",
+			"hosts", cfg.Storage.ClickHouse.Hosts,
+			"database", cfg.Storage.ClickHouse.Database,
+		)
+
+		// Create ClickHouse client
+		chConfig := storage.ClickHouseConfig{
+			Hosts:           cfg.Storage.ClickHouse.Hosts,
+			Database:        cfg.Storage.ClickHouse.Database,
+			Username:        cfg.Storage.ClickHouse.Username,
+			Password:        cfg.Storage.ClickHouse.Password,
+			MaxOpenConns:    cfg.Storage.ClickHouse.MaxOpenConns,
+			MaxIdleConns:    cfg.Storage.ClickHouse.MaxIdleConns,
+			ConnMaxLifetime: cfg.Storage.ClickHouse.ConnMaxLifetime,
+			TLSEnabled:      cfg.Storage.ClickHouse.TLSEnabled,
+			DialTimeout:     cfg.Storage.ClickHouse.DialTimeout,
+		}
+
+		chClient, err = storage.NewClickHouseClient(chConfig)
+		if err != nil {
+			slog.Error("failed to connect to ClickHouse", "error", err)
+			os.Exit(1)
+		}
+
+		// Run migrations
+		slog.Info("running database migrations")
+		migrator := storage.NewMigrator(chClient)
+		if err := migrator.Run(ctx); err != nil {
+			slog.Error("failed to run migrations", "error", err)
+			os.Exit(1)
+		}
+
+		// Create batch writer
+		bwConfig := storage.BatchWriterConfig{
+			BatchSize:     cfg.Storage.BatchWriter.BatchSize,
+			FlushInterval: cfg.Storage.BatchWriter.FlushInterval,
+			MaxRetries:    cfg.Storage.BatchWriter.MaxRetries,
+			RetryDelay:    cfg.Storage.BatchWriter.RetryDelay,
+		}
+		batchWriter = storage.NewBatchWriter(chClient, bwConfig)
+
+		// Create and start queue consumer
+		consumerCfg := consumer.Config{
+			Workers:      cfg.Consumer.Workers,
+			PollInterval: cfg.Consumer.PollInterval,
+			ShutdownWait: cfg.Consumer.ShutdownWait,
+		}
+		queueConsumer = consumer.New(eventQueue, batchWriter, consumerCfg)
+		queueConsumer.Start(ctx)
+
+		slog.Info("storage initialized successfully")
+	} else {
+		// Start placeholder consumer for development without storage
+		go consumeQueuePlaceholder(ctx, eventQueue)
+	}
 
 	// Start HTTP server
 	go func() {
@@ -109,22 +172,52 @@ func main() {
 	// Stop queue consumer
 	cancel()
 
+	if cfg.Storage.Enabled {
+		// Stop queue consumer
+		if queueConsumer != nil {
+			queueConsumer.Stop()
+		}
+
+		// Close batch writer
+		if batchWriter != nil {
+			if err := batchWriter.Close(); err != nil {
+				slog.Error("batch writer close error", "error", err)
+			}
+		}
+
+		// Close ClickHouse connection
+		if chClient != nil {
+			if err := chClient.Close(); err != nil {
+				slog.Error("clickhouse close error", "error", err)
+			}
+		}
+	}
+
 	// Close queue
 	eventQueue.Close()
 
 	// Log final metrics
-	metrics := eventQueue.Metrics()
+	queueMetrics := eventQueue.Metrics()
 	slog.Info("shutdown complete",
-		"events_pushed", metrics.Pushed,
-		"events_popped", metrics.Popped,
-		"events_dropped", metrics.Dropped,
+		"events_pushed", queueMetrics.Pushed,
+		"events_popped", queueMetrics.Popped,
+		"events_dropped", queueMetrics.Dropped,
 	)
+
+	if batchWriter != nil {
+		bwMetrics := batchWriter.Metrics()
+		slog.Info("storage metrics",
+			"events_written", bwMetrics.Written,
+			"events_failed", bwMetrics.Failed,
+			"batches", bwMetrics.Batches,
+		)
+	}
 }
 
-// consumeQueue processes events from the queue.
-// In Step 2, this will write to ClickHouse.
-func consumeQueue(ctx context.Context, q *queue.RingBuffer) {
-	slog.Info("queue consumer started")
+// consumeQueuePlaceholder processes events when storage is disabled.
+// Used for development/testing without ClickHouse.
+func consumeQueuePlaceholder(ctx context.Context, q *queue.RingBuffer) {
+	slog.Info("queue consumer started (placeholder mode - no storage)")
 
 	for {
 		select {
@@ -145,8 +238,8 @@ func consumeQueue(ctx context.Context, q *queue.RingBuffer) {
 			continue
 		}
 
-		// Log event (placeholder for storage in Step 2)
-		slog.Debug("event processed",
+		// Log event (placeholder for storage)
+		slog.Debug("event processed (placeholder)",
 			"event_id", event.EventID,
 			"action", event.Action,
 			"source", event.Source.Product,

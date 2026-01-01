@@ -17,6 +17,43 @@ type Config struct {
 	Validation ValidationConfig `yaml:"validation"`
 	Auth       AuthConfig       `yaml:"auth"`
 	Logging    LoggingConfig    `yaml:"logging"`
+	Storage    StorageConfig    `yaml:"storage"`
+	Consumer   ConsumerConfig   `yaml:"consumer"`
+}
+
+// StorageConfig holds storage settings.
+type StorageConfig struct {
+	Enabled     bool              `yaml:"enabled"`
+	ClickHouse  ClickHouseConfig  `yaml:"clickhouse"`
+	BatchWriter BatchWriterConfig `yaml:"batch_writer"`
+}
+
+// ClickHouseConfig holds ClickHouse connection settings.
+type ClickHouseConfig struct {
+	Hosts           []string      `yaml:"hosts"`
+	Database        string        `yaml:"database"`
+	Username        string        `yaml:"username"`
+	Password        string        `yaml:"password"`
+	MaxOpenConns    int           `yaml:"max_open_conns"`
+	MaxIdleConns    int           `yaml:"max_idle_conns"`
+	ConnMaxLifetime time.Duration `yaml:"conn_max_lifetime"`
+	TLSEnabled      bool          `yaml:"tls_enabled"`
+	DialTimeout     time.Duration `yaml:"dial_timeout"`
+}
+
+// BatchWriterConfig holds batch writer settings.
+type BatchWriterConfig struct {
+	BatchSize     int           `yaml:"batch_size"`
+	FlushInterval time.Duration `yaml:"flush_interval"`
+	MaxRetries    int           `yaml:"max_retries"`
+	RetryDelay    time.Duration `yaml:"retry_delay"`
+}
+
+// ConsumerConfig holds consumer settings.
+type ConsumerConfig struct {
+	Workers      int           `yaml:"workers"`
+	PollInterval time.Duration `yaml:"poll_interval"`
+	ShutdownWait time.Duration `yaml:"shutdown_wait"`
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -87,6 +124,31 @@ func DefaultConfig() *Config {
 			Level:  "info",
 			Format: "json",
 		},
+		Storage: StorageConfig{
+			Enabled: false, // Disabled by default for development without ClickHouse
+			ClickHouse: ClickHouseConfig{
+				Hosts:           []string{"localhost:9000"},
+				Database:        "siem",
+				Username:        "default",
+				Password:        "",
+				MaxOpenConns:    10,
+				MaxIdleConns:    5,
+				ConnMaxLifetime: time.Hour,
+				TLSEnabled:      false,
+				DialTimeout:     10 * time.Second,
+			},
+			BatchWriter: BatchWriterConfig{
+				BatchSize:     1000,
+				FlushInterval: 5 * time.Second,
+				MaxRetries:    3,
+				RetryDelay:    time.Second,
+			},
+		},
+		Consumer: ConsumerConfig{
+			Workers:      4,
+			PollInterval: 10 * time.Millisecond,
+			ShutdownWait: 30 * time.Second,
+		},
 	}
 }
 
@@ -133,6 +195,27 @@ func (c *Config) applyEnvOverrides() {
 	if apiKey := os.Getenv("SIEM_API_KEY"); apiKey != "" {
 		c.Auth.APIKeys = append(c.Auth.APIKeys, apiKey)
 		c.Auth.Enabled = true
+	}
+
+	// Storage settings
+	if enabled := os.Getenv("SIEM_STORAGE_ENABLED"); enabled == "true" {
+		c.Storage.Enabled = true
+	}
+
+	if host := os.Getenv("CLICKHOUSE_HOST"); host != "" {
+		c.Storage.ClickHouse.Hosts = []string{host}
+	}
+
+	if db := os.Getenv("CLICKHOUSE_DATABASE"); db != "" {
+		c.Storage.ClickHouse.Database = db
+	}
+
+	if user := os.Getenv("CLICKHOUSE_USER"); user != "" {
+		c.Storage.ClickHouse.Username = user
+	}
+
+	if pass := os.Getenv("CLICKHOUSE_PASSWORD"); pass != "" {
+		c.Storage.ClickHouse.Password = pass
 	}
 }
 

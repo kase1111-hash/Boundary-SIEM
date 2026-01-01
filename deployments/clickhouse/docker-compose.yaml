@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  clickhouse:
+    image: clickhouse/clickhouse-server:23.8
+    container_name: siem-clickhouse
+    ports:
+      - "8123:8123"   # HTTP interface
+      - "9000:9000"   # Native interface
+      - "9009:9009"   # Interserver (for clusters)
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_logs:/var/log/clickhouse-server
+      - ./config.xml:/etc/clickhouse-server/config.d/custom.xml:ro
+      - ./users.xml:/etc/clickhouse-server/users.d/custom.xml:ro
+    environment:
+      - CLICKHOUSE_DB=siem
+      - CLICKHOUSE_USER=siem
+      - CLICKHOUSE_PASSWORD=siem_password
+      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+
+volumes:
+  clickhouse_data:
+  clickhouse_logs:

@@ -25,3 +25,30 @@ auth:
 logging:
   level: info
   format: json
+
+# Storage configuration
+# Set storage.enabled to true and configure ClickHouse to persist events
+storage:
+  enabled: false  # Set to true when ClickHouse is available
+  clickhouse:
+    hosts:
+      - "localhost:9000"
+    database: siem
+    username: default
+    password: ""
+    max_open_conns: 10
+    max_idle_conns: 5
+    conn_max_lifetime: 1h
+    tls_enabled: false
+    dial_timeout: 10s
+  batch_writer:
+    batch_size: 1000
+    flush_interval: 5s
+    max_retries: 3
+    retry_delay: 1s
+
+# Consumer configuration
+consumer:
+  workers: 4
+  poll_interval: 10ms
+  shutdown_wait: 30s
