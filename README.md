@@ -33,6 +33,13 @@ A comprehensive Security Information and Event Management (SIEM) platform design
 - **Forensics Toolkit**: 12 artifact types, case management, fund flow analysis
 - **SOAR**: 8 response workflows, 8 integrations, approval-based automation
 
+### Platform Security
+- **Tamper-Evident Audit Logging**: Hash chain integrity with SHA-256, cryptographic signatures
+- **Immutable Log Support**: Linux file attributes (chattr +a/+i) for append-only/immutable logs
+- **Remote Syslog Forwarding**: UDP/TCP/TLS to external SIEM (RFC 3164, RFC 5424, CEF, JSON)
+- **Container Isolation**: Docker seccomp/AppArmor, Kubernetes NetworkPolicy, Pod Security Standards
+- **Hardware Key Storage**: TPM 2.0 support with PCR policy binding and software fallback
+
 ## Architecture
 
 ```
@@ -177,12 +184,19 @@ boundary-siem/
 │   │   ├── ha/               # High availability
 │   │   ├── retention/        # Data retention
 │   │   └── api/              # REST/GraphQL/SDK
-│   └── advanced/             # Advanced features
-│       ├── hunting/          # Threat hunting
-│       ├── forensics/        # Forensics toolkit
-│       └── soar/             # SOAR automation
+│   ├── advanced/             # Advanced features
+│   │   ├── hunting/          # Threat hunting
+│   │   ├── forensics/        # Forensics toolkit
+│   │   └── soar/             # SOAR automation
+│   └── security/             # Platform security
+│       ├── audit/            # Tamper-evident audit logging
+│       ├── hardware/         # TPM/HSM key storage
+│       ├── kernel/           # Kernel security modules
+│       ├── privilege/        # Privilege management
+│       └── trust/            # Trust verification
 ├── deploy/
-│   └── kubernetes/           # K8s manifests
+│   ├── kubernetes/           # K8s manifests
+│   └── container/            # Container security configs
 ├── deployments/
 │   └── clickhouse/           # Docker Compose
 ├── configs/                  # Configuration files
@@ -292,6 +306,45 @@ kubectl scale statefulset siem --replicas=5 -n boundary-siem
 - Pod anti-affinity for HA
 - 100Gi SSD per pod
 
+## Container Security
+
+### Docker Deployment
+
+```bash
+# Set up container isolation
+cd deploy/container
+sudo ./setup-container-isolation.sh docker
+
+# Start with Docker Compose
+docker-compose up -d
+
+# Verify networks
+docker network ls | grep siem
+```
+
+### Security Features
+
+- **Seccomp Profile**: Syscall allowlist restricting container capabilities
+- **AppArmor Profile**: MAC enforcement for file/network access control
+- **Network Isolation**: Three isolated networks (internal, ingestion, management)
+- **Non-root Execution**: All containers run as non-privileged users
+- **Read-only Filesystem**: Immutable container root with explicit writable mounts
+
+### Kubernetes Security
+
+```bash
+# Apply pod security policies
+kubectl apply -f deploy/container/pod-security-policy.yaml
+
+# Apply network policies
+kubectl apply -f deploy/container/network-policy.yaml
+```
+
+- **Pod Security Standards**: Restricted security context enforcement
+- **Network Policies**: Default deny with explicit allow rules
+- **OPA Gatekeeper**: Policy enforcement for non-root, read-only root, capability restrictions
+- **Resource Quotas**: CPU/memory/storage limits per namespace
+
 ## Testing
 
 ```bash
@@ -320,6 +373,7 @@ go test -v ./internal/detection/...
 | internal/enterprise | 56 | 85% |
 | internal/ingest | 12 | 92% |
 | internal/schema | 8 | 95% |
+| internal/security | 45 | 88% |
 | internal/storage | 15 | 80% |
 
 ## Roadmap

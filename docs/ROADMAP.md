@@ -47,6 +47,13 @@ This document outlines planned features and future enhancements for the Boundary
 - ✅ Forensics Toolkit (12 artifact types)
 - ✅ SOAR Workflow Automation (8 workflows, 8 integrations)
 
+### Phase 8: Platform Security
+- ✅ Tamper-evident audit logging with hash chain integrity
+- ✅ Linux immutable log support (chattr +a/+i)
+- ✅ Remote syslog forwarding (UDP/TCP/TLS, RFC 3164/5424/CEF/JSON)
+- ✅ Container isolation (Docker seccomp/AppArmor, K8s NetworkPolicy)
+- ✅ TPM 2.0 hardware key storage with PCR policy binding
+
 ---
 
 ## Future Features (Planned)
