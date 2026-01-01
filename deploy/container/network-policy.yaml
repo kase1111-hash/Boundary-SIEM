@@ -1,0 +1,316 @@
+# Kubernetes Network Policies for Boundary-SIEM
+# These policies enforce network isolation at the cluster level
+#
+# Apply with: kubectl apply -f network-policy.yaml
+#
+# Prerequisites:
+#   - Kubernetes cluster with NetworkPolicy support (Calico, Cilium, etc.)
+#   - Namespace 'boundary-siem' created
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: boundary-siem
+  labels:
+    name: boundary-siem
+    security: restricted
+---
+# =============================================================================
+# Default Deny All - Baseline security
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-all
+  namespace: boundary-siem
+spec:
+  podSelector: {}
+  policyTypes:
+    - Ingress
+    - Egress
+---
+# =============================================================================
+# SIEM Core - Allow specific ingress/egress
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: siem-core-policy
+  namespace: boundary-siem
+  labels:
+    app: boundary-siem
+spec:
+  podSelector:
+    matchLabels:
+      app: boundary-siem
+      component: core
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow syslog ingestion from anywhere (external sources)
+    - ports:
+        - protocol: TCP
+          port: 5514
+        - protocol: UDP
+          port: 5514
+        - protocol: UDP
+          port: 5515
+      from: []  # Allow from anywhere for log ingestion
+
+    # Allow HTTPS API from management namespace only
+    - ports:
+        - protocol: TCP
+          port: 8443
+      from:
+        - namespaceSelector:
+            matchLabels:
+              purpose: management
+        - podSelector:
+            matchLabels:
+              role: admin
+
+    # Allow health checks from within namespace
+    - ports:
+        - protocol: TCP
+          port: 8080
+      from:
+        - podSelector: {}
+
+  egress:
+    # Allow DNS resolution
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+      to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+
+    # Allow syslog forwarding to external SIEM
+    - ports:
+        - protocol: TCP
+          port: 514
+        - protocol: TCP
+          port: 6514  # TLS syslog
+        - protocol: UDP
+          port: 514
+      to: []  # Allow to anywhere for external SIEM
+
+    # Allow HTTPS for external APIs (threat intel, etc.)
+    - ports:
+        - protocol: TCP
+          port: 443
+      to: []
+
+    # Allow NTP
+    - ports:
+        - protocol: UDP
+          port: 123
+      to: []
+---
+# =============================================================================
+# SIEM Database - Strict isolation
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: siem-database-policy
+  namespace: boundary-siem
+  labels:
+    app: boundary-siem
+spec:
+  podSelector:
+    matchLabels:
+      app: boundary-siem
+      component: database
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Only allow connections from SIEM core
+    - ports:
+        - protocol: TCP
+          port: 5432  # PostgreSQL
+      from:
+        - podSelector:
+            matchLabels:
+              app: boundary-siem
+              component: core
+
+  egress:
+    # No egress allowed for database
+    []
+---
+# =============================================================================
+# SIEM Cache - Limited access
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: siem-cache-policy
+  namespace: boundary-siem
+  labels:
+    app: boundary-siem
+spec:
+  podSelector:
+    matchLabels:
+      app: boundary-siem
+      component: cache
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Only allow connections from SIEM core
+    - ports:
+        - protocol: TCP
+          port: 6379  # Redis
+      from:
+        - podSelector:
+            matchLabels:
+              app: boundary-siem
+              component: core
+
+  egress:
+    # No egress allowed for cache
+    []
+---
+# =============================================================================
+# Admin/Management Access
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: admin-access-policy
+  namespace: boundary-siem
+  labels:
+    app: boundary-siem
+spec:
+  podSelector:
+    matchLabels:
+      role: admin
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow from VPN/bastion only
+    - from:
+        - ipBlock:
+            cidr: 10.0.0.0/8
+            except:
+              - 10.0.0.0/24  # Exclude public subnet
+
+  egress:
+    # Allow access to SIEM API
+    - ports:
+        - protocol: TCP
+          port: 8443
+      to:
+        - podSelector:
+            matchLabels:
+              app: boundary-siem
+              component: core
+
+    # Allow DNS
+    - ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+      to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+---
+# =============================================================================
+# Ingestion Layer - External log sources
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: ingestion-layer-policy
+  namespace: boundary-siem
+  labels:
+    app: boundary-siem
+spec:
+  podSelector:
+    matchLabels:
+      app: boundary-siem
+      component: ingestion
+  policyTypes:
+    - Ingress
+    - Egress
+
+  ingress:
+    # Allow syslog from anywhere
+    - ports:
+        - protocol: TCP
+          port: 5514
+        - protocol: UDP
+          port: 5514
+        - protocol: UDP
+          port: 5515
+      from: []
+
+  egress:
+    # Only allow forwarding to SIEM core
+    - ports:
+        - protocol: TCP
+          port: 5514
+      to:
+        - podSelector:
+            matchLabels:
+              app: boundary-siem
+              component: core
+---
+# =============================================================================
+# Cilium-specific policies (if using Cilium CNI)
+# =============================================================================
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: siem-l7-policy
+  namespace: boundary-siem
+spec:
+  endpointSelector:
+    matchLabels:
+      app: boundary-siem
+      component: core
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            role: admin
+      toPorts:
+        - ports:
+            - port: "8443"
+              protocol: TCP
+          rules:
+            http:
+              - method: "GET"
+                path: "/api/v1/health"
+              - method: "GET"
+                path: "/api/v1/metrics"
+              - method: "GET"
+                path: "/api/v1/alerts.*"
+              - method: "POST"
+                path: "/api/v1/query"
+              # Block sensitive endpoints from non-admin
+              - method: "DELETE"
+                path: "/api/v1/.*"
+                # Only from specific admin pods
+  egress:
+    - toFQDNs:
+        - matchPattern: "*.siem.internal"
+        - matchPattern: "threat-intel.example.com"
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP
