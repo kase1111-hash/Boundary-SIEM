@@ -1,0 +1,135 @@
+# SELinux Type Enforcement Policy for Boundary SIEM
+# This policy provides mandatory access control for the SIEM daemon
+#
+# Build: checkmodule -M -m -o boundary_siem.mod boundary_siem.te
+# Package: semodule_package -o boundary_siem.pp -m boundary_siem.mod
+# Install: semodule -i boundary_siem.pp
+
+policy_module(boundary_siem, 1.0.0)
+
+########################################
+# Declarations
+########################################
+
+# Define the boundary_siem_t domain for the SIEM process
+type boundary_siem_t;
+type boundary_siem_exec_t;
+init_daemon_domain(boundary_siem_t, boundary_siem_exec_t)
+
+# Define file contexts
+type boundary_siem_conf_t;
+files_config_file(boundary_siem_conf_t)
+
+type boundary_siem_log_t;
+logging_log_file(boundary_siem_log_t)
+
+type boundary_siem_var_t;
+files_type(boundary_siem_var_t)
+
+type boundary_siem_data_t;
+files_type(boundary_siem_data_t)
+
+type boundary_siem_tmp_t;
+files_tmp_file(boundary_siem_tmp_t)
+
+type boundary_siem_port_t;
+corenet_port(boundary_siem_port_t)
+
+########################################
+# Policy Rules
+########################################
+
+# Allow boundary_siem_t to transition from init
+allow init_t boundary_siem_exec_t:file { read execute open getattr };
+allow init_t boundary_siem_t:process transition;
+
+# Process capabilities - minimal required set
+allow boundary_siem_t self:capability { net_bind_service setuid setgid dac_read_search sys_resource };
+allow boundary_siem_t self:capability2 { block_suspend };
+
+# Explicitly deny dangerous capabilities
+neverallow boundary_siem_t self:capability { sys_admin sys_ptrace sys_module net_admin mknod };
+neverallow boundary_siem_t self:capability2 { mac_admin mac_override };
+
+# File operations
+allow boundary_siem_t boundary_siem_conf_t:file { read getattr open };
+allow boundary_siem_t boundary_siem_conf_t:dir { search getattr };
+
+allow boundary_siem_t boundary_siem_log_t:file { create write append open getattr setattr };
+allow boundary_siem_t boundary_siem_log_t:dir { search write add_name getattr };
+
+allow boundary_siem_t boundary_siem_var_t:file { read write create open getattr setattr unlink };
+allow boundary_siem_t boundary_siem_var_t:dir { search write add_name remove_name getattr };
+
+allow boundary_siem_t boundary_siem_data_t:file { read write create open getattr setattr unlink };
+allow boundary_siem_t boundary_siem_data_t:dir { search write add_name remove_name getattr };
+
+allow boundary_siem_t boundary_siem_tmp_t:file { read write create open getattr setattr unlink };
+allow boundary_siem_t boundary_siem_tmp_t:dir { search write add_name remove_name getattr };
+
+# Network operations - restricted to specific ports
+allow boundary_siem_t boundary_siem_port_t:tcp_socket { name_bind name_connect };
+allow boundary_siem_t self:tcp_socket { create read write connect listen accept bind getopt setopt shutdown };
+allow boundary_siem_t self:udp_socket { create read write connect bind getopt setopt };
+
+# Allow connections to standard services
+corenet_tcp_connect_http_port(boundary_siem_t)        # For webhooks
+corenet_tcp_connect_smtp_port(boundary_siem_t)        # For email alerts
+corenet_tcp_sendrecv_generic_node(boundary_siem_t)
+
+# Allow DNS resolution
+sysnet_dns_name_resolve(boundary_siem_t)
+
+# Allow reading system state
+kernel_read_system_state(boundary_siem_t)
+files_read_etc_files(boundary_siem_t)
+files_read_usr_files(boundary_siem_t)
+
+# Process management - self only
+allow boundary_siem_t self:process { signal sigkill sigstop sigchld fork setrlimit setsched getsched };
+
+# Deny ptrace from other processes
+neverallow ~boundary_siem_t boundary_siem_t:process ptrace;
+
+# Memory protection
+allow boundary_siem_t self:process { execmem };
+
+# Syslog access for centralized logging
+logging_send_syslog_msg(boundary_siem_t)
+
+# Time operations
+allow boundary_siem_t self:process { getsession };
+
+########################################
+# External Service Access
+########################################
+
+# Kafka connections (ports 9092, 9093)
+type kafka_port_t;
+corenet_port(kafka_port_t)
+allow boundary_siem_t kafka_port_t:tcp_socket { name_connect };
+
+# ClickHouse connections (ports 8123, 9000, 9440)
+type clickhouse_port_t;
+corenet_port(clickhouse_port_t)
+allow boundary_siem_t clickhouse_port_t:tcp_socket { name_connect };
+
+# S3/Object storage (HTTPS port 443)
+corenet_tcp_connect_http_cache_port(boundary_siem_t)
+
+########################################
+# Transition Rules
+########################################
+
+# Automatic transition when executing boundary-siem binary
+type_transition init_t boundary_siem_exec_t:process boundary_siem_t;
+
+########################################
+# Audit Rules
+########################################
+
+# Audit all capability usage
+auditallow boundary_siem_t self:capability { net_bind_service setuid setgid dac_read_search };
+
+# Audit network connections
+auditallow boundary_siem_t boundary_siem_port_t:tcp_socket { name_bind name_connect };

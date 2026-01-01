@@ -1,0 +1,224 @@
+# AppArmor Profile for Boundary SIEM
+# Install: cp boundary-siem /etc/apparmor.d/
+# Enable:  apparmor_parser -r /etc/apparmor.d/boundary-siem
+# Check:   aa-status | grep boundary
+
+#include <tunables/global>
+
+profile boundary-siem /usr/local/bin/boundary-siem flags=(enforce) {
+  #include <abstractions/base>
+  #include <abstractions/nameservice>
+  #include <abstractions/ssl_certs>
+
+  # =====================================================
+  # CAPABILITIES - Minimal Required Set
+  # =====================================================
+
+  # Network binding for SIEM ports
+  capability net_bind_service,
+
+  # Drop privileges after startup
+  capability setuid,
+  capability setgid,
+
+  # Read files with different ownership (for log collection)
+  capability dac_read_search,
+
+  # Resource limits
+  capability sys_resource,
+
+  # =====================================================
+  # DENIED CAPABILITIES (explicit)
+  # =====================================================
+
+  # Prevent kernel module loading
+  deny capability sys_module,
+
+  # Prevent system administration
+  deny capability sys_admin,
+
+  # Prevent ptrace (anti-debugging protection)
+  deny capability sys_ptrace,
+
+  # Prevent network administration
+  deny capability net_admin,
+  deny capability net_raw,
+
+  # Prevent device creation
+  deny capability mknod,
+
+  # Prevent MAC override
+  deny capability mac_admin,
+  deny capability mac_override,
+
+  # =====================================================
+  # EXECUTABLE
+  # =====================================================
+
+  /usr/local/bin/boundary-siem mr,
+  /usr/bin/boundary-siem mr,
+  /opt/boundary-siem/bin/boundary-siem mr,
+
+  # =====================================================
+  # CONFIGURATION FILES (read-only)
+  # =====================================================
+
+  /etc/boundary-siem/ r,
+  /etc/boundary-siem/** r,
+  /opt/boundary-siem/config/ r,
+  /opt/boundary-siem/config/** r,
+  /opt/boundary-siem/etc/ r,
+  /opt/boundary-siem/etc/** r,
+
+  # Deny write to configuration
+  deny /etc/boundary-siem/** w,
+  deny /opt/boundary-siem/config/** w,
+
+  # =====================================================
+  # LOG FILES (append-only preferred)
+  # =====================================================
+
+  /var/log/boundary-siem/ rw,
+  /var/log/boundary-siem/** rw,
+  /var/log/boundary-siem/*.log w,
+  /opt/boundary-siem/logs/ rw,
+  /opt/boundary-siem/logs/** rw,
+
+  # Syslog
+  /dev/log w,
+  /run/systemd/journal/socket w,
+  /run/systemd/journal/stdout rw,
+
+  # =====================================================
+  # STATE/DATA FILES
+  # =====================================================
+
+  /var/lib/boundary-siem/ rw,
+  /var/lib/boundary-siem/** rwk,
+  /opt/boundary-siem/var/ rw,
+  /opt/boundary-siem/var/** rwk,
+  /opt/boundary-siem/data/ rw,
+  /opt/boundary-siem/data/** rwk,
+
+  # =====================================================
+  # TEMPORARY FILES
+  # =====================================================
+
+  owner /tmp/boundary-siem/ rw,
+  owner /tmp/boundary-siem/** rwk,
+  owner /var/tmp/boundary-siem/ rw,
+  owner /var/tmp/boundary-siem/** rwk,
+
+  # =====================================================
+  # RUNTIME FILES
+  # =====================================================
+
+  /run/boundary-siem.pid rw,
+  /run/boundary-siem.sock rw,
+  /var/run/boundary-siem.pid rw,
+  /var/run/boundary-siem.sock rw,
+
+  # =====================================================
+  # SYSTEM FILES (read-only)
+  # =====================================================
+
+  /etc/hosts r,
+  /etc/resolv.conf r,
+  /etc/nsswitch.conf r,
+  /etc/passwd r,
+  /etc/group r,
+  /etc/localtime r,
+  /etc/timezone r,
+  /etc/ssl/certs/ r,
+  /etc/ssl/certs/** r,
+  /etc/ca-certificates/ r,
+  /etc/ca-certificates/** r,
+  /usr/share/ca-certificates/ r,
+  /usr/share/ca-certificates/** r,
+  /usr/share/zoneinfo/** r,
+
+  # Proc filesystem (limited)
+  /proc/sys/net/core/somaxconn r,
+  /proc/sys/kernel/hostname r,
+  /proc/sys/kernel/random/uuid r,
+  owner /proc/*/fd/ r,
+  owner /proc/*/stat r,
+  owner /proc/*/status r,
+  owner /proc/*/limits r,
+  deny /proc/*/mem rw,
+  deny /proc/kcore rw,
+
+  # =====================================================
+  # NETWORK ACCESS
+  # =====================================================
+
+  # Allow network operations
+  network tcp,
+  network udp,
+  network unix stream,
+  network unix dgram,
+
+  # Deny raw sockets
+  deny network raw,
+  deny network packet,
+
+  # =====================================================
+  # SIGNAL HANDLING
+  # =====================================================
+
+  # Allow signals to self
+  signal (send, receive) set=(term, kill, stop, cont, hup, usr1, usr2) peer=boundary-siem,
+
+  # Allow init/systemd to manage us
+  signal (receive) set=(term, kill, stop, cont, hup) peer=unconfined,
+
+  # Deny sending signals to other processes
+  deny signal (send) peer!=boundary-siem,
+
+  # =====================================================
+  # PTRACE PROTECTION
+  # =====================================================
+
+  # Deny all ptrace
+  deny ptrace (read, readby, trace, tracedby),
+
+  # =====================================================
+  # MOUNT OPERATIONS
+  # =====================================================
+
+  # Deny all mount operations
+  deny mount,
+  deny umount,
+  deny remount,
+  deny pivot_root,
+
+  # =====================================================
+  # IPC
+  # =====================================================
+
+  # Allow POSIX IPC for internal operations
+  owner /dev/shm/boundary-siem.* rw,
+
+  # =====================================================
+  # DBUS (limited)
+  # =====================================================
+
+  # Allow reading dbus for systemd integration
+  /run/dbus/system_bus_socket rw,
+  /var/run/dbus/system_bus_socket rw,
+}
+
+# Hat for reduced privileges during normal operation
+^reduced {
+  #include <abstractions/base>
+
+  # Only allow reading after initialization
+  /var/lib/boundary-siem/** r,
+  /var/log/boundary-siem/** w,
+
+  network tcp,
+  network udp,
+
+  deny capability,
+  deny ptrace,
+}

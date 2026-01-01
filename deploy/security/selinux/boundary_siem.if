@@ -1,0 +1,194 @@
+## <summary>SELinux Policy Interface for Boundary SIEM</summary>
+
+########################################
+## <summary>
+##	Execute boundary_siem in the boundary_siem domain.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed to transition.
+##	</summary>
+## </param>
+#
+interface(`boundary_siem_domtrans',`
+	gen_require(`
+		type boundary_siem_t, boundary_siem_exec_t;
+	')
+
+	corecmd_search_bin($1)
+	domtrans_pattern($1, boundary_siem_exec_t, boundary_siem_t)
+')
+
+########################################
+## <summary>
+##	Execute boundary_siem in the caller domain.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+#
+interface(`boundary_siem_exec',`
+	gen_require(`
+		type boundary_siem_exec_t;
+	')
+
+	corecmd_search_bin($1)
+	can_exec($1, boundary_siem_exec_t)
+')
+
+########################################
+## <summary>
+##	Read boundary_siem configuration files.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+#
+interface(`boundary_siem_read_conf',`
+	gen_require(`
+		type boundary_siem_conf_t;
+	')
+
+	files_search_etc($1)
+	read_files_pattern($1, boundary_siem_conf_t, boundary_siem_conf_t)
+')
+
+########################################
+## <summary>
+##	Read boundary_siem log files.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+#
+interface(`boundary_siem_read_log',`
+	gen_require(`
+		type boundary_siem_log_t;
+	')
+
+	logging_search_logs($1)
+	read_files_pattern($1, boundary_siem_log_t, boundary_siem_log_t)
+')
+
+########################################
+## <summary>
+##	Append to boundary_siem log files.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+#
+interface(`boundary_siem_append_log',`
+	gen_require(`
+		type boundary_siem_log_t;
+	')
+
+	logging_search_logs($1)
+	append_files_pattern($1, boundary_siem_log_t, boundary_siem_log_t)
+')
+
+########################################
+## <summary>
+##	Manage boundary_siem log files.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+#
+interface(`boundary_siem_manage_log',`
+	gen_require(`
+		type boundary_siem_log_t;
+	')
+
+	logging_search_logs($1)
+	manage_files_pattern($1, boundary_siem_log_t, boundary_siem_log_t)
+	manage_dirs_pattern($1, boundary_siem_log_t, boundary_siem_log_t)
+')
+
+########################################
+## <summary>
+##	Read boundary_siem var files.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+#
+interface(`boundary_siem_read_var',`
+	gen_require(`
+		type boundary_siem_var_t;
+	')
+
+	files_search_var_lib($1)
+	read_files_pattern($1, boundary_siem_var_t, boundary_siem_var_t)
+')
+
+########################################
+## <summary>
+##	Connect to boundary_siem over TCP.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+#
+interface(`boundary_siem_tcp_connect',`
+	gen_require(`
+		type boundary_siem_t;
+		type boundary_siem_port_t;
+	')
+
+	allow $1 boundary_siem_port_t:tcp_socket name_connect;
+')
+
+########################################
+## <summary>
+##	All of the rules required to
+##	administrate the boundary_siem environment.
+## </summary>
+## <param name="domain">
+##	<summary>
+##	Domain allowed access.
+##	</summary>
+## </param>
+## <param name="role">
+##	<summary>
+##	Role allowed access.
+##	</summary>
+## </param>
+## <rolecap/>
+#
+interface(`boundary_siem_admin',`
+	gen_require(`
+		type boundary_siem_t;
+		type boundary_siem_conf_t;
+		type boundary_siem_log_t;
+		type boundary_siem_var_t;
+		type boundary_siem_data_t;
+	')
+
+	allow $1 boundary_siem_t:process { ptrace signal_perms };
+	ps_process_pattern($1, boundary_siem_t)
+
+	files_search_etc($1)
+	admin_pattern($1, boundary_siem_conf_t)
+
+	logging_search_logs($1)
+	admin_pattern($1, boundary_siem_log_t)
+
+	files_search_var_lib($1)
+	admin_pattern($1, boundary_siem_var_t)
+	admin_pattern($1, boundary_siem_data_t)
+')
