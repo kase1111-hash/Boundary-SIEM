@@ -6,6 +6,27 @@ server:
 ingest:
   max_batch_size: 1000
   max_payload_size: 10485760  # 10MB
+  cef:
+    udp:
+      enabled: true
+      address: ":5514"
+      buffer_size: 16777216  # 16MB
+      workers: 8
+      max_message_size: 65535
+    tcp:
+      enabled: true
+      address: ":5515"
+      tls_enabled: false
+      # tls_cert_file: /etc/siem/certs/server.crt
+      # tls_key_file: /etc/siem/certs/server.key
+      max_connections: 1000
+      idle_timeout: 5m
+      max_line_length: 65535
+    parser:
+      strict_mode: false
+      max_extensions: 100
+    normalizer:
+      default_tenant_id: "default"
 
 queue:
   size: 100000

@@ -14,6 +14,7 @@ import (
 	"boundary-siem/internal/config"
 	"boundary-siem/internal/consumer"
 	"boundary-siem/internal/ingest"
+	"boundary-siem/internal/ingest/cef"
 	"boundary-siem/internal/queue"
 	"boundary-siem/internal/schema"
 	"boundary-siem/internal/storage"
@@ -48,6 +49,8 @@ func main() {
 		"queue_size", cfg.Queue.Size,
 		"auth_enabled", cfg.Auth.Enabled,
 		"storage_enabled", cfg.Storage.Enabled,
+		"cef_udp_enabled", cfg.Ingest.CEF.UDP.Enabled,
+		"cef_tcp_enabled", cfg.Ingest.CEF.TCP.Enabled,
 	)
 
 	// Initialize components
@@ -144,6 +147,51 @@ func main() {
 		go consumeQueuePlaceholder(ctx, eventQueue)
 	}
 
+	// Initialize CEF parser and normalizer
+	cefParser := cef.NewParser(cef.ParserConfig{
+		StrictMode:    cfg.Ingest.CEF.Parser.StrictMode,
+		MaxExtensions: cfg.Ingest.CEF.Parser.MaxExtensions,
+	})
+
+	cefNormalizer := cef.NewNormalizer(cef.NormalizerConfig{
+		DefaultTenantID: cfg.Ingest.CEF.Normalizer.DefaultTenantID,
+	})
+
+	// Start CEF UDP server if enabled
+	var udpServer *ingest.UDPServer
+	if cfg.Ingest.CEF.UDP.Enabled {
+		udpCfg := ingest.UDPServerConfig{
+			Address:        cfg.Ingest.CEF.UDP.Address,
+			BufferSize:     cfg.Ingest.CEF.UDP.BufferSize,
+			Workers:        cfg.Ingest.CEF.UDP.Workers,
+			MaxMessageSize: cfg.Ingest.CEF.UDP.MaxMessageSize,
+		}
+		udpServer = ingest.NewUDPServer(udpCfg, cefParser, cefNormalizer, validator, eventQueue)
+		if err := udpServer.Start(ctx); err != nil {
+			slog.Error("failed to start UDP server", "error", err)
+			os.Exit(1)
+		}
+	}
+
+	// Start CEF TCP server if enabled
+	var tcpServer *ingest.TCPServer
+	if cfg.Ingest.CEF.TCP.Enabled {
+		tcpCfg := ingest.TCPServerConfig{
+			Address:        cfg.Ingest.CEF.TCP.Address,
+			TLSEnabled:     cfg.Ingest.CEF.TCP.TLSEnabled,
+			TLSCertFile:    cfg.Ingest.CEF.TCP.TLSCertFile,
+			TLSKeyFile:     cfg.Ingest.CEF.TCP.TLSKeyFile,
+			MaxConnections: cfg.Ingest.CEF.TCP.MaxConnections,
+			IdleTimeout:    cfg.Ingest.CEF.TCP.IdleTimeout,
+			MaxLineLength:  cfg.Ingest.CEF.TCP.MaxLineLength,
+		}
+		tcpServer = ingest.NewTCPServer(tcpCfg, cefParser, cefNormalizer, validator, eventQueue)
+		if err := tcpServer.Start(ctx); err != nil {
+			slog.Error("failed to start TCP server", "error", err)
+			os.Exit(1)
+		}
+	}
+
 	// Start HTTP server
 	go func() {
 		slog.Info("starting ingest server", "address", server.Addr)
@@ -167,6 +215,14 @@ func main() {
 	// Stop accepting new requests
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("server shutdown error", "error", err)
+	}
+
+	// Stop CEF servers
+	if udpServer != nil {
+		udpServer.Stop()
+	}
+	if tcpServer != nil {
+		tcpServer.Stop()
 	}
 
 	// Stop queue consumer
@@ -210,6 +266,26 @@ func main() {
 			"events_written", bwMetrics.Written,
 			"events_failed", bwMetrics.Failed,
 			"batches", bwMetrics.Batches,
+		)
+	}
+
+	// Log CEF server metrics
+	if udpServer != nil {
+		udpMetrics := udpServer.Metrics()
+		slog.Info("CEF UDP metrics",
+			"received", udpMetrics.Received,
+			"parsed", udpMetrics.Parsed,
+			"queued", udpMetrics.Queued,
+			"errors", udpMetrics.Errors,
+		)
+	}
+	if tcpServer != nil {
+		tcpMetrics := tcpServer.Metrics()
+		slog.Info("CEF TCP metrics",
+			"connections", tcpMetrics.Connections,
+			"received", tcpMetrics.Received,
+			"queued", tcpMetrics.Queued,
+			"errors", tcpMetrics.Errors,
 		)
 	}
 }

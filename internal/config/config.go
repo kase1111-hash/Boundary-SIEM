@@ -65,8 +65,49 @@ type ServerConfig struct {
 
 // IngestConfig holds ingestion settings.
 type IngestConfig struct {
-	MaxBatchSize   int `yaml:"max_batch_size"`
-	MaxPayloadSize int `yaml:"max_payload_size"`
+	MaxBatchSize   int       `yaml:"max_batch_size"`
+	MaxPayloadSize int       `yaml:"max_payload_size"`
+	CEF            CEFConfig `yaml:"cef"`
+}
+
+// CEFConfig holds CEF ingestion settings.
+type CEFConfig struct {
+	UDP        CEFUDPConfig        `yaml:"udp"`
+	TCP        CEFTCPConfig        `yaml:"tcp"`
+	Parser     CEFParserConfig     `yaml:"parser"`
+	Normalizer CEFNormalizerConfig `yaml:"normalizer"`
+}
+
+// CEFUDPConfig holds UDP server settings for CEF.
+type CEFUDPConfig struct {
+	Enabled        bool `yaml:"enabled"`
+	Address        string `yaml:"address"`
+	BufferSize     int    `yaml:"buffer_size"`
+	Workers        int    `yaml:"workers"`
+	MaxMessageSize int    `yaml:"max_message_size"`
+}
+
+// CEFTCPConfig holds TCP server settings for CEF.
+type CEFTCPConfig struct {
+	Enabled        bool          `yaml:"enabled"`
+	Address        string        `yaml:"address"`
+	TLSEnabled     bool          `yaml:"tls_enabled"`
+	TLSCertFile    string        `yaml:"tls_cert_file"`
+	TLSKeyFile     string        `yaml:"tls_key_file"`
+	MaxConnections int           `yaml:"max_connections"`
+	IdleTimeout    time.Duration `yaml:"idle_timeout"`
+	MaxLineLength  int           `yaml:"max_line_length"`
+}
+
+// CEFParserConfig holds CEF parser settings.
+type CEFParserConfig struct {
+	StrictMode    bool `yaml:"strict_mode"`
+	MaxExtensions int  `yaml:"max_extensions"`
+}
+
+// CEFNormalizerConfig holds CEF normalizer settings.
+type CEFNormalizerConfig struct {
+	DefaultTenantID string `yaml:"default_tenant_id"`
 }
 
 // QueueConfig holds queue settings.
@@ -106,6 +147,30 @@ func DefaultConfig() *Config {
 		Ingest: IngestConfig{
 			MaxBatchSize:   1000,
 			MaxPayloadSize: 10 * 1024 * 1024, // 10MB
+			CEF: CEFConfig{
+				UDP: CEFUDPConfig{
+					Enabled:        true,
+					Address:        ":5514",
+					BufferSize:     16 * 1024 * 1024, // 16MB
+					Workers:        8,
+					MaxMessageSize: 65535,
+				},
+				TCP: CEFTCPConfig{
+					Enabled:        true,
+					Address:        ":5515",
+					TLSEnabled:     false,
+					MaxConnections: 1000,
+					IdleTimeout:    5 * time.Minute,
+					MaxLineLength:  65535,
+				},
+				Parser: CEFParserConfig{
+					StrictMode:    false,
+					MaxExtensions: 100,
+				},
+				Normalizer: CEFNormalizerConfig{
+					DefaultTenantID: "default",
+				},
+			},
 		},
 		Queue: QueueConfig{
 			Size:           100000,
