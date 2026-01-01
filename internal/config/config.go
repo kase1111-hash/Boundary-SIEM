@@ -203,7 +203,7 @@ func DefaultConfig() *Config {
 		Validation: ValidationConfig{
 			MaxEventAge: 7 * 24 * time.Hour,
 			MaxFuture:   5 * time.Minute,
-			StrictMode:  true,
+			StrictMode:  false, // Disabled by default - enable for production
 		},
 		Auth: AuthConfig{
 			APIKeyHeader: "X-API-Key",

@@ -24,14 +24,15 @@ const (
 
 // RetentionPolicy defines data retention rules.
 type RetentionPolicy struct {
-	ID          string            `json:"id"`
-	Name        string            `json:"name"`
-	Description string            `json:"description,omitempty"`
-	DataType    string            `json:"data_type"`
-	Enabled     bool              `json:"enabled"`
-	Rules       []RetentionRule   `json:"rules"`
-	CreatedAt   time.Time         `json:"created_at"`
-	UpdatedAt   time.Time         `json:"updated_at"`
+	ID                      string          `json:"id"`
+	Name                    string          `json:"name"`
+	Description             string          `json:"description,omitempty"`
+	DataType                string          `json:"data_type"`
+	Enabled                 bool            `json:"enabled"`
+	Rules                   []RetentionRule `json:"rules"`
+	RequireBackupBeforePurge bool           `json:"require_backup_before_purge"` // Safety: require archive before delete
+	CreatedAt               time.Time       `json:"created_at"`
+	UpdatedAt               time.Time       `json:"updated_at"`
 }
 
 // RetentionRule defines a single retention rule.
@@ -200,11 +201,12 @@ func (rm *RetentionManager) initDefaultPolicies() {
 
 	policies := []*RetentionPolicy{
 		{
-			ID:          "events-default",
-			Name:        "Default Event Retention",
-			Description: "Standard retention for security events",
-			DataType:    "events",
-			Enabled:     true,
+			ID:                       "events-default",
+			Name:                     "Default Event Retention",
+			Description:              "Standard retention for security events",
+			DataType:                 "events",
+			Enabled:                  true,
+			RequireBackupBeforePurge: true, // Safety: never purge without archive
 			Rules: []RetentionRule{
 				{Tier: TierHot, MinAge: 0, MaxAge: 7 * 24 * time.Hour, Compression: "none"},
 				{Tier: TierWarm, MinAge: 7 * 24 * time.Hour, MaxAge: 30 * 24 * time.Hour, Compression: "lz4"},
@@ -215,11 +217,12 @@ func (rm *RetentionManager) initDefaultPolicies() {
 			UpdatedAt: now,
 		},
 		{
-			ID:          "alerts-default",
-			Name:        "Default Alert Retention",
-			Description: "Standard retention for alerts",
-			DataType:    "alerts",
-			Enabled:     true,
+			ID:                       "alerts-default",
+			Name:                     "Default Alert Retention",
+			Description:              "Standard retention for alerts",
+			DataType:                 "alerts",
+			Enabled:                  true,
+			RequireBackupBeforePurge: true, // Safety: never purge without archive
 			Rules: []RetentionRule{
 				{Tier: TierHot, MinAge: 0, MaxAge: 30 * 24 * time.Hour, Compression: "none"},
 				{Tier: TierWarm, MinAge: 30 * 24 * time.Hour, MaxAge: 90 * 24 * time.Hour, Compression: "lz4"},
@@ -229,11 +232,12 @@ func (rm *RetentionManager) initDefaultPolicies() {
 			UpdatedAt: now,
 		},
 		{
-			ID:          "audit-logs",
-			Name:        "Audit Log Retention",
-			Description: "Long-term retention for audit logs (compliance)",
-			DataType:    "audit",
-			Enabled:     true,
+			ID:                       "audit-logs",
+			Name:                     "Audit Log Retention",
+			Description:              "Long-term retention for audit logs (compliance)",
+			DataType:                 "audit",
+			Enabled:                  true,
+			RequireBackupBeforePurge: true, // Safety: never purge without archive
 			Rules: []RetentionRule{
 				{Tier: TierHot, MinAge: 0, MaxAge: 90 * 24 * time.Hour, Compression: "none"},
 				{Tier: TierCold, MinAge: 90 * 24 * time.Hour, MaxAge: 7 * 365 * 24 * time.Hour, Compression: "zstd"},
@@ -242,11 +246,12 @@ func (rm *RetentionManager) initDefaultPolicies() {
 			UpdatedAt: now,
 		},
 		{
-			ID:          "metrics-default",
-			Name:        "Metrics Retention",
-			Description: "Retention for time-series metrics",
-			DataType:    "metrics",
-			Enabled:     true,
+			ID:                       "metrics-default",
+			Name:                     "Metrics Retention",
+			Description:              "Retention for time-series metrics",
+			DataType:                 "metrics",
+			Enabled:                  true,
+			RequireBackupBeforePurge: true, // Safety: never purge without archive
 			Rules: []RetentionRule{
 				{Tier: TierHot, MinAge: 0, MaxAge: 24 * time.Hour, Compression: "none"},
 				{Tier: TierWarm, MinAge: 24 * time.Hour, MaxAge: 7 * 24 * time.Hour, Compression: "lz4", DownsampleRatio: 5},
@@ -256,11 +261,12 @@ func (rm *RetentionManager) initDefaultPolicies() {
 			UpdatedAt: now,
 		},
 		{
-			ID:          "blockchain-events",
-			Name:        "Blockchain Event Retention",
-			Description: "Retention for blockchain-specific events",
-			DataType:    "blockchain",
-			Enabled:     true,
+			ID:                       "blockchain-events",
+			Name:                     "Blockchain Event Retention",
+			Description:              "Retention for blockchain-specific events",
+			DataType:                 "blockchain",
+			Enabled:                  true,
+			RequireBackupBeforePurge: true, // Safety: never purge without archive
 			Rules: []RetentionRule{
 				{Tier: TierHot, MinAge: 0, MaxAge: 14 * 24 * time.Hour, Compression: "none"},
 				{Tier: TierWarm, MinAge: 14 * 24 * time.Hour, MaxAge: 90 * 24 * time.Hour, Compression: "lz4"},
@@ -270,11 +276,12 @@ func (rm *RetentionManager) initDefaultPolicies() {
 			UpdatedAt: now,
 		},
 		{
-			ID:          "compliance-data",
-			Name:        "Compliance Data Retention",
-			Description: "Extended retention for regulatory compliance",
-			DataType:    "compliance",
-			Enabled:     true,
+			ID:                       "compliance-data",
+			Name:                     "Compliance Data Retention",
+			Description:              "Extended retention for regulatory compliance",
+			DataType:                 "compliance",
+			Enabled:                  true,
+			RequireBackupBeforePurge: true, // Safety: never purge without archive
 			Rules: []RetentionRule{
 				{Tier: TierHot, MinAge: 0, MaxAge: 30 * 24 * time.Hour, Compression: "none"},
 				{Tier: TierCold, MinAge: 30 * 24 * time.Hour, MaxAge: 10 * 365 * 24 * time.Hour, Compression: "zstd"},
@@ -419,8 +426,79 @@ func (rm *RetentionManager) applyPolicy(policy *RetentionPolicy) {
 	// Delete data past final tier's max age
 	if len(policy.Rules) > 0 {
 		lastRule := policy.Rules[len(policy.Rules)-1]
+
+		// Safety check: require backup before purge (default behavior)
+		if policy.RequireBackupBeforePurge {
+			if !rm.verifyDataArchived(policy.DataType, lastRule.Tier, lastRule.MaxAge) {
+				rm.logger.Warn("skipping purge: data not archived",
+					"policy_id", policy.ID,
+					"data_type", policy.DataType,
+					"tier", lastRule.Tier,
+				)
+				return
+			}
+		}
+
 		rm.deleteOldData(policy.DataType, lastRule.Tier, lastRule.MaxAge)
 	}
+}
+
+// verifyDataArchived checks if data has been archived before allowing purge.
+func (rm *RetentionManager) verifyDataArchived(dataType string, tier StorageTier, maxAge time.Duration) bool {
+	// Check if S3 archiver is configured and healthy
+	if rm.archiver == nil {
+		rm.logger.Warn("archiver not configured, cannot verify backup",
+			"data_type", dataType,
+		)
+		return false
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	health := rm.archiver.GetHealthStatus(ctx)
+	if health == nil || !health.Healthy {
+		rm.logger.Warn("archiver unhealthy, cannot verify backup",
+			"data_type", dataType,
+		)
+		return false
+	}
+
+	// Verify recent archive exists for this data type
+	archives, err := rm.archiver.ListArchives(ctx, dataType)
+	if err != nil {
+		rm.logger.Warn("failed to list archives",
+			"data_type", dataType,
+			"error", err,
+		)
+		return false
+	}
+
+	if len(archives) == 0 {
+		rm.logger.Warn("no archives found for data type",
+			"data_type", dataType,
+		)
+		return false
+	}
+
+	// Check if the most recent archive covers the data being purged
+	cutoffTime := time.Now().Add(-maxAge)
+	for _, archive := range archives {
+		if archive.EndTime.After(cutoffTime) {
+			rm.logger.Debug("verified archive exists for purge",
+				"data_type", dataType,
+				"archive_id", archive.ID,
+				"archive_end_time", archive.EndTime,
+			)
+			return true
+		}
+	}
+
+	rm.logger.Warn("no recent archive covers data being purged",
+		"data_type", dataType,
+		"cutoff_time", cutoffTime,
+	)
+	return false
 }
 
 // moveData moves data between tiers.
