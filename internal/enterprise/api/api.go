@@ -676,7 +676,7 @@ type Source struct {
 	IP   string %sjson:"ip,omitempty"%s
 	Type string %sjson:"type"%s
 }
-`, config.PackageName, config.PackageName, "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`")
+`, config.PackageName, config.PackageName, "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`", "`")
 }
 
 func (g *SDKGenerator) generatePythonClient(config *SDKConfig) string {
