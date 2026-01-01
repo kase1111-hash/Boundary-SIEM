@@ -1,0 +1,46 @@
+# Boundary SIEM Failure Notification Service
+# Triggered when main service fails - sends alerts
+
+[Unit]
+Description=Boundary SIEM Failure Handler for %i
+After=network-online.target
+
+[Service]
+Type=oneshot
+
+# Send notification about failure
+ExecStart=/bin/sh -c '\
+    TIMESTAMP=$(date -Iseconds); \
+    HOSTNAME=$(hostname); \
+    MESSAGE="CRITICAL: Boundary SIEM service %i failed on ${HOSTNAME} at ${TIMESTAMP}"; \
+    \
+    # Log to syslog
+    logger -p daemon.crit -t boundary-siem-failure "${MESSAGE}"; \
+    \
+    # Write to failure log
+    echo "${MESSAGE}" >> /var/log/boundary-siem/failures.log; \
+    \
+    # Try to send email if configured
+    if [ -f /etc/boundary-siem/alert-email.conf ]; then \
+        . /etc/boundary-siem/alert-email.conf; \
+        echo "${MESSAGE}" | mail -s "CRITICAL: Boundary SIEM Failed" "${ALERT_EMAIL}" 2>/dev/null || true; \
+    fi; \
+    \
+    # Try webhook if configured
+    if [ -f /etc/boundary-siem/alert-webhook.conf ]; then \
+        . /etc/boundary-siem/alert-webhook.conf; \
+        curl -s -X POST -H "Content-Type: application/json" \
+            -d "{\"text\": \"${MESSAGE}\", \"severity\": \"critical\"}" \
+            "${WEBHOOK_URL}" 2>/dev/null || true; \
+    fi; \
+    \
+    # Collect diagnostic info
+    journalctl -u %i -n 100 --no-pager > /var/log/boundary-siem/crash-$(date +%%Y%%m%%d-%%H%%M%%S).log 2>/dev/null || true; \
+    '
+
+# Security settings
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+ReadWritePaths=/var/log/boundary-siem

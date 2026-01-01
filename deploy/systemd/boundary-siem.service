@@ -1,0 +1,154 @@
+# Boundary SIEM Service with Watchdog Protection
+# This service provides process protection against termination
+#
+# Install: cp boundary-siem.service /etc/systemd/system/
+#          systemctl daemon-reload
+#          systemctl enable boundary-siem
+#          systemctl start boundary-siem
+
+[Unit]
+Description=Boundary SIEM Security Information and Event Management
+Documentation=https://github.com/kase1111-hash/Boundary-SIEM
+After=network-online.target
+After=boundary-siem-firewall.service
+Wants=network-online.target
+Wants=boundary-siem-firewall.service
+
+# Start after security policies are loaded
+After=apparmor.service selinux-policy-migrate-local-changes@targeted.service
+
+# If we crash, make sure to notify admin
+OnFailure=boundary-siem-failure@%n.service
+
+[Service]
+Type=notify
+NotifyAccess=main
+
+# Main executable
+ExecStart=/usr/local/bin/boundary-siem serve --config /etc/boundary-siem/config.yaml
+
+# Pre-start checks
+ExecStartPre=/usr/local/bin/boundary-siem preflight --config /etc/boundary-siem/config.yaml
+
+# Graceful reload
+ExecReload=/bin/kill -HUP $MAINPID
+
+# =====================================================
+# WATCHDOG CONFIGURATION
+# =====================================================
+
+# Watchdog interval - process must notify within this time
+# Set to 5 seconds for fast detection of hangs/freezes
+WatchdogSec=5
+
+# Restart on watchdog timeout
+WatchdogSignal=SIGABRT
+
+# Also restart on these failures
+Restart=always
+RestartSec=1
+RestartPreventExitStatus=SIGTERM SIGINT
+
+# Maximum restart attempts (10 in 5 minutes)
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+# =====================================================
+# PROCESS PROTECTION
+# =====================================================
+
+# Run as dedicated user (create with: useradd -r -s /sbin/nologin boundary-siem)
+User=boundary-siem
+Group=boundary-siem
+
+# Protect against OOM killer - prefer killing other processes
+OOMScoreAdjust=-900
+
+# Prevent memory overcommit from affecting us
+MemoryMax=2G
+MemoryHigh=1G
+
+# CPU limits to prevent runaway
+CPUQuota=200%
+
+# IO priority
+IOSchedulingClass=realtime
+IOSchedulingPriority=4
+
+# Nice level (higher priority)
+Nice=-10
+
+# =====================================================
+# SECURITY HARDENING
+# =====================================================
+
+# Filesystem protection
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+
+# Writable directories
+ReadWritePaths=/var/lib/boundary-siem /var/log/boundary-siem /run/boundary-siem
+
+# Network namespace (use host network for SIEM)
+PrivateNetwork=no
+
+# Restrict address families
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+
+# No new privileges after exec
+NoNewPrivileges=yes
+
+# Capability restrictions
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID CAP_SYS_RESOURCE
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH
+
+# Seccomp filter
+SystemCallFilter=@system-service
+SystemCallFilter=~@privileged @resources
+SystemCallArchitectures=native
+
+# Restrict realtime and memory locking
+LockPersonality=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+
+# Umask
+UMask=0027
+
+# =====================================================
+# RUNTIME DIRECTORIES
+# =====================================================
+
+RuntimeDirectory=boundary-siem
+RuntimeDirectoryMode=0750
+StateDirectory=boundary-siem
+StateDirectoryMode=0750
+LogsDirectory=boundary-siem
+LogsDirectoryMode=0750
+ConfigurationDirectory=boundary-siem
+ConfigurationDirectoryMode=0750
+
+# =====================================================
+# ENVIRONMENT
+# =====================================================
+
+# Notify systemd of watchdog
+Environment=WATCHDOG_USEC=5000000
+Environment=BOUNDARY_SIEM_WATCHDOG=1
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=boundary-siem
+
+[Install]
+WantedBy=multi-user.target
