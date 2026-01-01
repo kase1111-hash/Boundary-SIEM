@@ -1,6 +1,7 @@
 package ingest
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -22,6 +23,11 @@ func WithMiddleware(handler http.Handler, cfg *config.Config) http.Handler {
 	// API key authentication (if enabled)
 	if cfg.Auth.Enabled {
 		h = authMiddleware(h, cfg.Auth)
+	}
+
+	// CORS middleware (if enabled) - must be outermost to handle preflight OPTIONS
+	if cfg.CORS.Enabled {
+		h = corsMiddleware(h, cfg.CORS)
 	}
 
 	return h
@@ -102,4 +108,83 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// corsMiddleware handles CORS preflight and adds CORS headers to responses.
+func corsMiddleware(next http.Handler, corsCfg config.CORSConfig) http.Handler {
+	// Build allowed origins map for O(1) lookup (unless wildcard)
+	allowAll := false
+	allowedOrigins := make(map[string]bool)
+	for _, origin := range corsCfg.AllowedOrigins {
+		if origin == "*" {
+			allowAll = true
+			break
+		}
+		allowedOrigins[origin] = true
+	}
+
+	// Pre-build header values
+	allowMethods := joinStrings(corsCfg.AllowedMethods, ", ")
+	allowHeaders := joinStrings(corsCfg.AllowedHeaders, ", ")
+	exposeHeaders := joinStrings(corsCfg.ExposedHeaders, ", ")
+	maxAge := fmt.Sprintf("%d", corsCfg.MaxAge)
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		origin := r.Header.Get("Origin")
+
+		// If no origin header, it's not a CORS request - proceed normally
+		if origin == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Check if origin is allowed
+		originAllowed := allowAll || allowedOrigins[origin]
+		if !originAllowed {
+			// Origin not allowed - don't add CORS headers, let request proceed
+			// The browser will block the response
+			slog.Warn("CORS origin not allowed", "origin", origin, "path", r.URL.Path)
+			next.ServeHTTP(w, r)
+			return
+		}
+
+		// Set CORS headers
+		if allowAll {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+		} else {
+			w.Header().Set("Access-Control-Allow-Origin", origin)
+			w.Header().Set("Vary", "Origin")
+		}
+
+		if corsCfg.AllowCredentials && !allowAll {
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
+
+		if exposeHeaders != "" {
+			w.Header().Set("Access-Control-Expose-Headers", exposeHeaders)
+		}
+
+		// Handle preflight OPTIONS request
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", allowMethods)
+			w.Header().Set("Access-Control-Allow-Headers", allowHeaders)
+			w.Header().Set("Access-Control-Max-Age", maxAge)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// joinStrings joins strings with a separator.
+func joinStrings(strs []string, sep string) string {
+	if len(strs) == 0 {
+		return ""
+	}
+	result := strs[0]
+	for i := 1; i < len(strs); i++ {
+		result += sep + strs[i]
+	}
+	return result
 }
