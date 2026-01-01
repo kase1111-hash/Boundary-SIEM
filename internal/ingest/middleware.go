@@ -25,6 +25,11 @@ func WithMiddleware(handler http.Handler, cfg *config.Config) http.Handler {
 		h = authMiddleware(h, cfg.Auth)
 	}
 
+	// Rate limiting (if enabled) - after auth so authenticated requests are also limited
+	if cfg.RateLimit.Enabled {
+		h = rateLimitMiddleware(h, cfg.RateLimit)
+	}
+
 	// CORS middleware (if enabled) - must be outermost to handle preflight OPTIONS
 	if cfg.CORS.Enabled {
 		h = corsMiddleware(h, cfg.CORS)

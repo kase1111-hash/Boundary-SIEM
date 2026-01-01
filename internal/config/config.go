@@ -17,9 +17,21 @@ type Config struct {
 	Validation ValidationConfig `yaml:"validation"`
 	Auth       AuthConfig       `yaml:"auth"`
 	CORS       CORSConfig       `yaml:"cors"`
+	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
 	Logging    LoggingConfig    `yaml:"logging"`
 	Storage    StorageConfig    `yaml:"storage"`
 	Consumer   ConsumerConfig   `yaml:"consumer"`
+}
+
+// RateLimitConfig holds rate limiting settings.
+type RateLimitConfig struct {
+	Enabled       bool          `yaml:"enabled"`
+	RequestsPerIP int           `yaml:"requests_per_ip"` // Max requests per IP per window
+	WindowSize    time.Duration `yaml:"window_size"`     // Time window for rate limiting
+	BurstSize     int           `yaml:"burst_size"`      // Allow burst above limit temporarily
+	CleanupPeriod time.Duration `yaml:"cleanup_period"`  // How often to clean old entries
+	ExemptPaths   []string      `yaml:"exempt_paths"`    // Paths exempt from rate limiting
+	TrustProxy    bool          `yaml:"trust_proxy"`     // Trust X-Forwarded-For header
 }
 
 // CORSConfig holds CORS settings.
@@ -218,6 +230,15 @@ func DefaultConfig() *Config {
 			AllowCredentials: false, // Set to false when AllowedOrigins is "*"
 			MaxAge:           86400, // 24 hours preflight cache
 		},
+		RateLimit: RateLimitConfig{
+			Enabled:       true,              // Rate limiting enabled by default
+			RequestsPerIP: 1000,              // 1000 requests per IP per window
+			WindowSize:    time.Minute,       // 1 minute window
+			BurstSize:     50,                // Allow 50 extra requests burst
+			CleanupPeriod: 5 * time.Minute,   // Clean old entries every 5 minutes
+			ExemptPaths:   []string{"/health", "/metrics"}, // Health/metrics exempt
+			TrustProxy:    false,             // Don't trust X-Forwarded-For by default
+		},
 		Logging: LoggingConfig{
 			Level:  "info",
 			Format: "json",
@@ -323,6 +344,19 @@ func (c *Config) applyEnvOverrides() {
 
 	if origins := os.Getenv("SIEM_CORS_ORIGINS"); origins != "" {
 		c.CORS.AllowedOrigins = splitAndTrim(origins, ",")
+	}
+
+	// Rate limit settings
+	if enabled := os.Getenv("SIEM_RATELIMIT_ENABLED"); enabled == "false" {
+		c.RateLimit.Enabled = false
+	}
+
+	if rps := os.Getenv("SIEM_RATELIMIT_RPS"); rps != "" {
+		fmt.Sscanf(rps, "%d", &c.RateLimit.RequestsPerIP)
+	}
+
+	if burst := os.Getenv("SIEM_RATELIMIT_BURST"); burst != "" {
+		fmt.Sscanf(burst, "%d", &c.RateLimit.BurstSize)
 	}
 }
 
