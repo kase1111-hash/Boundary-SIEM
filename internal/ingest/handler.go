@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -257,4 +258,104 @@ func respondError(w http.ResponseWriter, status int, message string, requestID s
 		"request_id": requestID,
 	}
 	respondJSON(w, status, resp)
+}
+
+// DreamingResponse represents the system's current activity state.
+type DreamingResponse struct {
+	Status      string         `json:"status"`
+	Activity    string         `json:"activity"`
+	Description string         `json:"description"`
+	Metrics     DreamingMetrics `json:"metrics"`
+	Timestamp   time.Time      `json:"timestamp"`
+}
+
+// DreamingMetrics contains the system's current operational metrics.
+type DreamingMetrics struct {
+	EventsTotal   uint64  `json:"events_total"`
+	QueueDepth    int     `json:"queue_depth"`
+	QueueCapacity int     `json:"queue_capacity"`
+	QueueUsage    float64 `json:"queue_usage_percent"`
+	UptimeSeconds int     `json:"uptime_seconds"`
+	EventsPerSec  float64 `json:"events_per_second"`
+}
+
+// Dreaming handles GET /api/system/dreaming.
+// Reports the current system activity for Agent OS integration.
+func (h *Handler) Dreaming(w http.ResponseWriter, r *http.Request) {
+	queueMetrics := h.queue.Metrics()
+	uptime := time.Since(h.startTime)
+	eventsTotal := atomic.LoadUint64(&h.eventsTotal)
+
+	// Calculate events per second
+	var eventsPerSec float64
+	if uptime.Seconds() > 0 {
+		eventsPerSec = float64(eventsTotal) / uptime.Seconds()
+	}
+
+	// Calculate queue usage percentage
+	var queueUsage float64
+	if queueMetrics.Capacity > 0 {
+		queueUsage = (float64(queueMetrics.Depth) / float64(queueMetrics.Capacity)) * 100
+	}
+
+	// Determine current activity status
+	status, activity, description := h.determineActivity(queueMetrics, eventsPerSec)
+
+	resp := DreamingResponse{
+		Status:      status,
+		Activity:    activity,
+		Description: description,
+		Metrics: DreamingMetrics{
+			EventsTotal:   eventsTotal,
+			QueueDepth:    queueMetrics.Depth,
+			QueueCapacity: queueMetrics.Capacity,
+			QueueUsage:    queueUsage,
+			UptimeSeconds: int(uptime.Seconds()),
+			EventsPerSec:  eventsPerSec,
+		},
+		Timestamp: time.Now().UTC(),
+	}
+
+	// Log to CLI so operators can see the status
+	slog.Info("system dreaming status",
+		"status", resp.Status,
+		"activity", resp.Activity,
+		"description", resp.Description,
+		"queue_depth", queueMetrics.Depth,
+		"events_total", eventsTotal,
+		"events_per_sec", fmt.Sprintf("%.2f", eventsPerSec),
+	)
+
+	respondJSON(w, http.StatusOK, resp)
+}
+
+// determineActivity analyzes system state and returns human-readable status.
+func (h *Handler) determineActivity(metrics queue.QueueMetrics, eventsPerSec float64) (status, activity, description string) {
+	queueUsage := float64(metrics.Depth) / float64(metrics.Capacity) * 100
+
+	switch {
+	case queueUsage > 90:
+		return "busy", "processing_backlog",
+			fmt.Sprintf("Processing event backlog - queue at %.1f%% capacity with %d events pending", queueUsage, metrics.Depth)
+
+	case queueUsage > 50:
+		return "active", "processing_events",
+			fmt.Sprintf("Actively processing events - %.1f events/sec, %d in queue", eventsPerSec, metrics.Depth)
+
+	case eventsPerSec > 10:
+		return "active", "high_throughput",
+			fmt.Sprintf("High throughput ingestion - %.1f events/sec", eventsPerSec)
+
+	case eventsPerSec > 1:
+		return "active", "ingesting",
+			fmt.Sprintf("Ingesting events at %.1f events/sec", eventsPerSec)
+
+	case eventsPerSec > 0:
+		return "idle", "low_activity",
+			fmt.Sprintf("Low activity - %.2f events/sec, monitoring for new events", eventsPerSec)
+
+	default:
+		return "idle", "waiting",
+			"Waiting for events - all systems ready, listening on configured ports"
+	}
 }

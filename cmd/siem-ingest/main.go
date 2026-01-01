@@ -71,6 +71,7 @@ func main() {
 	mux.HandleFunc("POST /v1/events", handler.HandleEvents)
 	mux.HandleFunc("GET /health", handler.HealthCheck)
 	mux.HandleFunc("GET /metrics", handler.Metrics)
+	mux.HandleFunc("GET /api/system/dreaming", handler.Dreaming)
 
 	// Apply middleware
 	wrappedHandler := ingest.WithMiddleware(mux, cfg)
