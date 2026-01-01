@@ -1,0 +1,146 @@
+# Boundary SIEM iptables Rules (Legacy Systems)
+# Generated for systems without nftables support
+#
+# Install: iptables-restore < /etc/iptables/boundary-siem.rules
+# Save:    iptables-save > /etc/iptables/boundary-siem.rules
+# Verify:  iptables -L -n -v
+
+*filter
+:INPUT DROP [0:0]
+:FORWARD DROP [0:0]
+:OUTPUT ACCEPT [0:0]
+:SIEM_SERVICES - [0:0]
+:MGMT_SERVICES - [0:0]
+:LOGGING - [0:0]
+
+# =========================================
+# INPUT Chain
+# =========================================
+
+# Allow established connections
+-A INPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Drop invalid packets
+-A INPUT -m conntrack --ctstate INVALID -j DROP
+
+# Allow loopback
+-A INPUT -i lo -j ACCEPT
+
+# ICMP - rate limited
+-A INPUT -p icmp --icmp-type echo-request -m limit --limit 10/sec --limit-burst 20 -j ACCEPT
+-A INPUT -p icmp --icmp-type echo-reply -j ACCEPT
+-A INPUT -p icmp --icmp-type destination-unreachable -j ACCEPT
+-A INPUT -p icmp --icmp-type time-exceeded -j ACCEPT
+
+# Jump to service chains
+-A INPUT -j SIEM_SERVICES
+-A INPUT -j MGMT_SERVICES
+
+# Log and drop everything else
+-A INPUT -j LOGGING
+
+# =========================================
+# SIEM Services (Public)
+# =========================================
+
+# Event ingestion API (HTTPS)
+-A SIEM_SERVICES -p tcp --dport 8443 -j ACCEPT
+
+# Syslog receivers
+-A SIEM_SERVICES -p udp --dport 5514 -j ACCEPT
+-A SIEM_SERVICES -p tcp --dport 5514 -j ACCEPT
+-A SIEM_SERVICES -p tcp --dport 6514 -j ACCEPT
+
+# Health check endpoint - rate limited
+-A SIEM_SERVICES -p tcp --dport 8080 -m limit --limit 100/sec --limit-burst 200 -j ACCEPT
+
+# =========================================
+# Management Services (Restricted)
+# =========================================
+
+# Define trusted networks
+# 10.0.0.0/8
+-A MGMT_SERVICES -s 10.0.0.0/8 -p tcp --dport 9090 -j ACCEPT
+-A MGMT_SERVICES -s 10.0.0.0/8 -p tcp --dport 22 -m conntrack --ctstate NEW -m limit --limit 5/min --limit-burst 3 -j ACCEPT
+-A MGMT_SERVICES -s 10.0.0.0/8 -p tcp --dport 9100 -j ACCEPT
+-A MGMT_SERVICES -s 10.0.0.0/8 -p tcp --dport 6060 -j ACCEPT
+
+# 172.16.0.0/12
+-A MGMT_SERVICES -s 172.16.0.0/12 -p tcp --dport 9090 -j ACCEPT
+-A MGMT_SERVICES -s 172.16.0.0/12 -p tcp --dport 22 -m conntrack --ctstate NEW -m limit --limit 5/min --limit-burst 3 -j ACCEPT
+-A MGMT_SERVICES -s 172.16.0.0/12 -p tcp --dport 9100 -j ACCEPT
+-A MGMT_SERVICES -s 172.16.0.0/12 -p tcp --dport 6060 -j ACCEPT
+
+# 192.168.0.0/16
+-A MGMT_SERVICES -s 192.168.0.0/16 -p tcp --dport 9090 -j ACCEPT
+-A MGMT_SERVICES -s 192.168.0.0/16 -p tcp --dport 22 -m conntrack --ctstate NEW -m limit --limit 5/min --limit-burst 3 -j ACCEPT
+-A MGMT_SERVICES -s 192.168.0.0/16 -p tcp --dport 9100 -j ACCEPT
+-A MGMT_SERVICES -s 192.168.0.0/16 -p tcp --dport 6060 -j ACCEPT
+
+# =========================================
+# Logging Chain
+# =========================================
+
+-A LOGGING -m limit --limit 5/min --limit-burst 10 -j LOG --log-prefix "BOUNDARY-SIEM DROP: " --log-level 4
+-A LOGGING -j DROP
+
+# =========================================
+# OUTPUT Chain
+# =========================================
+
+# Allow loopback
+-A OUTPUT -o lo -j ACCEPT
+
+# Allow established
+-A OUTPUT -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
+
+# Allow DNS
+-A OUTPUT -p udp --dport 53 -j ACCEPT
+-A OUTPUT -p tcp --dport 53 -j ACCEPT
+
+# Allow NTP
+-A OUTPUT -p udp --dport 123 -j ACCEPT
+
+# Allow HTTP/HTTPS
+-A OUTPUT -p tcp --dport 80 -j ACCEPT
+-A OUTPUT -p tcp --dport 443 -j ACCEPT
+
+# Allow SMTP
+-A OUTPUT -p tcp --dport 25 -j ACCEPT
+-A OUTPUT -p tcp --dport 465 -j ACCEPT
+-A OUTPUT -p tcp --dport 587 -j ACCEPT
+
+# Allow Kafka
+-A OUTPUT -p tcp --dport 9092 -j ACCEPT
+-A OUTPUT -p tcp --dport 9093 -j ACCEPT
+
+# Allow ClickHouse
+-A OUTPUT -p tcp --dport 8123 -j ACCEPT
+-A OUTPUT -p tcp --dport 9000 -j ACCEPT
+-A OUTPUT -p tcp --dport 9440 -j ACCEPT
+
+# Allow syslog
+-A OUTPUT -p udp --dport 514 -j ACCEPT
+-A OUTPUT -p tcp --dport 514 -j ACCEPT
+-A OUTPUT -p tcp --dport 6514 -j ACCEPT
+
+# =========================================
+# FORWARD Chain - Drop all
+# =========================================
+
+-A FORWARD -j DROP
+
+COMMIT
+
+# =========================================
+# Raw table for SYN flood protection
+# =========================================
+
+*raw
+:PREROUTING ACCEPT [0:0]
+:OUTPUT ACCEPT [0:0]
+
+# SYN flood protection using hashlimit
+-A PREROUTING -p tcp --syn -m hashlimit --hashlimit-above 25/sec --hashlimit-burst 50 --hashlimit-mode srcip --hashlimit-name synflood -j DROP
+
+COMMIT

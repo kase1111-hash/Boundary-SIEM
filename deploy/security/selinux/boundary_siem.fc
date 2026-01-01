@@ -1,0 +1,37 @@
+# SELinux File Contexts for Boundary SIEM
+# Install with: semanage fcontext -a -t <type> '<path>'
+#               restorecon -Rv <path>
+
+# Executables
+/usr/local/bin/boundary-siem              --  gen_context(system_u:object_r:boundary_siem_exec_t,s0)
+/usr/bin/boundary-siem                    --  gen_context(system_u:object_r:boundary_siem_exec_t,s0)
+/opt/boundary-siem/bin/boundary-siem      --  gen_context(system_u:object_r:boundary_siem_exec_t,s0)
+
+# Configuration files
+/etc/boundary-siem(/.*)?                      gen_context(system_u:object_r:boundary_siem_conf_t,s0)
+/opt/boundary-siem/etc(/.*)?                  gen_context(system_u:object_r:boundary_siem_conf_t,s0)
+/opt/boundary-siem/config(/.*)?               gen_context(system_u:object_r:boundary_siem_conf_t,s0)
+
+# Log files
+/var/log/boundary-siem(/.*)?                  gen_context(system_u:object_r:boundary_siem_log_t,s0)
+/opt/boundary-siem/logs(/.*)?                 gen_context(system_u:object_r:boundary_siem_log_t,s0)
+
+# Variable/state data
+/var/lib/boundary-siem(/.*)?                  gen_context(system_u:object_r:boundary_siem_var_t,s0)
+/opt/boundary-siem/var(/.*)?                  gen_context(system_u:object_r:boundary_siem_var_t,s0)
+
+# Data storage
+/var/lib/boundary-siem/data(/.*)?             gen_context(system_u:object_r:boundary_siem_data_t,s0)
+/opt/boundary-siem/data(/.*)?                 gen_context(system_u:object_r:boundary_siem_data_t,s0)
+
+# Temporary files
+/tmp/boundary-siem(/.*)?                      gen_context(system_u:object_r:boundary_siem_tmp_t,s0)
+/var/tmp/boundary-siem(/.*)?                  gen_context(system_u:object_r:boundary_siem_tmp_t,s0)
+
+# PID file
+/run/boundary-siem\.pid                   --  gen_context(system_u:object_r:boundary_siem_var_t,s0)
+/var/run/boundary-siem\.pid               --  gen_context(system_u:object_r:boundary_siem_var_t,s0)
+
+# Socket file
+/run/boundary-siem\.sock                  -s  gen_context(system_u:object_r:boundary_siem_var_t,s0)
+/var/run/boundary-siem\.sock              -s  gen_context(system_u:object_r:boundary_siem_var_t,s0)

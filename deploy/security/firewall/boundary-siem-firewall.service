@@ -1,0 +1,85 @@
+# Boundary SIEM Firewall Service
+# Loads firewall rules at boot, independent of any daemon
+#
+# Install: cp boundary-siem-firewall.service /etc/systemd/system/
+#          systemctl daemon-reload
+#          systemctl enable boundary-siem-firewall
+#          systemctl start boundary-siem-firewall
+
+[Unit]
+Description=Boundary SIEM Firewall Rules
+Documentation=https://github.com/kase1111-hash/Boundary-SIEM
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target
+Before=shutdown.target
+Conflicts=shutdown.target
+
+# Load before networking comes up
+After=systemd-sysctl.service
+After=systemd-modules-load.service
+
+# Ensure we load before the SIEM daemon
+Before=boundary-siem.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+
+# Detect and use the appropriate firewall backend
+ExecStartPre=/bin/sh -c 'test -x /usr/sbin/nft && echo "Using nftables" || echo "Using iptables"'
+
+# Load nftables rules if available, otherwise use iptables
+ExecStart=/bin/sh -c '\
+    if [ -x /usr/sbin/nft ] && [ -f /etc/nftables.d/boundary-siem.nft ]; then \
+        /usr/sbin/nft -f /etc/nftables.d/boundary-siem.nft; \
+    elif [ -f /etc/iptables/boundary-siem.rules ]; then \
+        /sbin/iptables-restore < /etc/iptables/boundary-siem.rules; \
+    else \
+        echo "No firewall rules found!"; \
+        exit 1; \
+    fi'
+
+# Verify rules loaded correctly
+ExecStartPost=/bin/sh -c '\
+    if [ -x /usr/sbin/nft ]; then \
+        /usr/sbin/nft list table inet boundary_siem > /dev/null 2>&1 || exit 1; \
+    else \
+        /sbin/iptables -L SIEM_SERVICES -n > /dev/null 2>&1 || exit 1; \
+    fi; \
+    echo "Boundary SIEM firewall rules loaded successfully"'
+
+# Stop removes the rules (optional - can keep rules active)
+ExecStop=/bin/sh -c '\
+    if [ -x /usr/sbin/nft ]; then \
+        /usr/sbin/nft delete table inet boundary_siem 2>/dev/null || true; \
+        /usr/sbin/nft delete table inet boundary_ratelimit 2>/dev/null || true; \
+    else \
+        /sbin/iptables -F SIEM_SERVICES 2>/dev/null || true; \
+        /sbin/iptables -F MGMT_SERVICES 2>/dev/null || true; \
+        /sbin/iptables -F LOGGING 2>/dev/null || true; \
+    fi; \
+    echo "Boundary SIEM firewall rules removed"'
+
+# Reload command for manual rule updates
+ExecReload=/bin/sh -c '\
+    if [ -x /usr/sbin/nft ]; then \
+        /usr/sbin/nft -f /etc/nftables.d/boundary-siem.nft; \
+    else \
+        /sbin/iptables-restore < /etc/iptables/boundary-siem.rules; \
+    fi; \
+    echo "Boundary SIEM firewall rules reloaded"'
+
+# Security settings
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+NoNewPrivileges=yes
+
+# Required capabilities
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target
+WantedBy=network-pre.target
