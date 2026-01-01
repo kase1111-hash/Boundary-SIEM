@@ -320,12 +320,28 @@ type GraphQLLocation struct {
 
 // GraphQLHandler handles GraphQL requests.
 type GraphQLHandler struct {
-	schema *GraphQLSchema
+	schema           *GraphQLSchema
+	executor         *Executor
+	complexityConfig *ComplexityConfig
 }
 
 // NewGraphQLHandler creates a new GraphQL handler.
 func NewGraphQLHandler(schema *GraphQLSchema) *GraphQLHandler {
-	return &GraphQLHandler{schema: schema}
+	return &GraphQLHandler{
+		schema:           schema,
+		executor:         NewExecutor(schema),
+		complexityConfig: DefaultComplexityConfig(),
+	}
+}
+
+// SetComplexityConfig sets the complexity configuration.
+func (h *GraphQLHandler) SetComplexityConfig(config *ComplexityConfig) {
+	h.complexityConfig = config
+}
+
+// RegisterResolver registers a custom resolver for a field.
+func (h *GraphQLHandler) RegisterResolver(typeName, fieldName string, resolver GraphQLResolver) {
+	h.executor.RegisterResolver(typeName, fieldName, resolver)
 }
 
 // ServeHTTP implements http.Handler.
@@ -334,7 +350,7 @@ func (h *GraphQLHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if r.Method == "POST" {
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, "Invalid request body", http.StatusBadRequest)
+			h.writeError(w, "Invalid request body", http.StatusBadRequest)
 			return
 		}
 	} else if r.Method == "GET" {
@@ -343,6 +359,14 @@ func (h *GraphQLHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if vars := r.URL.Query().Get("variables"); vars != "" {
 			json.Unmarshal([]byte(vars), &req.Variables)
 		}
+	} else {
+		h.writeError(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if req.Query == "" {
+		h.writeError(w, "Query is required", http.StatusBadRequest)
+		return
 	}
 
 	resp := h.Execute(r.Context(), req)
@@ -351,14 +375,46 @@ func (h *GraphQLHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(resp)
 }
 
+func (h *GraphQLHandler) writeError(w http.ResponseWriter, message string, statusCode int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(&GraphQLResponse{
+		Errors: []GraphQLError{{Message: message}},
+	})
+}
+
 // Execute executes a GraphQL request.
 func (h *GraphQLHandler) Execute(ctx context.Context, req GraphQLRequest) *GraphQLResponse {
-	// Simplified execution - in production would parse and execute properly
-	return &GraphQLResponse{
-		Data: map[string]interface{}{
-			"query": req.Query,
-		},
+	// Sanitize the query
+	query := SanitizeQuery(req.Query)
+	req.Query = query
+
+	// Check complexity limits
+	if h.complexityConfig != nil {
+		_, complexityErrors := h.executor.AnalyzeComplexity(query, h.complexityConfig)
+		if len(complexityErrors) > 0 {
+			return &GraphQLResponse{Errors: complexityErrors}
+		}
 	}
+
+	// Validate the query
+	validationErrors := h.executor.ValidateQuery(query)
+	if len(validationErrors) > 0 {
+		return &GraphQLResponse{Errors: validationErrors}
+	}
+
+	// Execute the query
+	return h.executor.Execute(ctx, req)
+}
+
+// ValidateQuery validates a GraphQL query without executing it.
+func (h *GraphQLHandler) ValidateQuery(query string) []GraphQLError {
+	return h.executor.ValidateQuery(query)
+}
+
+// GetSchema returns the GraphQL schema for introspection.
+func (h *GraphQLHandler) GetSchema() *GraphQLSchema {
+	return h.schema
 }
 
 // NewSIEMGraphQLSchema creates the SIEM GraphQL schema.
