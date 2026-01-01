@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"sync"
 	"time"
+
+	"boundary-siem/internal/storage/s3"
 )
 
 // StorageTier defines storage tiers.
@@ -100,14 +102,16 @@ type StorageStats struct {
 
 // RetentionManager manages data retention.
 type RetentionManager struct {
-	mu           sync.RWMutex
-	policies     map[string]*RetentionPolicy
+	mu            sync.RWMutex
+	policies      map[string]*RetentionPolicy
 	archiveConfig *ArchiveConfig
-	jobs         map[string]*ArchiveJob
-	stats        map[StorageTier]*StorageStats
-	logger       *slog.Logger
-	ctx          context.Context
-	cancel       context.CancelFunc
+	jobs          map[string]*ArchiveJob
+	stats         map[StorageTier]*StorageStats
+	logger        *slog.Logger
+	ctx           context.Context
+	cancel        context.CancelFunc
+	s3Client      *s3.Client
+	archiver      *s3.Archiver
 }
 
 // NewRetentionManager creates a new retention manager.
@@ -127,7 +131,67 @@ func NewRetentionManager(archiveConfig *ArchiveConfig, logger *slog.Logger) *Ret
 	rm.initDefaultPolicies()
 	rm.initStorageStats()
 
+	// Initialize S3 client if archival is enabled
+	if archiveConfig != nil && archiveConfig.Enabled && archiveConfig.Provider == "s3" {
+		if err := rm.initS3Client(ctx); err != nil {
+			logger.Error("failed to initialize S3 client", "error", err)
+		}
+	}
+
 	return rm
+}
+
+// initS3Client initializes the S3 client and archiver.
+func (rm *RetentionManager) initS3Client(ctx context.Context) error {
+	cfg := &s3.Config{
+		Region:          rm.archiveConfig.Region,
+		Bucket:          rm.archiveConfig.Bucket,
+		Prefix:          rm.archiveConfig.Prefix,
+		Endpoint:        rm.archiveConfig.Endpoint,
+		AccessKeyID:     rm.archiveConfig.AccessKeyID,
+		SecretAccessKey: rm.archiveConfig.SecretAccessKey,
+		StorageClass:    rm.archiveConfig.StorageClass,
+		PartSize:        5 * 1024 * 1024, // 5MB
+		Concurrency:     5,
+	}
+
+	client, err := s3.NewClient(ctx, cfg, rm.logger)
+	if err != nil {
+		return fmt.Errorf("failed to create S3 client: %w", err)
+	}
+	rm.s3Client = client
+
+	// Determine compression type
+	compression := s3.CompressionGzip
+	switch rm.archiveConfig.CompressionCodec {
+	case "none":
+		compression = s3.CompressionNone
+	case "gzip":
+		compression = s3.CompressionGzip
+	case "zstd":
+		compression = s3.CompressionZstd
+	case "lz4":
+		compression = s3.CompressionLZ4
+	}
+
+	archiverConfig := &s3.ArchiverConfig{
+		BatchSize:     rm.archiveConfig.BatchSize,
+		MaxBatchBytes: 100 * 1024 * 1024, // 100MB
+		FlushInterval: rm.archiveConfig.BatchInterval,
+		Compression:   compression,
+		StorageClass:  rm.archiveConfig.StorageClass,
+		PathTemplate:  "archives/{type}/{date}/{id}.json.gz",
+	}
+
+	rm.archiver = s3.NewArchiver(client, archiverConfig, rm.logger)
+
+	rm.logger.Info("S3 archival initialized",
+		"bucket", cfg.Bucket,
+		"region", cfg.Region,
+		"compression", compression,
+	)
+
+	return nil
 }
 
 // initDefaultPolicies creates default retention policies.
@@ -405,16 +469,134 @@ func (rm *RetentionManager) executeArchiveJob(job *ArchiveJob) {
 		"job_id", job.ID,
 		"source", job.SourceTier,
 		"target", job.TargetTier,
+		"data_type", job.DataType,
 	)
 
-	// Simulate archive operation
+	// Check if S3 archiver is available
+	if rm.archiver == nil {
+		rm.mu.Lock()
+		job.Status = JobStatusFailed
+		job.Error = "S3 archiver not initialized"
+		now := time.Now()
+		job.EndTime = &now
+		rm.mu.Unlock()
+		rm.logger.Error("archive job failed: S3 archiver not initialized", "job_id", job.ID)
+		return
+	}
+
+	// Create sample records for archival (in production, these would come from ClickHouse)
+	records := rm.fetchRecordsForArchival(job.DataType, job.RecordsTotal)
+
+	// Archive to S3
+	manifest, err := rm.archiver.Archive(rm.ctx, job.DataType, records)
+	if err != nil {
+		rm.mu.Lock()
+		job.Status = JobStatusFailed
+		job.Error = err.Error()
+		now := time.Now()
+		job.EndTime = &now
+		rm.mu.Unlock()
+		rm.logger.Error("archive job failed", "job_id", job.ID, "error", err)
+		return
+	}
+
+	// Update job with results
 	rm.mu.Lock()
 	job.Status = JobStatusCompleted
 	now := time.Now()
 	job.EndTime = &now
-	job.RecordsMoved = job.RecordsTotal
-	job.BytesMoved = job.BytesTotal
+	job.RecordsMoved = manifest.TotalRecords
+	job.BytesMoved = manifest.TotalBytes
 	rm.mu.Unlock()
+
+	rm.logger.Info("archive job completed",
+		"job_id", job.ID,
+		"archive_id", manifest.ID,
+		"records", manifest.TotalRecords,
+		"bytes", manifest.TotalBytes,
+	)
+}
+
+// fetchRecordsForArchival fetches records to archive.
+// In production, this would query ClickHouse for records matching the criteria.
+func (rm *RetentionManager) fetchRecordsForArchival(dataType string, count int64) []s3.ArchiveRecord {
+	records := make([]s3.ArchiveRecord, 0, count)
+	now := time.Now()
+
+	// Generate sample records (in production, fetch from database)
+	for i := int64(0); i < count && i < 1000; i++ {
+		records = append(records, s3.ArchiveRecord{
+			ID:        fmt.Sprintf("%s-%d", dataType, i),
+			Timestamp: now.Add(-time.Duration(i) * time.Hour),
+			Type:      dataType,
+			Data: map[string]interface{}{
+				"index":     i,
+				"data_type": dataType,
+				"archived":  true,
+			},
+		})
+	}
+
+	return records
+}
+
+// ArchiveRecords archives the given records to S3.
+func (rm *RetentionManager) ArchiveRecords(ctx context.Context, dataType string, records []s3.ArchiveRecord) (*s3.ArchiveManifest, error) {
+	if rm.archiver == nil {
+		return nil, fmt.Errorf("S3 archiver not initialized")
+	}
+
+	return rm.archiver.Archive(ctx, dataType, records)
+}
+
+// RestoreArchive restores records from an S3 archive.
+func (rm *RetentionManager) RestoreArchive(ctx context.Context, archiveID string) ([]s3.ArchiveRecord, error) {
+	if rm.archiver == nil {
+		return nil, fmt.Errorf("S3 archiver not initialized")
+	}
+
+	return rm.archiver.Restore(ctx, archiveID)
+}
+
+// ListArchives lists all archives for a data type.
+func (rm *RetentionManager) ListArchives(ctx context.Context, dataType string) ([]s3.ArchiveManifest, error) {
+	if rm.archiver == nil {
+		return nil, fmt.Errorf("S3 archiver not initialized")
+	}
+
+	return rm.archiver.ListArchives(ctx, dataType)
+}
+
+// DeleteArchive deletes an archive from S3.
+func (rm *RetentionManager) DeleteArchive(ctx context.Context, archiveID string) error {
+	if rm.archiver == nil {
+		return fmt.Errorf("S3 archiver not initialized")
+	}
+
+	return rm.archiver.DeleteArchive(ctx, archiveID)
+}
+
+// GetS3HealthStatus returns the S3 health status.
+func (rm *RetentionManager) GetS3HealthStatus(ctx context.Context) *s3.HealthStatus {
+	if rm.s3Client == nil {
+		return &s3.HealthStatus{
+			Healthy: false,
+			Error:   "S3 client not initialized",
+		}
+	}
+
+	status := rm.s3Client.HealthCheck(ctx)
+	return &status
+}
+
+// GetArchiverMetrics returns archiver metrics.
+func (rm *RetentionManager) GetArchiverMetrics() *s3.ArchiverMetrics {
+	if rm.archiver == nil {
+		return nil
+	}
+
+	metrics := rm.archiver.GetMetrics()
+	return &metrics
 }
 
 // GetPolicy returns a retention policy by ID.
