@@ -273,6 +273,9 @@ type AuditLogger struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
+	// Immutable log support
+	immutableMgr *ImmutableManager
+
 	// Metrics
 	written   uint64
 	errors    uint64
@@ -594,7 +597,17 @@ func (al *AuditLogger) writeEntryLocked(entry *AuditEntry) error {
 
 // rotate rotates the current log file.
 func (al *AuditLogger) rotate() error {
+	rotatedPath := al.currentPath
+	ctx := context.Background()
+
 	if al.currentFile != nil {
+		// Clear append-only attribute before closing (if immutable manager is enabled)
+		if al.immutableMgr != nil {
+			if err := al.immutableMgr.PrepareForRotation(ctx, al.currentPath); err != nil {
+				al.logger.Warn("failed to clear append-only for rotation", "error", err)
+			}
+		}
+
 		// Sync and close
 		al.currentFile.Sync()
 		al.currentFile.Close()
@@ -602,6 +615,17 @@ func (al *AuditLogger) rotate() error {
 		// Compute and write checksum
 		if err := al.writeFileChecksum(al.currentPath); err != nil {
 			al.logger.Warn("failed to write file checksum", "error", err)
+		}
+
+		// Set immutable on rotated file and its checksum
+		if al.immutableMgr != nil {
+			if err := al.immutableMgr.SetImmutable(ctx, rotatedPath); err != nil {
+				al.logger.Warn("failed to set immutable on rotated file", "path", rotatedPath, "error", err)
+			}
+			checksumPath := rotatedPath + ".sha256"
+			if err := al.immutableMgr.ProtectChecksumFile(ctx, checksumPath); err != nil {
+				al.logger.Warn("failed to protect checksum file", "path", checksumPath, "error", err)
+			}
 		}
 	}
 
@@ -617,6 +641,13 @@ func (al *AuditLogger) rotate() error {
 	al.currentFile = f
 	al.currentPath = path
 	al.currentSize = 0
+
+	// Set append-only on new file
+	if al.immutableMgr != nil {
+		if err := al.immutableMgr.SetAppendOnly(ctx, path); err != nil {
+			al.logger.Warn("failed to set append-only on new file", "path", path, "error", err)
+		}
+	}
 
 	// Clean up old files
 	go al.cleanupOldFiles()
@@ -847,10 +878,23 @@ func (al *AuditLogger) Close() error {
 	al.mu.Lock()
 	defer al.mu.Unlock()
 
+	ctx := context.Background()
+
 	if al.currentFile != nil {
+		// Clear append-only before closing
+		if al.immutableMgr != nil {
+			al.immutableMgr.ClearAppendOnly(ctx, al.currentPath)
+		}
+
 		al.currentFile.Sync()
 		al.writeFileChecksum(al.currentPath)
 		al.currentFile.Close()
+
+		// Set immutable on final file
+		if al.immutableMgr != nil {
+			al.immutableMgr.SetImmutable(ctx, al.currentPath)
+			al.immutableMgr.ProtectChecksumFile(ctx, al.currentPath+".sha256")
+		}
 	}
 
 	al.logger.Info("audit logger closed",
@@ -858,6 +902,19 @@ func (al *AuditLogger) Close() error {
 		"errors", atomic.LoadUint64(&al.errors))
 
 	return nil
+}
+
+// GetImmutableStatus returns the immutable log status.
+func (al *AuditLogger) GetImmutableStatus() *ImmutableStatus {
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+
+	if al.immutableMgr == nil {
+		return nil
+	}
+
+	status := al.immutableMgr.GetStatus()
+	return &status
 }
 
 // Metrics returns audit logger metrics.
