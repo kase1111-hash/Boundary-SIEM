@@ -79,7 +79,16 @@ func NewUDPServer(
 }
 
 // Start starts the UDP server.
+// DEPRECATED: Use DTLSServer for secure UDP ingestion.
+// Plain UDP transmits CEF events in cleartext without encryption.
 func (s *UDPServer) Start(ctx context.Context) error {
+	// Security warning for plain UDP
+	slog.Warn("SECURITY WARNING: Plain UDP server does not provide encryption",
+		"address", s.config.Address,
+		"recommendation", "Use DTLSServer or TCPServer with TLS for production",
+	)
+	slog.Warn("SECURITY WARNING: CEF events may contain sensitive security data")
+
 	addr, err := net.ResolveUDPAddr("udp", s.config.Address)
 	if err != nil {
 		return err
@@ -96,7 +105,7 @@ func (s *UDPServer) Start(ctx context.Context) error {
 	}
 	s.conn = conn
 
-	slog.Info("UDP server started", "address", s.config.Address)
+	slog.Info("UDP server started (INSECURE - no encryption)", "address", s.config.Address)
 
 	// Start worker goroutines
 	messages := make(chan udpMessage, s.config.Workers*100)

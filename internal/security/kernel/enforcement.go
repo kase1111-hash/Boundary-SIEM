@@ -98,6 +98,9 @@ func NewEnforcementVerifier(config *EnforcementConfig, logger *slog.Logger) *Enf
 	if config == nil {
 		config = DefaultEnforcementConfig()
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	return &EnforcementVerifier{
@@ -441,6 +444,9 @@ type AuditLogWatcher struct {
 
 // NewAuditLogWatcher creates a new audit log watcher.
 func NewAuditLogWatcher(enfType EnforcementType, logger *slog.Logger) *AuditLogWatcher {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 
 	w := &AuditLogWatcher{
@@ -541,7 +547,11 @@ func (w *AuditLogWatcher) watchFile(path string) {
 					select {
 					case w.entries <- entry:
 					default:
-						// Channel full, drop entry
+						// Channel full, log and drop entry
+						w.logger.Warn("audit log entry channel full, dropping entry",
+							"type", entry.Type,
+							"action", entry.Action,
+						)
 					}
 				}
 			} else {
@@ -579,6 +589,11 @@ func (w *AuditLogWatcher) watchDmesg() {
 					select {
 					case w.entries <- entry:
 					default:
+						// Channel full, log and drop entry
+						w.logger.Warn("audit log entry channel full, dropping entry",
+							"type", entry.Type,
+							"action", entry.Action,
+						)
 					}
 				}
 			}
@@ -632,6 +647,9 @@ type PolicyInstaller struct {
 
 // NewPolicyInstaller creates a new policy installer.
 func NewPolicyInstaller(logger *slog.Logger) *PolicyInstaller {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &PolicyInstaller{logger: logger}
 }
 

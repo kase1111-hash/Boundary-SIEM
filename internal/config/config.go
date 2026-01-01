@@ -97,18 +97,35 @@ type IngestConfig struct {
 // CEFConfig holds CEF ingestion settings.
 type CEFConfig struct {
 	UDP        CEFUDPConfig        `yaml:"udp"`
+	DTLS       CEFDTLSConfig       `yaml:"dtls"`
 	TCP        CEFTCPConfig        `yaml:"tcp"`
 	Parser     CEFParserConfig     `yaml:"parser"`
 	Normalizer CEFNormalizerConfig `yaml:"normalizer"`
 }
 
 // CEFUDPConfig holds UDP server settings for CEF.
+// DEPRECATED: Use CEFDTLSConfig for secure UDP ingestion.
 type CEFUDPConfig struct {
-	Enabled        bool `yaml:"enabled"`
+	Enabled        bool   `yaml:"enabled"`
 	Address        string `yaml:"address"`
 	BufferSize     int    `yaml:"buffer_size"`
 	Workers        int    `yaml:"workers"`
 	MaxMessageSize int    `yaml:"max_message_size"`
+}
+
+// CEFDTLSConfig holds DTLS (secure UDP) server settings for CEF.
+type CEFDTLSConfig struct {
+	Enabled           bool          `yaml:"enabled"`
+	Address           string        `yaml:"address"`
+	CertFile          string        `yaml:"cert_file"`
+	KeyFile           string        `yaml:"key_file"`
+	CAFile            string        `yaml:"ca_file"`
+	RequireClientCert bool          `yaml:"require_client_cert"`
+	Workers           int           `yaml:"workers"`
+	MaxMessageSize    int           `yaml:"max_message_size"`
+	ConnectionTimeout time.Duration `yaml:"connection_timeout"`
+	IdleTimeout       time.Duration `yaml:"idle_timeout"`
+	AllowInsecure     bool          `yaml:"allow_insecure"` // Allow fallback to plain UDP (NOT RECOMMENDED)
 }
 
 // CEFTCPConfig holds TCP server settings for CEF.
@@ -173,11 +190,21 @@ func DefaultConfig() *Config {
 			MaxPayloadSize: 10 * 1024 * 1024, // 10MB
 			CEF: CEFConfig{
 				UDP: CEFUDPConfig{
-					Enabled:        true,
+					Enabled:        false, // DEPRECATED: Disabled by default, use DTLS instead
 					Address:        ":5514",
 					BufferSize:     16 * 1024 * 1024, // 16MB
 					Workers:        8,
 					MaxMessageSize: 65535,
+				},
+				DTLS: CEFDTLSConfig{
+					Enabled:           false, // Enable when certificates are configured
+					Address:           ":5516",
+					Workers:           8,
+					MaxMessageSize:    65535,
+					ConnectionTimeout: 30 * time.Second,
+					IdleTimeout:       5 * time.Minute,
+					AllowInsecure:     false,
+					RequireClientCert: false,
 				},
 				TCP: CEFTCPConfig{
 					Enabled:        true,
