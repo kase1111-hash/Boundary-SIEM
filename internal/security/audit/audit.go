@@ -276,6 +276,9 @@ type AuditLogger struct {
 	// Immutable log support
 	immutableMgr *ImmutableManager
 
+	// Remote syslog forwarding
+	syslogFwd *SyslogForwarder
+
 	// Metrics
 	written   uint64
 	errors    uint64
@@ -519,7 +522,18 @@ func (al *AuditLogger) logEntry(eventType EventType, severity Severity, message 
 	entry.Sign(al.hmacKey)
 	al.previousHash = entry.EntryHash
 
-	return al.writeEntryLocked(entry)
+	// Write to local file
+	if err := al.writeEntryLocked(entry); err != nil {
+		return err
+	}
+
+	// Forward to remote syslog if configured
+	if al.syslogFwd != nil {
+		// Don't block on syslog errors - it's async
+		al.syslogFwd.Forward(entry)
+	}
+
+	return nil
 }
 
 // LogEvent logs a structured audit event.
@@ -880,6 +894,11 @@ func (al *AuditLogger) Close() error {
 
 	ctx := context.Background()
 
+	// Close syslog forwarder first to flush any pending messages
+	if al.syslogFwd != nil {
+		al.syslogFwd.Close()
+	}
+
 	if al.currentFile != nil {
 		// Clear append-only before closing
 		if al.immutableMgr != nil {
@@ -902,6 +921,19 @@ func (al *AuditLogger) Close() error {
 		"errors", atomic.LoadUint64(&al.errors))
 
 	return nil
+}
+
+// GetSyslogStatus returns the syslog forwarder status.
+func (al *AuditLogger) GetSyslogStatus() *SyslogMetrics {
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+
+	if al.syslogFwd == nil {
+		return nil
+	}
+
+	metrics := al.syslogFwd.Metrics()
+	return &metrics
 }
 
 // GetImmutableStatus returns the immutable log status.
