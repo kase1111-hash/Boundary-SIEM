@@ -22,7 +22,7 @@ This document outlines planned features and future enhancements for the Boundary
 - ✅ Network monitoring
 
 ### Phase 4: Detection & Response
-- ✅ 103+ blockchain-specific detection rules
+- ✅ 123+ blockchain-specific detection rules (including 20 NatLangChain rules)
 - ✅ MITRE ATT&CK mappings
 - ✅ Threat intelligence integration (OFAC, Chainalysis)
 - ✅ Incident playbooks (9 built-in)
@@ -53,6 +53,14 @@ This document outlines planned features and future enhancements for the Boundary
 - ✅ Remote syslog forwarding (UDP/TCP/TLS, RFC 3164/5424/CEF/JSON)
 - ✅ Container isolation (Docker seccomp/AppArmor, K8s NetworkPolicy)
 - ✅ TPM 2.0 hardware key storage with PCR policy binding
+
+### Phase 9: External Integrations
+- ✅ boundary-daemon integration (CEF/JSON, session/auth/access events)
+- ✅ NatLangChain integration (natural language blockchain monitoring)
+  - REST API client for NatLangChain nodes
+  - 25+ event type mappings (entries, blocks, disputes, contracts, negotiations)
+  - 20 detection rules (NLC-001 to NLC-020)
+  - Semantic drift and adversarial pattern detection
 
 ---
 
@@ -299,14 +307,11 @@ We welcome contributions to these planned features! Here's how to get started:
 
 | Version | Date | Features |
 |---------|------|----------|
-| 0.1.0 | TBD | Core SIEM, Blockchain Security |
-| 0.2.0 | TBD | Infrastructure, Detection Rules |
-| 0.3.0 | TBD | UI, Enterprise Features |
-| 0.4.0 | TBD | Threat Hunting, Forensics, SOAR |
-| 0.5.0 | TBD | ML/UEBA (planned) |
-| 0.6.0 | TBD | Advanced Visualizations (planned) |
-| 0.7.0 | TBD | Mobile App (planned) |
-| 0.8.0 | TBD | Attack Simulation (planned) |
+| 0.1.0-alpha | 2026-01-01 | Core SIEM, Blockchain Security, boundary-daemon & NatLangChain integrations |
+| 0.2.0 | TBD | ML/UEBA (planned) |
+| 0.3.0 | TBD | Advanced Visualizations (planned) |
+| 0.4.0 | TBD | Mobile App (planned) |
+| 0.5.0 | TBD | Attack Simulation (planned) |
 | 1.0.0 | TBD | Multi-Chain Dashboard, GA Release |
 
 ---

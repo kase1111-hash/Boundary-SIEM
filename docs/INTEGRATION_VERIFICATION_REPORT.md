@@ -80,34 +80,60 @@ boundary-daemon → CEF (UDP/TCP) → Ingest Layer → Parser → Normalizer →
 
 ## 2. NatLangChain Integration
 
-### Status: NOT IMPLEMENTED
+### Status: FULLY IMPLEMENTED
 
-After comprehensive codebase analysis, **no NatLangChain integration exists**.
+NatLangChain integration has been implemented with complete support for monitoring natural language blockchain activity.
 
-### Evidence
+### Implementation Components
 
-1. **Code Search**: Zero occurrences of "NatLangChain", "natlang", or "natural language" in any source files
-2. **Dependencies**: No NatLangChain package in `go.mod`
-3. **Documentation**: Not mentioned in README, SIEM_SPECIFICATION, ROADMAP, or any STEP documents
-4. **Git History**: No commits, PRs, or merge messages reference NatLangChain
-5. **Configuration**: No NatLangChain endpoints or settings in `configs/config.yaml`
+1. **Client Package** (`internal/natlangchain/client.go`)
+   - REST API client for NatLangChain nodes
+   - Support for all major endpoints: blocks, entries, disputes, contracts, negotiations
+   - Health checks and chain statistics
 
-### NatLangChain Overview (External Repository)
+2. **Normalizer** (`internal/natlangchain/normalizer.go`)
+   - Converts NatLangChain events to canonical SIEM schema
+   - 25+ event type mappings
+   - Actor extraction and metadata enrichment
 
-For reference, NatLangChain is:
-- A blockchain protocol where natural language prose serves as the ledger substrate
-- Exposes 212+ REST API endpoints
-- Uses "Proof of Understanding" consensus via LLM validators
-- Python-based with PostgreSQL/JSON storage
+3. **Ingester** (`internal/natlangchain/ingester.go`)
+   - Polling-based event ingestion
+   - Configurable event types and batch sizes
+   - Automatic block tracking and deduplication
 
-### Potential Integration Points (If Needed)
+4. **Detection Rules** (`internal/natlangchain/detection_rules.go`)
+   - 20 NatLangChain-specific rules (NLC-001 to NLC-020)
+   - Semantic drift detection
+   - Dispute and consensus monitoring
+   - Adversarial pattern detection
 
-If integration with NatLangChain is desired, these would be logical approaches:
+### NatLangChain Event Types Supported
 
-1. **Event Ingestion**: Add NatLangChain event types to the canonical schema
-2. **API Integration**: Connect to NatLangChain's `/v1/events` or similar endpoints
-3. **Semantic Analysis**: Use NatLangChain's LLM capabilities for log analysis
-4. **Intent Recording**: Post SIEM alerts as blockchain entries
+| Category | Events |
+|----------|--------|
+| Entries | created, validated, rejected, modified |
+| Blocks | mined, validated, rejected |
+| Disputes | filed, resolved, escalated, dismissed |
+| Contracts | created, matched, completed, cancelled |
+| Negotiations | started, round, completed, failed, timeout |
+| Validation | paraphrase, debate, consensus, rejection |
+| Semantic | drift detected, drift critical |
+| Security | adversarial, manipulation, impersonation |
+
+### Configuration
+
+Enable in `configs/config.yaml`:
+```yaml
+natlangchain:
+  enabled: true
+  client:
+    base_url: "http://localhost:5000"
+    api_key: "your-api-key"
+```
+
+### Documentation
+
+See `docs/NATLANGCHAIN_INTEGRATION.md` for complete integration guide.
 
 ---
 
@@ -160,8 +186,13 @@ This is an **environment issue**, not a code defect. The Go source code structur
 ## 5. Conclusion
 
 - **boundary-daemon**: The integration is **complete and well-tested**. CEF parsing, normalization, and event mapping are all implemented correctly.
-- **NatLangChain**: There is **no integration** in the current codebase. This verification confirms the integration does not exist and would need to be implemented from scratch if required.
+- **NatLangChain**: The integration is **now fully implemented** with:
+  - Complete API client for NatLangChain nodes
+  - Event normalization for 25+ event types
+  - Polling-based ingestion with configurable options
+  - 20 detection rules for NatLangChain-specific threats
+  - Comprehensive documentation
 
 ---
 
-*Report generated during integration verification task.*
+*Report updated after NatLangChain integration implementation.*

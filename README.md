@@ -5,14 +5,18 @@ A comprehensive Security Information and Event Management (SIEM) platform design
 ## Features
 
 ### Core SIEM Capabilities
-- **Event Ingestion**: CEF (UDP/TCP), JSON HTTP, syslog with backpressure-safe queuing
+- **Event Ingestion**: CEF (UDP/TCP), JSON HTTP, syslog, NatLangChain with backpressure-safe queuing
 - **Canonical Schema**: Versioned event schema with strict validation and quarantine
 - **Storage Engine**: ClickHouse-based with time-partitioned tables and tiered retention
 - **Search & Query**: Time-range, field-based, and full-text search with pagination
 - **Correlation Engine**: Rule-based correlation with time windows, thresholds, and sequences
 - **Alerting**: Webhook, Slack, email with deduplication and rate limiting
 
-### Blockchain Security (103+ Detection Rules)
+### Integrations
+- **boundary-daemon**: CEF/JSON ingestion for session, auth, and access events
+- **NatLangChain**: Natural language blockchain monitoring with 20 detection rules for semantic drift, disputes, and consensus events
+
+### Blockchain Security (123+ Detection Rules)
 - **Validator Monitoring**: Attestation tracking, slashing detection, sync committee analysis
 - **Transaction Analysis**: Gas anomalies, MEV detection, flash loan identification
 - **Smart Contract Security**: Reentrancy detection, access control analysis, upgrade monitoring

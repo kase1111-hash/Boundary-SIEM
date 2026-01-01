@@ -73,3 +73,33 @@ consumer:
   workers: 4
   poll_interval: 10ms
   shutdown_wait: 30s
+
+# NatLangChain integration
+# Enable to ingest events from a NatLangChain blockchain node
+natlangchain:
+  enabled: false  # Set to true to enable NatLangChain integration
+  client:
+    base_url: "http://localhost:5000"
+    api_key: ""  # Set your NatLangChain API key
+    chain_id: "main"
+    timeout: 30s
+    max_retries: 3
+    retry_backoff: 1s
+  ingester:
+    poll_interval: 30s
+    block_batch_size: 100
+    entry_batch_size: 500
+    # Feature toggles - enable/disable specific event types
+    ingest_entries: true
+    ingest_blocks: true
+    ingest_disputes: true
+    ingest_contracts: true
+    ingest_negotiations: true
+    ingest_validation: true
+    ingest_semantic_drift: true
+    # Minimum severity for semantic drift events (low, medium, high, critical)
+    min_drift_severity: "low"
+  normalizer:
+    default_tenant_id: "default"
+    source_host: "localhost"
+    source_version: "1.0.0"
