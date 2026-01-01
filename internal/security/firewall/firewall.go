@@ -124,14 +124,18 @@ func DefaultConfig() *Config {
 
 // Manager manages firewall rules.
 type Manager struct {
-	mu         sync.RWMutex
-	config     *Config
-	backend    Backend
-	logger     *slog.Logger
-	blockedIPs map[string]*BlockedIP
-	rules      []*Rule
-	ctx        context.Context
-	cancel     context.CancelFunc
+	mu             sync.RWMutex
+	backendMu      sync.RWMutex   // Protects backend field
+	detectMu       sync.Mutex     // Ensures only one detection runs at a time
+	config         *Config
+	backend        Backend
+	backendChecked bool           // Whether backend has been detected
+	detecting      bool           // Whether detection is in progress
+	logger         *slog.Logger
+	blockedIPs     map[string]*BlockedIP
+	rules          []*Rule
+	ctx            context.Context
+	cancel         context.CancelFunc
 }
 
 // NewManager creates a new firewall manager.
@@ -166,35 +170,88 @@ func NewManager(config *Config, logger *slog.Logger) (*Manager, error) {
 	return m, nil
 }
 
-// detectBackend detects the available firewall backend.
+// detectBackend detects the available firewall backend with mutual exclusion.
+// This ensures only one detection can run at a time to prevent race conditions.
 func (m *Manager) detectBackend() (Backend, error) {
+	// Acquire detection mutex to ensure exclusive access
+	m.detectMu.Lock()
+	defer m.detectMu.Unlock()
+
+	// Check if already detected (double-check under lock)
+	m.backendMu.RLock()
+	if m.backendChecked {
+		backend := m.backend
+		m.backendMu.RUnlock()
+		return backend, nil
+	}
+	m.backendMu.RUnlock()
+
+	// Mark detection as in progress
+	m.backendMu.Lock()
+	if m.detecting {
+		m.backendMu.Unlock()
+		// Another goroutine is detecting, wait and return result
+		m.detectMu.Lock() // This will block until other detection completes
+		m.detectMu.Unlock()
+		m.backendMu.RLock()
+		backend := m.backend
+		m.backendMu.RUnlock()
+		return backend, nil
+	}
+	m.detecting = true
+	m.backendMu.Unlock()
+
+	// Perform actual detection
+	var detectedBackend Backend
+	var detectionErr error
+
 	// Check if nftables is available
 	if m.config.Backend == BackendNftables || m.config.Backend == BackendNone {
 		if _, err := exec.LookPath(m.config.NftablesPath); err == nil {
 			// Verify nftables is working
 			cmd := exec.Command(m.config.NftablesPath, "list", "ruleset")
 			if err := cmd.Run(); err == nil {
-				return BackendNftables, nil
+				detectedBackend = BackendNftables
 			}
 		}
 	}
 
-	// Check if iptables is available
-	if m.config.Backend == BackendIptables || m.config.Backend == BackendNone {
-		if _, err := exec.LookPath(m.config.IptablesPath); err == nil {
-			// Verify iptables is working
-			cmd := exec.Command(m.config.IptablesPath, "-L", "-n")
-			if err := cmd.Run(); err == nil {
-				return BackendIptables, nil
+	// Check if iptables is available (only if nftables not found)
+	if detectedBackend == "" {
+		if m.config.Backend == BackendIptables || m.config.Backend == BackendNone {
+			if _, err := exec.LookPath(m.config.IptablesPath); err == nil {
+				// Verify iptables is working
+				cmd := exec.Command(m.config.IptablesPath, "-L", "-n")
+				if err := cmd.Run(); err == nil {
+					detectedBackend = BackendIptables
+				}
 			}
 		}
 	}
 
-	return BackendNone, errors.New("no firewall backend available")
+	if detectedBackend == "" {
+		detectedBackend = BackendNone
+		detectionErr = errors.New("no firewall backend available")
+	}
+
+	// Store result under write lock
+	m.backendMu.Lock()
+	m.backend = detectedBackend
+	m.backendChecked = true
+	m.detecting = false
+	m.backendMu.Unlock()
+
+	if m.logger != nil && detectedBackend != BackendNone {
+		m.logger.Debug("backend detection completed", "backend", detectedBackend)
+	}
+
+	return detectedBackend, detectionErr
 }
 
-// GetBackend returns the detected backend.
+// GetBackend returns the detected backend with thread-safe access.
 func (m *Manager) GetBackend() Backend {
+	m.backendMu.RLock()
+	defer m.backendMu.RUnlock()
 	return m.backend
 }
 
@@ -214,19 +271,24 @@ func (m *Manager) Stop() {
 // GetStatus returns the current firewall status.
 func (m *Manager) GetStatus() *Status {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
+	rulesCount := len(m.rules)
+	blockedIPsCount := len(m.blockedIPs)
+	m.mu.RUnlock()
+
+	// Get backend with proper locking
+	backend := m.GetBackend()
 
 	status := &Status{
-		Backend:    m.backend,
+		Backend:    backend,
 		Active:     false,
-		RulesCount: len(m.rules),
-		BlockedIPs: len(m.blockedIPs),
+		RulesCount: rulesCount,
+		BlockedIPs: blockedIPsCount,
 		LastUpdate: time.Now(),
 	}
 
 	// Check if rules are loaded
 	var err error
-	switch m.backend {
+	switch backend {
 	case BackendNftables:
 		status.Active, err = m.checkNftablesActive()
 	case BackendIptables:
@@ -264,9 +326,10 @@ func (m *Manager) LoadRules(ctx context.Context) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	m.logger.Info("loading firewall rules", "backend", m.backend)
+	backend := m.GetBackend()
+	m.logger.Info("loading firewall rules", "backend", backend)
 
-	switch m.backend {
+	switch backend {
 	case BackendNftables:
 		return m.loadNftablesRules(ctx)
 	case BackendIptables:
@@ -350,7 +413,8 @@ func (m *Manager) BlockIP(ctx context.Context, ip net.IP, reason string, duratio
 
 	// Add to firewall
 	var err error
-	switch m.backend {
+	backend := m.GetBackend()
+	switch backend {
 	case BackendNftables:
 		err = m.nftablesBlockIP(ctx, ip, duration)
 	case BackendIptables:
@@ -425,7 +489,8 @@ func (m *Manager) UnblockIP(ctx context.Context, ip net.IP) error {
 
 	// Remove from firewall
 	var err error
-	switch m.backend {
+	backend := m.GetBackend()
+	switch backend {
 	case BackendNftables:
 		err = m.nftablesUnblockIP(ctx, ip)
 	case BackendIptables:
@@ -527,7 +592,8 @@ func (m *Manager) AddTrustedNetwork(ctx context.Context, cidr string) error {
 		return fmt.Errorf("invalid CIDR: %w", err)
 	}
 
-	switch m.backend {
+	backend := m.GetBackend()
+	switch backend {
 	case BackendNftables:
 		setName := "trusted_mgmt"
 		if network.IP.To4() == nil {
@@ -570,7 +636,8 @@ func (m *Manager) RemoveTrustedNetwork(ctx context.Context, cidr string) error {
 		return fmt.Errorf("invalid CIDR: %w", err)
 	}
 
-	switch m.backend {
+	backend := m.GetBackend()
+	switch backend {
 	case BackendNftables:
 		setName := "trusted_mgmt"
 		if network.IP.To4() == nil {
@@ -612,11 +679,12 @@ func (m *Manager) RemoveTrustedNetwork(ctx context.Context, cidr string) error {
 
 // GetRuleStats returns statistics about firewall rules.
 func (m *Manager) GetRuleStats(ctx context.Context) (map[string]interface{}, error) {
+	backend := m.GetBackend()
 	stats := make(map[string]interface{})
-	stats["backend"] = string(m.backend)
+	stats["backend"] = string(backend)
 	stats["timestamp"] = time.Now()
 
-	switch m.backend {
+	switch backend {
 	case BackendNftables:
 		return m.getNftablesStats(ctx, stats)
 	case BackendIptables:
@@ -682,7 +750,8 @@ func ValidateInterfaceName(name string) error {
 
 // SaveRules saves current rules to a file.
 func (m *Manager) SaveRules(ctx context.Context, path string) error {
-	switch m.backend {
+	backend := m.GetBackend()
+	switch backend {
 	case BackendNftables:
 		cmd := exec.CommandContext(ctx, m.config.NftablesPath, "list", "table", "inet", "boundary_siem")
 		output, err := cmd.CombinedOutput()
@@ -711,7 +780,8 @@ func (m *Manager) RestoreRules(ctx context.Context, path string) error {
 		return fmt.Errorf("backup file not found: %s", path)
 	}
 
-	switch m.backend {
+	backend := m.GetBackend()
+	switch backend {
 	case BackendNftables:
 		cmd := exec.CommandContext(ctx, m.config.NftablesPath, "-f", path)
 		output, err := cmd.CombinedOutput()
@@ -742,7 +812,8 @@ func (m *Manager) RestoreRules(ctx context.Context, path string) error {
 func (m *Manager) Flush(ctx context.Context) error {
 	m.logger.Warn("flushing all boundary-siem firewall rules")
 
-	switch m.backend {
+	backend := m.GetBackend()
+	switch backend {
 	case BackendNftables:
 		exec.CommandContext(ctx, m.config.NftablesPath, "delete", "table", "inet", "boundary_siem").Run()
 		exec.CommandContext(ctx, m.config.NftablesPath, "delete", "table", "inet", "boundary_ratelimit").Run()
