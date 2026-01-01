@@ -221,6 +221,9 @@ func NewMonitor(config *Config, logger *slog.Logger) (*Monitor, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 

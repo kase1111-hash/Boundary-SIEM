@@ -117,6 +117,9 @@ func New(config *Config, logger *slog.Logger) (*Watchdog, error) {
 	if config == nil {
 		config = DefaultConfig()
 	}
+	if logger == nil {
+		logger = slog.Default()
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -388,6 +391,9 @@ type SignalHandler struct {
 
 // NewSignalHandler creates a new signal handler.
 func NewSignalHandler(watchdog *Watchdog, logger *slog.Logger) *SignalHandler {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &SignalHandler{
 		watchdog: watchdog,
@@ -475,6 +481,9 @@ type ProcessProtector struct {
 
 // NewProcessProtector creates a new process protector.
 func NewProcessProtector(logger *slog.Logger) *ProcessProtector {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &ProcessProtector{logger: logger}
 }
 
