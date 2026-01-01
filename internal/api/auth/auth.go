@@ -15,6 +15,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 // AuthProvider defines authentication provider types.
@@ -69,6 +71,7 @@ type User struct {
 	Username     string            `json:"username"`
 	Email        string            `json:"email"`
 	DisplayName  string            `json:"display_name"`
+	PasswordHash string            `json:"-"` // Never expose in JSON
 	Roles        []Role            `json:"roles"`
 	Permissions  []Permission      `json:"permissions"`
 	TenantID     string            `json:"tenant_id"`
@@ -79,6 +82,8 @@ type User struct {
 	LastLoginAt  time.Time         `json:"last_login_at"`
 	Disabled     bool              `json:"disabled"`
 	MFAEnabled   bool              `json:"mfa_enabled"`
+	FailedLogins int               `json:"-"` // Track failed login attempts
+	LockedUntil  *time.Time        `json:"-"` // Account lockout time
 }
 
 // Tenant represents an organization/tenant for multi-tenancy.
@@ -308,20 +313,35 @@ func (s *AuthService) initDefaultTenant() {
 }
 
 // initDefaultUsers creates default system users.
+// IMPORTANT: Change the default admin password immediately after first login!
 func (s *AuthService) initDefaultUsers() {
 	now := time.Now()
-	s.users["admin"] = &User{
-		ID:          "admin",
-		Username:    "admin",
-		Email:       "admin@boundary-siem.local",
-		DisplayName: "System Administrator",
-		Roles:       []Role{RoleAdmin},
-		Permissions: s.rolePerms[RoleAdmin],
-		TenantID:    "default",
-		Provider:    AuthProviderLocal,
-		CreatedAt:   now,
-		LastLoginAt: now,
+
+	// Default admin password: "Admin@123!" - MUST be changed on first login
+	// Pre-computed bcrypt hash for "Admin@123!" with cost 12
+	defaultAdminHash, err := bcrypt.GenerateFromPassword([]byte("Admin@123!"), bcryptCost)
+	if err != nil {
+		s.logger.Error("failed to hash default admin password", "error", err)
+		return
 	}
+
+	s.users["admin"] = &User{
+		ID:           "admin",
+		Username:     "admin",
+		Email:        "admin@boundary-siem.local",
+		DisplayName:  "System Administrator",
+		PasswordHash: string(defaultAdminHash),
+		Roles:        []Role{RoleAdmin},
+		Permissions:  s.rolePerms[RoleAdmin],
+		TenantID:     "default",
+		Provider:     AuthProviderLocal,
+		CreatedAt:    now,
+		LastLoginAt:  now,
+	}
+
+	s.logger.Warn("default admin user created with default password - CHANGE IMMEDIATELY",
+		"username", "admin",
+		"default_password", "Admin@123!")
 }
 
 // RegisterRoutes registers auth API routes.
@@ -336,10 +356,27 @@ func (s *AuthService) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("/api/audit", s.handleAuditLog)
 }
 
+// APIError represents a structured API error response.
+type APIError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
+}
+
+// writeJSONError writes a JSON error response.
+func writeJSONError(w http.ResponseWriter, statusCode int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(statusCode)
+	json.NewEncoder(w).Encode(APIError{
+		Code:    code,
+		Message: message,
+	})
+}
+
 // handleLogin handles login requests.
 func (s *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Only POST method is allowed")
 		return
 	}
 
@@ -351,7 +388,7 @@ func (s *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "INVALID_REQUEST", "Failed to parse request body")
 		return
 	}
 
@@ -362,13 +399,24 @@ func (s *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 	user, err := s.Authenticate(req.Username, req.Password, req.TenantID)
 	if err != nil {
 		s.logAudit(AuditActionLoginFailed, "", req.Username, req.TenantID, "auth", "", r, false, err.Error())
-		http.Error(w, "Authentication failed", http.StatusUnauthorized)
+
+		// Return appropriate error based on type
+		if authErr, ok := err.(*AuthError); ok {
+			statusCode := http.StatusUnauthorized
+			if authErr.Code == "ACCOUNT_LOCKED" {
+				statusCode = http.StatusForbidden
+			}
+			writeJSONError(w, statusCode, authErr.Code, authErr.Message)
+		} else {
+			writeJSONError(w, http.StatusUnauthorized, "AUTH_FAILED", "Authentication failed")
+		}
 		return
 	}
 
 	session, err := s.CreateSession(user, r)
 	if err != nil {
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		s.logger.Error("failed to create session", "error", err, "user", user.Username)
+		writeJSONError(w, http.StatusInternalServerError, "SESSION_ERROR", "Failed to create session")
 		return
 	}
 
@@ -567,29 +615,154 @@ func (s *AuthService) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(entries)
 }
 
-// Authenticate validates user credentials.
-func (s *AuthService) Authenticate(username, password, tenantID string) (*User, error) {
-	s.mu.RLock()
-	user, exists := s.users[username]
-	s.mu.RUnlock()
+// AuthError represents an authentication error with additional context.
+type AuthError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
 
+func (e *AuthError) Error() string {
+	return e.Message
+}
+
+// Common authentication errors
+var (
+	ErrUserNotFound      = &AuthError{Code: "USER_NOT_FOUND", Message: "invalid username or password"}
+	ErrInvalidPassword   = &AuthError{Code: "INVALID_PASSWORD", Message: "invalid username or password"}
+	ErrUserDisabled      = &AuthError{Code: "USER_DISABLED", Message: "user account is disabled"}
+	ErrAccountLocked     = &AuthError{Code: "ACCOUNT_LOCKED", Message: "account is temporarily locked due to too many failed attempts"}
+	ErrTenantMismatch    = &AuthError{Code: "TENANT_MISMATCH", Message: "user not authorized for this tenant"}
+	ErrPasswordRequired  = &AuthError{Code: "PASSWORD_REQUIRED", Message: "password is required"}
+	ErrUsernameRequired  = &AuthError{Code: "USERNAME_REQUIRED", Message: "username is required"}
+)
+
+const (
+	maxFailedAttempts = 5
+	lockoutDuration   = 15 * time.Minute
+	bcryptCost        = 12
+)
+
+// Authenticate validates user credentials with bcrypt password verification.
+func (s *AuthService) Authenticate(username, password, tenantID string) (*User, error) {
+	// Input validation
+	if username == "" {
+		return nil, ErrUsernameRequired
+	}
+	if password == "" {
+		return nil, ErrPasswordRequired
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	user, exists := s.users[username]
 	if !exists {
-		return nil, errors.New("user not found")
+		// Use constant-time comparison to prevent timing attacks
+		// Hash a dummy password to maintain consistent timing
+		_ = bcrypt.CompareHashAndPassword([]byte("$2a$12$dummy.hash.for.timing.attack.prevention"), []byte(password))
+		return nil, ErrUserNotFound
+	}
+
+	// Check if account is locked
+	if user.LockedUntil != nil && time.Now().Before(*user.LockedUntil) {
+		return nil, ErrAccountLocked
+	}
+
+	// Reset lockout if expired
+	if user.LockedUntil != nil && time.Now().After(*user.LockedUntil) {
+		user.LockedUntil = nil
+		user.FailedLogins = 0
 	}
 
 	if user.Disabled {
-		return nil, errors.New("user is disabled")
+		return nil, ErrUserDisabled
 	}
 
-	if user.TenantID != tenantID {
-		return nil, errors.New("user not in tenant")
+	if user.TenantID != tenantID && tenantID != "" {
+		return nil, ErrTenantMismatch
 	}
 
-	// In production, verify password hash
-	// For now, accept any password for demo
+	// Verify password using bcrypt
+	if err := bcrypt.CompareHashAndPassword([]byte(user.PasswordHash), []byte(password)); err != nil {
+		// Increment failed login counter
+		user.FailedLogins++
+
+		// Lock account after max failed attempts
+		if user.FailedLogins >= maxFailedAttempts {
+			lockTime := time.Now().Add(lockoutDuration)
+			user.LockedUntil = &lockTime
+			s.logger.Warn("account locked due to too many failed attempts",
+				"username", username,
+				"failed_attempts", user.FailedLogins,
+				"locked_until", lockTime)
+		}
+
+		return nil, ErrInvalidPassword
+	}
+
+	// Successful authentication - reset failed attempts
+	user.FailedLogins = 0
+	user.LockedUntil = nil
 	user.LastLoginAt = time.Now()
 
+	s.logger.Info("user authenticated successfully", "username", username, "tenant", user.TenantID)
+
 	return user, nil
+}
+
+// HashPassword hashes a password using bcrypt.
+func HashPassword(password string) (string, error) {
+	if password == "" {
+		return "", errors.New("password cannot be empty")
+	}
+	if len(password) < 8 {
+		return "", errors.New("password must be at least 8 characters")
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
+	if err != nil {
+		return "", fmt.Errorf("failed to hash password: %w", err)
+	}
+	return string(hash), nil
+}
+
+// ValidatePassword checks if a password meets security requirements.
+func ValidatePassword(password string) error {
+	if len(password) < 8 {
+		return errors.New("password must be at least 8 characters")
+	}
+	if len(password) > 128 {
+		return errors.New("password must not exceed 128 characters")
+	}
+
+	var hasUpper, hasLower, hasDigit, hasSpecial bool
+	for _, c := range password {
+		switch {
+		case c >= 'A' && c <= 'Z':
+			hasUpper = true
+		case c >= 'a' && c <= 'z':
+			hasLower = true
+		case c >= '0' && c <= '9':
+			hasDigit = true
+		case strings.ContainsRune("!@#$%^&*()_+-=[]{}|;':\",./<>?", c):
+			hasSpecial = true
+		}
+	}
+
+	if !hasUpper {
+		return errors.New("password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return errors.New("password must contain at least one lowercase letter")
+	}
+	if !hasDigit {
+		return errors.New("password must contain at least one digit")
+	}
+	if !hasSpecial {
+		return errors.New("password must contain at least one special character")
+	}
+
+	return nil
 }
 
 // CreateSession creates a new session for a user.

@@ -132,7 +132,7 @@ func (bw *BatchWriter) flushLocked() error {
 	}
 
 	atomic.AddUint64(&bw.totalFailed, uint64(len(events)))
-	return fmt.Errorf("batch insert failed after %d retries: %w", bw.config.MaxRetries, lastErr)
+	return NewStorageErrorWithRetries("BatchInsert", "events", fmt.Errorf("%w: %v", ErrBatchInsertFailed, lastErr), bw.config.MaxRetries)
 }
 
 // insertBatch inserts a batch of events into ClickHouse.

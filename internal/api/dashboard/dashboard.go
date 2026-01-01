@@ -3,10 +3,40 @@ package dashboard
 
 import (
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 )
+
+// APIError represents a structured API error response.
+type APIError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
+}
+
+// writeJSONError writes a structured JSON error response.
+func writeJSONError(w http.ResponseWriter, status int, code, message, details string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(APIError{
+		Code:    code,
+		Message: message,
+		Details: details,
+	}); err != nil {
+		slog.Error("failed to write error response", "error", err)
+	}
+}
+
+// writeJSON writes a JSON response with proper error handling.
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		slog.Error("failed to write JSON response", "error", err)
+	}
+}
 
 // DashboardAPI provides endpoints for the SOC dashboard.
 type DashboardAPI struct {
@@ -377,13 +407,12 @@ func (api *DashboardAPI) RegisterRoutes(mux *http.ServeMux) {
 // handleStats returns dashboard statistics.
 func (api *DashboardAPI) handleStats(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed", "only GET is supported")
 		return
 	}
 
 	stats := api.getStats()
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(stats)
+	writeJSON(w, http.StatusOK, stats)
 }
 
 // getStats generates current dashboard statistics.
@@ -427,6 +456,11 @@ func (api *DashboardAPI) getStats() *DashboardStats {
 
 // handleWidgets returns available widgets.
 func (api *DashboardAPI) handleWidgets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed", "only GET is supported")
+		return
+	}
+
 	api.mu.RLock()
 	defer api.mu.RUnlock()
 
@@ -435,12 +469,16 @@ func (api *DashboardAPI) handleWidgets(w http.ResponseWriter, r *http.Request) {
 		widgets = append(widgets, widget)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(widgets)
+	writeJSON(w, http.StatusOK, widgets)
 }
 
 // handleLayouts manages dashboard layouts.
 func (api *DashboardAPI) handleLayouts(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed", "only GET is supported")
+		return
+	}
+
 	api.mu.RLock()
 	defer api.mu.RUnlock()
 
@@ -449,8 +487,7 @@ func (api *DashboardAPI) handleLayouts(w http.ResponseWriter, r *http.Request) {
 		layouts = append(layouts, layout)
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(layouts)
+	writeJSON(w, http.StatusOK, layouts)
 }
 
 // handlePreferences manages user preferences.
@@ -479,29 +516,36 @@ func (api *DashboardAPI) handlePreferences(w http.ResponseWriter, r *http.Reques
 				},
 			}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(prefs)
+		writeJSON(w, http.StatusOK, prefs)
 
 	case http.MethodPut:
 		var prefs UserPreferences
 		if err := json.NewDecoder(r.Body).Decode(&prefs); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
+			writeJSONError(w, http.StatusBadRequest, "INVALID_REQUEST", "failed to parse request body", "")
+			return
+		}
+		if prefs.UserID == "" {
+			writeJSONError(w, http.StatusBadRequest, "MISSING_USER_ID", "user_id is required", "")
 			return
 		}
 		api.mu.Lock()
 		api.preferences[prefs.UserID] = &prefs
 		api.mu.Unlock()
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(prefs)
+		writeJSON(w, http.StatusOK, prefs)
 
 	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed", "only GET and PUT are supported")
 	}
 }
 
 // handleTimeSeries returns time series data for charts.
 func (api *DashboardAPI) handleTimeSeries(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed", "only GET is supported")
+		return
+	}
+
 	metric := r.URL.Query().Get("metric")
 	timeRange := r.URL.Query().Get("range")
 	if timeRange == "" {
@@ -509,8 +553,7 @@ func (api *DashboardAPI) handleTimeSeries(w http.ResponseWriter, r *http.Request
 	}
 
 	data := api.generateTimeSeries(metric, timeRange)
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(data)
+	writeJSON(w, http.StatusOK, data)
 }
 
 // generateTimeSeries generates sample time series data.

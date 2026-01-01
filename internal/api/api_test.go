@@ -229,12 +229,19 @@ func TestAuthService(t *testing.T) {
 	})
 
 	t.Run("Authenticate", func(t *testing.T) {
-		user, err := svc.Authenticate("admin", "password", "default")
+		// Test with correct default password
+		user, err := svc.Authenticate("admin", "Admin@123!", "default")
 		if err != nil {
 			t.Fatalf("authentication failed: %v", err)
 		}
 		if user == nil {
 			t.Error("expected user after authentication")
+		}
+
+		// Test with wrong password
+		_, err = svc.Authenticate("admin", "wrongpassword", "default")
+		if err == nil {
+			t.Error("expected authentication to fail with wrong password")
 		}
 	})
 
@@ -352,7 +359,8 @@ func TestAuthHTTPEndpoints(t *testing.T) {
 	svc.RegisterRoutes(mux)
 
 	t.Run("POST /api/auth/login", func(t *testing.T) {
-		body := `{"username": "admin", "password": "test", "tenant_id": "default"}`
+		// Test successful login with correct password
+		body := `{"username": "admin", "password": "Admin@123!", "tenant_id": "default"}`
 		req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
@@ -369,6 +377,18 @@ func TestAuthHTTPEndpoints(t *testing.T) {
 
 		if result["token"] == nil {
 			t.Error("expected token in response")
+		}
+	})
+
+	t.Run("POST /api/auth/login - wrong password", func(t *testing.T) {
+		body := `{"username": "admin", "password": "wrongpassword", "tenant_id": "default"}`
+		req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusUnauthorized {
+			t.Errorf("expected status 401, got %d", rec.Code)
 		}
 	})
 
@@ -708,8 +728,8 @@ func TestFullAPIIntegration(t *testing.T) {
 
 	// Test login and get session
 	t.Run("LoginAndGetSession", func(t *testing.T) {
-		// Login
-		loginBody := `{"username": "admin", "password": "test", "tenant_id": "default"}`
+		// Login with correct default password
+		loginBody := `{"username": "admin", "password": "Admin@123!", "tenant_id": "default"}`
 		loginReq := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(loginBody))
 		loginReq.Header.Set("Content-Type", "application/json")
 		loginRec := httptest.NewRecorder()

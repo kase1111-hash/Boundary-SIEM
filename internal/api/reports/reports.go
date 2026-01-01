@@ -4,10 +4,40 @@ package reports
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
 )
+
+// APIError represents a structured API error response.
+type APIError struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
+	Details string `json:"details,omitempty"`
+}
+
+// writeJSONError writes a structured JSON error response.
+func writeJSONError(w http.ResponseWriter, status int, code, message, details string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(APIError{
+		Code:    code,
+		Message: message,
+		Details: details,
+	}); err != nil {
+		slog.Error("failed to write error response", "error", err)
+	}
+}
+
+// writeJSON writes a JSON response with proper error handling.
+func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		slog.Error("failed to write JSON response", "error", err)
+	}
+}
 
 // ReportType defines report types.
 type ReportType string
@@ -451,16 +481,20 @@ func (s *ReportService) handleReports(w http.ResponseWriter, r *http.Request) {
 		}
 		s.mu.RUnlock()
 
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(reports)
+		writeJSON(w, http.StatusOK, reports)
 
 	default:
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed", "only GET is supported")
 	}
 }
 
 // handleTemplates returns available templates.
 func (s *ReportService) handleTemplates(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed", "only GET is supported")
+		return
+	}
+
 	s.mu.RLock()
 	templates := make([]*ReportTemplate, 0, len(s.templates))
 	for _, t := range s.templates {
@@ -468,14 +502,13 @@ func (s *ReportService) handleTemplates(w http.ResponseWriter, r *http.Request) 
 	}
 	s.mu.RUnlock()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(templates)
+	writeJSON(w, http.StatusOK, templates)
 }
 
 // handleGenerate generates a new report.
 func (s *ReportService) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed", "only POST is supported")
 		return
 	}
 
@@ -489,7 +522,12 @@ func (s *ReportService) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request", http.StatusBadRequest)
+		writeJSONError(w, http.StatusBadRequest, "INVALID_REQUEST", "failed to parse request body", "")
+		return
+	}
+
+	if req.TemplateID == "" {
+		writeJSONError(w, http.StatusBadRequest, "MISSING_TEMPLATE_ID", "template_id is required", "")
 		return
 	}
 
@@ -498,19 +536,22 @@ func (s *ReportService) handleGenerate(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 
 	if !exists {
-		http.Error(w, "Template not found", http.StatusNotFound)
+		writeJSONError(w, http.StatusNotFound, "TEMPLATE_NOT_FOUND", "template not found", req.TemplateID)
 		return
 	}
 
 	report := s.GenerateReport(template, req.Format, req.StartDate, req.EndDate, req.Parameters, req.TenantID)
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	json.NewEncoder(w).Encode(report)
+	writeJSON(w, http.StatusCreated, report)
 }
 
 // handleControls returns compliance controls.
 func (s *ReportService) handleControls(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed", "only GET is supported")
+		return
+	}
+
 	framework := r.URL.Query().Get("framework")
 	if framework == "" {
 		framework = "soc2"
@@ -524,23 +565,26 @@ func (s *ReportService) handleControls(w http.ResponseWriter, r *http.Request) {
 		controls = []*ComplianceControl{}
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(controls)
+	writeJSON(w, http.StatusOK, controls)
 }
 
 // handleComplianceScore returns the overall compliance score.
 func (s *ReportService) handleComplianceScore(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed", "only GET is supported")
+		return
+	}
+
 	score := s.CalculateComplianceScore()
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"overall_score":     score.Overall,
-		"soc2_score":        score.SOC2,
-		"iso27001_score":    score.ISO27001,
-		"nist_score":        score.NIST,
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"overall_score":      score.Overall,
+		"soc2_score":         score.SOC2,
+		"iso27001_score":     score.ISO27001,
+		"nist_score":         score.NIST,
 		"controls_compliant": score.ControlsCompliant,
-		"controls_total":    score.ControlsTotal,
-		"last_updated":      time.Now(),
+		"controls_total":     score.ControlsTotal,
+		"last_updated":       time.Now(),
 	})
 }
 
