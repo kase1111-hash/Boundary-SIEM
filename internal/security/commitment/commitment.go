@@ -25,14 +25,20 @@ import (
 
 // Common errors.
 var (
-	ErrInvalidCommitment    = errors.New("invalid commitment")
-	ErrCommitmentMismatch   = errors.New("commitment verification failed")
-	ErrChainBroken          = errors.New("commitment chain broken")
-	ErrNoActiveTransition   = errors.New("no active mode transition")
-	ErrTransitionInProgress = errors.New("mode transition already in progress")
-	ErrStateModified        = errors.New("state was modified during transition")
-	ErrPersistenceFailed    = errors.New("persistence verification failed")
-	ErrCorruptedState       = errors.New("persisted state is corrupted")
+	ErrInvalidCommitment      = errors.New("invalid commitment")
+	ErrCommitmentMismatch     = errors.New("commitment verification failed")
+	ErrChainBroken            = errors.New("commitment chain broken")
+	ErrNoActiveTransition     = errors.New("no active mode transition")
+	ErrTransitionInProgress   = errors.New("mode transition already in progress")
+	ErrStateModified          = errors.New("state was modified during transition")
+	ErrPersistenceFailed      = errors.New("persistence verification failed")
+	ErrCorruptedState         = errors.New("persisted state is corrupted")
+	ErrConfirmationRequired   = errors.New("human confirmation required")
+	ErrConfirmationExpired    = errors.New("confirmation code expired")
+	ErrInvalidConfirmation    = errors.New("invalid confirmation code")
+	ErrTooManyAttempts        = errors.New("too many confirmation attempts")
+	ErrInsufficientApprovers  = errors.New("insufficient approvers for this transition")
+	ErrDuplicateApprover      = errors.New("approver has already approved this transition")
 )
 
 // SecurityMode represents a security mode.
@@ -150,18 +156,44 @@ func (c *Commitment) Sign(key []byte) {
 
 // ModeTransition represents a mode transition with before/after commitments.
 type ModeTransition struct {
-	ID            string       `json:"id"`
-	FromMode      SecurityMode `json:"from_mode"`
-	ToMode        SecurityMode `json:"to_mode"`
-	PreCommitment *Commitment  `json:"pre_commitment"`
-	PostCommitment *Commitment `json:"post_commitment,omitempty"`
-	StartTime     time.Time    `json:"start_time"`
-	EndTime       *time.Time   `json:"end_time,omitempty"`
-	Status        string       `json:"status"` // "pending", "completed", "failed", "rolled_back"
-	Reason        string       `json:"reason,omitempty"`
-	Initiator     string       `json:"initiator,omitempty"`
-	Approved      bool         `json:"approved"`
-	ApprovedBy    string       `json:"approved_by,omitempty"`
+	ID             string       `json:"id"`
+	FromMode       SecurityMode `json:"from_mode"`
+	ToMode         SecurityMode `json:"to_mode"`
+	PreCommitment  *Commitment  `json:"pre_commitment"`
+	PostCommitment *Commitment  `json:"post_commitment,omitempty"`
+	StartTime      time.Time    `json:"start_time"`
+	EndTime        *time.Time   `json:"end_time,omitempty"`
+	Status         string       `json:"status"` // "pending", "completed", "failed", "rolled_back", "awaiting_confirmation"
+	Reason         string       `json:"reason,omitempty"`
+	Initiator      string       `json:"initiator,omitempty"`
+	Approved       bool         `json:"approved"`
+	ApprovedBy     string       `json:"approved_by,omitempty"`
+
+	// Human confirmation fields
+	Confirmation *TransitionConfirmation `json:"confirmation,omitempty"`
+}
+
+// TransitionConfirmation holds human confirmation state for a transition.
+type TransitionConfirmation struct {
+	Code           string             `json:"code"`                      // The confirmation code
+	CodeHash       string             `json:"code_hash"`                 // SHA-256 hash of the code
+	ExpiresAt      time.Time          `json:"expires_at"`                // When the code expires
+	CreatedAt      time.Time          `json:"created_at"`                // When the code was created
+	Attempts       int                `json:"attempts"`                  // Number of confirmation attempts
+	MaxAttempts    int                `json:"max_attempts"`              // Maximum allowed attempts
+	RequiredCount  int                `json:"required_count"`            // Number of approvers required
+	Approvers      []ApprovalRecord   `json:"approvers"`                 // List of approvers
+	Verified       bool               `json:"verified"`                  // Whether code was verified
+	VerifiedAt     *time.Time         `json:"verified_at,omitempty"`     // When verification succeeded
+	NotificationID string             `json:"notification_id,omitempty"` // ID for out-of-band notification
+}
+
+// ApprovalRecord records an individual approval.
+type ApprovalRecord struct {
+	Approver   string    `json:"approver"`
+	ApprovedAt time.Time `json:"approved_at"`
+	Method     string    `json:"method"` // "code", "signature", "mfa"
+	Signature  string    `json:"signature,omitempty"`
 }
 
 // Duration returns the transition duration.
@@ -277,6 +309,22 @@ type StateManagerConfig struct {
 	PersistenceVerifyRetries int
 	// SyncToDisk forces fsync after writes for durability.
 	SyncToDisk bool
+
+	// Human confirmation settings
+	// RequireHumanConfirmation requires a confirmation code for de-escalations.
+	RequireHumanConfirmation bool
+	// ConfirmationCodeLength is the length of confirmation codes.
+	ConfirmationCodeLength int
+	// ConfirmationTimeout is how long confirmation codes remain valid.
+	ConfirmationTimeout time.Duration
+	// ConfirmationMaxAttempts is the maximum failed attempts before lockout.
+	ConfirmationMaxAttempts int
+	// RequiredApprovers is the number of approvers required for critical downgrades.
+	RequiredApprovers int
+	// CriticalModeThreshold is the mode level above which multi-approval is required.
+	CriticalModeThreshold int
+	// OnConfirmationRequired is called when confirmation is needed (for out-of-band notification).
+	OnConfirmationRequired func(transition *ModeTransition, code string)
 }
 
 // PersistedState represents the complete persisted state.
@@ -301,6 +349,13 @@ func DefaultStateManagerConfig() *StateManagerConfig {
 		RequirePersistence:             true,
 		PersistenceVerifyRetries:       3,
 		SyncToDisk:                     true,
+		// Human confirmation defaults
+		RequireHumanConfirmation: true,
+		ConfirmationCodeLength:   8,
+		ConfirmationTimeout:      5 * time.Minute,
+		ConfirmationMaxAttempts:  3,
+		RequiredApprovers:        1,
+		CriticalModeThreshold:    2, // Lockdown and above require multi-approval
 	}
 }
 
@@ -692,6 +747,9 @@ func (sm *StateManager) GetCurrentMode() SecurityMode {
 }
 
 // BeginTransition begins a mode transition.
+// For de-escalations when RequireHumanConfirmation is enabled, the transition
+// will be set to "awaiting_confirmation" status and a confirmation code will
+// be generated. Call GetPendingConfirmationCode() to retrieve the code.
 func (sm *StateManager) BeginTransition(ctx context.Context, toMode SecurityMode, reason, initiator string) (*ModeTransition, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -716,17 +774,73 @@ func (sm *StateManager) BeginTransition(ctx context.Context, toMode SecurityMode
 
 	sm.activeTransition = transition
 
+	// Check if this transition requires human confirmation
+	if sm.requiresHumanConfirmation(transition) {
+		// Generate confirmation code
+		code := sm.generateConfirmationCode()
+		codeHash := sm.hashConfirmationCode(code)
+		now := time.Now()
+
+		transition.Confirmation = &TransitionConfirmation{
+			Code:          code, // Temporarily store for GetPendingConfirmationCode
+			CodeHash:      codeHash,
+			ExpiresAt:     now.Add(sm.config.ConfirmationTimeout),
+			CreatedAt:     now,
+			Attempts:      0,
+			MaxAttempts:   sm.config.ConfirmationMaxAttempts,
+			RequiredCount: sm.getRequiredApprovers(transition),
+			Approvers:     make([]ApprovalRecord, 0),
+			Verified:      false,
+		}
+		transition.Status = "awaiting_confirmation"
+
+		sm.logger.Info("mode de-escalation requires confirmation",
+			"transition_id", transition.ID,
+			"from_mode", transition.FromMode,
+			"to_mode", transition.ToMode,
+			"required_approvers", transition.Confirmation.RequiredCount,
+			"expires_at", transition.Confirmation.ExpiresAt)
+
+		// Notify callback
+		if sm.config.OnConfirmationRequired != nil {
+			go sm.config.OnConfirmationRequired(transition, code)
+		}
+	}
+
 	sm.logger.Info("mode transition started",
 		"transition_id", transition.ID,
 		"from_mode", transition.FromMode,
 		"to_mode", transition.ToMode,
-		"reason", reason)
+		"reason", reason,
+		"requires_confirmation", transition.Status == "awaiting_confirmation")
 
 	if sm.onTransitionStart != nil {
 		go sm.onTransitionStart(transition)
 	}
 
 	return transition, nil
+}
+
+// GetPendingConfirmationCode retrieves the confirmation code for a pending transition.
+// This should only be called immediately after BeginTransition for de-escalations.
+// The code is cleared after this call for security.
+func (sm *StateManager) GetPendingConfirmationCode(transitionID string) (string, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if sm.activeTransition == nil || sm.activeTransition.ID != transitionID {
+		return "", ErrNoActiveTransition
+	}
+
+	if sm.activeTransition.Confirmation == nil {
+		return "", nil // No confirmation required
+	}
+
+	code := sm.activeTransition.Confirmation.Code
+	// Clear the plaintext code after retrieval
+	sm.activeTransition.Confirmation.Code = ""
+
+	return code, nil
 }
 
 // createCommitment creates a new commitment.
@@ -815,7 +929,29 @@ func (sm *StateManager) CommitTransition(ctx context.Context) error {
 
 	transition := sm.activeTransition
 
-	// Check approval for de-escalation
+	// Check human confirmation for de-escalations
+	if sm.config.RequireHumanConfirmation && transition.IsDeescalation() {
+		if transition.Confirmation == nil {
+			return ErrConfirmationRequired
+		}
+		if !transition.Confirmation.Verified {
+			// Check if expired
+			if time.Now().After(transition.Confirmation.ExpiresAt) {
+				return ErrConfirmationExpired
+			}
+			// Check if too many attempts
+			if transition.Confirmation.Attempts >= transition.Confirmation.MaxAttempts {
+				return ErrTooManyAttempts
+			}
+			// Check if we have enough approvers
+			if len(transition.Confirmation.Approvers) < transition.Confirmation.RequiredCount {
+				return ErrInsufficientApprovers
+			}
+			return ErrConfirmationRequired
+		}
+	}
+
+	// Legacy approval check (for backwards compatibility)
 	if sm.config.RequireApprovalForDeescalation && transition.IsDeescalation() {
 		if !transition.Approved {
 			return fmt.Errorf("de-escalation requires approval")
@@ -1020,6 +1156,254 @@ func (sm *StateManager) IsPersisted() (bool, error) {
 	}
 
 	return false, nil
+}
+
+// generateConfirmationCode generates a cryptographically secure confirmation code.
+func (sm *StateManager) generateConfirmationCode() string {
+	length := sm.config.ConfirmationCodeLength
+	if length <= 0 {
+		length = 8
+	}
+
+	// Use uppercase letters and digits for readability (avoid confusing chars like 0/O, 1/I)
+	const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+	code := make([]byte, length)
+
+	// Read random bytes
+	randomBytes := make([]byte, length)
+	if _, err := rand.Read(randomBytes); err != nil {
+		// Fallback to less secure but functional approach
+		for i := range code {
+			code[i] = charset[time.Now().UnixNano()%int64(len(charset))]
+		}
+		return string(code)
+	}
+
+	for i := range code {
+		code[i] = charset[int(randomBytes[i])%len(charset)]
+	}
+
+	return string(code)
+}
+
+// hashConfirmationCode creates a secure hash of the confirmation code.
+func (sm *StateManager) hashConfirmationCode(code string) string {
+	h := sha256.New()
+	h.Write(sm.hmacKey)
+	h.Write([]byte(code))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// requiresHumanConfirmation checks if a transition requires human confirmation.
+func (sm *StateManager) requiresHumanConfirmation(transition *ModeTransition) bool {
+	if !sm.config.RequireHumanConfirmation {
+		return false
+	}
+
+	// De-escalations always require confirmation
+	if transition.IsDeescalation() {
+		return true
+	}
+
+	return false
+}
+
+// getRequiredApprovers returns the number of approvers needed for a transition.
+func (sm *StateManager) getRequiredApprovers(transition *ModeTransition) int {
+	if !sm.config.RequireHumanConfirmation {
+		return 0
+	}
+
+	// For critical mode transitions (from high security modes), require more approvers
+	if transition.FromMode.Level() >= sm.config.CriticalModeThreshold {
+		return max(sm.config.RequiredApprovers, 2) // At least 2 for critical
+	}
+
+	return sm.config.RequiredApprovers
+}
+
+// max returns the larger of two ints.
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+// InitiateConfirmation creates a confirmation request for a transition.
+// Returns the confirmation code that must be provided to complete the transition.
+// The code should be communicated out-of-band to the approver(s).
+func (sm *StateManager) InitiateConfirmation(ctx context.Context, transitionID string) (string, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if sm.activeTransition == nil || sm.activeTransition.ID != transitionID {
+		return "", ErrNoActiveTransition
+	}
+
+	transition := sm.activeTransition
+
+	// Generate confirmation code
+	code := sm.generateConfirmationCode()
+	codeHash := sm.hashConfirmationCode(code)
+	now := time.Now()
+
+	// Create confirmation record
+	transition.Confirmation = &TransitionConfirmation{
+		Code:          "", // Don't store plaintext code in state
+		CodeHash:      codeHash,
+		ExpiresAt:     now.Add(sm.config.ConfirmationTimeout),
+		CreatedAt:     now,
+		Attempts:      0,
+		MaxAttempts:   sm.config.ConfirmationMaxAttempts,
+		RequiredCount: sm.getRequiredApprovers(transition),
+		Approvers:     make([]ApprovalRecord, 0),
+		Verified:      false,
+	}
+
+	transition.Status = "awaiting_confirmation"
+
+	sm.logger.Info("confirmation initiated for transition",
+		"transition_id", transitionID,
+		"from_mode", transition.FromMode,
+		"to_mode", transition.ToMode,
+		"expires_at", transition.Confirmation.ExpiresAt,
+		"required_approvers", transition.Confirmation.RequiredCount)
+
+	// Call notification callback if configured
+	if sm.config.OnConfirmationRequired != nil {
+		go sm.config.OnConfirmationRequired(transition, code)
+	}
+
+	// Return the code for out-of-band delivery
+	return code, nil
+}
+
+// ConfirmTransition validates a confirmation code and records an approval.
+// Returns nil when sufficient approvals have been collected.
+func (sm *StateManager) ConfirmTransition(ctx context.Context, transitionID, code, approver, method string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if sm.activeTransition == nil || sm.activeTransition.ID != transitionID {
+		return ErrNoActiveTransition
+	}
+
+	transition := sm.activeTransition
+	confirmation := transition.Confirmation
+
+	if confirmation == nil {
+		return ErrConfirmationRequired
+	}
+
+	// Check if already verified
+	if confirmation.Verified {
+		return nil // Already confirmed
+	}
+
+	// Check expiration
+	if time.Now().After(confirmation.ExpiresAt) {
+		return ErrConfirmationExpired
+	}
+
+	// Check attempts
+	if confirmation.Attempts >= confirmation.MaxAttempts {
+		return ErrTooManyAttempts
+	}
+
+	confirmation.Attempts++
+
+	// Verify code
+	providedHash := sm.hashConfirmationCode(code)
+	if providedHash != confirmation.CodeHash {
+		sm.logger.Warn("invalid confirmation code attempt",
+			"transition_id", transitionID,
+			"approver", approver,
+			"attempt", confirmation.Attempts,
+			"max_attempts", confirmation.MaxAttempts)
+		return ErrInvalidConfirmation
+	}
+
+	// Check for duplicate approver
+	for _, a := range confirmation.Approvers {
+		if a.Approver == approver {
+			return ErrDuplicateApprover
+		}
+	}
+
+	// Record approval
+	approval := ApprovalRecord{
+		Approver:   approver,
+		ApprovedAt: time.Now(),
+		Method:     method,
+	}
+	confirmation.Approvers = append(confirmation.Approvers, approval)
+
+	sm.logger.Info("approval recorded for transition",
+		"transition_id", transitionID,
+		"approver", approver,
+		"method", method,
+		"approvals", len(confirmation.Approvers),
+		"required", confirmation.RequiredCount)
+
+	// Check if we have enough approvals
+	if len(confirmation.Approvers) >= confirmation.RequiredCount {
+		now := time.Now()
+		confirmation.Verified = true
+		confirmation.VerifiedAt = &now
+		transition.Approved = true
+		transition.ApprovedBy = approver // Last approver
+
+		sm.logger.Info("transition confirmation complete",
+			"transition_id", transitionID,
+			"total_approvers", len(confirmation.Approvers))
+	}
+
+	return nil
+}
+
+// GetConfirmationStatus returns the confirmation status for an active transition.
+func (sm *StateManager) GetConfirmationStatus(transitionID string) (*TransitionConfirmation, error) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+
+	if sm.activeTransition == nil || sm.activeTransition.ID != transitionID {
+		return nil, ErrNoActiveTransition
+	}
+
+	if sm.activeTransition.Confirmation == nil {
+		return nil, ErrConfirmationRequired
+	}
+
+	// Return a copy to prevent external modification
+	conf := *sm.activeTransition.Confirmation
+	return &conf, nil
+}
+
+// CancelConfirmation cancels a pending confirmation request.
+func (sm *StateManager) CancelConfirmation(ctx context.Context, transitionID, reason string) error {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	if sm.activeTransition == nil || sm.activeTransition.ID != transitionID {
+		return ErrNoActiveTransition
+	}
+
+	transition := sm.activeTransition
+
+	if transition.Confirmation == nil {
+		return nil // Nothing to cancel
+	}
+
+	sm.logger.Info("confirmation cancelled",
+		"transition_id", transitionID,
+		"reason", reason)
+
+	// Clear confirmation
+	transition.Confirmation = nil
+	transition.Status = "pending"
+
+	return nil
 }
 
 // VerifyChain verifies the commitment chain integrity.

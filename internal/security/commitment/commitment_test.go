@@ -25,6 +25,13 @@ func testConfig(t *testing.T) *StateManagerConfig {
 		RequirePersistence:             true,
 		PersistenceVerifyRetries:       3,
 		SyncToDisk:                     true,
+		// Disable human confirmation for persistence tests
+		RequireHumanConfirmation: false,
+		ConfirmationCodeLength:   8,
+		ConfirmationTimeout:      5 * time.Minute,
+		ConfirmationMaxAttempts:  3,
+		RequiredApprovers:        1,
+		CriticalModeThreshold:    2,
 	}
 }
 
@@ -41,6 +48,39 @@ func testConfigNoPersistence(t *testing.T) *StateManagerConfig {
 		RequirePersistence:             false,
 		PersistenceVerifyRetries:       0,
 		SyncToDisk:                     false,
+		// Disable human confirmation for basic tests
+		RequireHumanConfirmation: false,
+		ConfirmationCodeLength:   8,
+		ConfirmationTimeout:      5 * time.Minute,
+		ConfirmationMaxAttempts:  3,
+		RequiredApprovers:        1,
+		CriticalModeThreshold:    2,
+	}
+}
+
+// testConfigWithConfirmation creates a test config with human confirmation enabled.
+func testConfigWithConfirmation(t *testing.T) *StateManagerConfig {
+	t.Helper()
+	tmpDir := filepath.Join(os.TempDir(), "commitment-confirm-test-"+t.Name())
+	os.RemoveAll(tmpDir)
+	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	return &StateManagerConfig{
+		PersistPath:                    tmpDir,
+		MaxTransitionHistory:           100,
+		RequireApprovalForDeescalation: false,
+		HashAlgorithm:                  "sha256",
+		AutoCheckpoint:                 false,
+		CheckpointInterval:             1 * time.Hour,
+		RequirePersistence:             false, // Disable for cleaner tests
+		PersistenceVerifyRetries:       0,
+		SyncToDisk:                     false,
+		// Enable human confirmation
+		RequireHumanConfirmation: true,
+		ConfirmationCodeLength:   8,
+		ConfirmationTimeout:      5 * time.Minute,
+		ConfirmationMaxAttempts:  3,
+		RequiredApprovers:        1,
+		CriticalModeThreshold:    2,
 	}
 }
 
@@ -1079,5 +1119,464 @@ func TestPersistedState_ChecksumVerification(t *testing.T) {
 	}
 	if !persisted {
 		t.Error("State should be persisted and verified")
+	}
+}
+
+// ======================================
+// Human Confirmation Tests
+// ======================================
+
+func TestStateManager_DeescalationRequiresConfirmation(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// First escalate (no confirmation needed for escalation)
+	transition, err := sm.BeginTransition(ctx, ModeElevated, "escalate", "admin")
+	if err != nil {
+		t.Fatalf("BeginTransition() escalation error = %v", err)
+	}
+	if transition.Status != "pending" {
+		t.Errorf("Escalation should have status pending, got %s", transition.Status)
+	}
+	if transition.Confirmation != nil {
+		t.Error("Escalation should not require confirmation")
+	}
+
+	err = sm.CommitTransition(ctx)
+	if err != nil {
+		t.Fatalf("CommitTransition() escalation error = %v", err)
+	}
+
+	// Now try to de-escalate (should require confirmation)
+	transition, err = sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+	if err != nil {
+		t.Fatalf("BeginTransition() deescalation error = %v", err)
+	}
+
+	if transition.Status != "awaiting_confirmation" {
+		t.Errorf("Deescalation should have status awaiting_confirmation, got %s", transition.Status)
+	}
+	if transition.Confirmation == nil {
+		t.Fatal("Deescalation should have confirmation set")
+	}
+
+	// Try to commit without confirmation - should fail
+	err = sm.CommitTransition(ctx)
+	if err == nil {
+		t.Error("CommitTransition() should fail without confirmation")
+	}
+}
+
+func TestStateManager_ConfirmationCodeGeneration(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Escalate first
+	sm.BeginTransition(ctx, ModeElevated, "escalate", "admin")
+	sm.CommitTransition(ctx)
+
+	// De-escalate
+	transition, _ := sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+
+	// Get the confirmation code
+	code, err := sm.GetPendingConfirmationCode(transition.ID)
+	if err != nil {
+		t.Fatalf("GetPendingConfirmationCode() error = %v", err)
+	}
+
+	if code == "" {
+		t.Error("Confirmation code should not be empty")
+	}
+	if len(code) != config.ConfirmationCodeLength {
+		t.Errorf("Code length = %d, want %d", len(code), config.ConfirmationCodeLength)
+	}
+
+	// Code should only be retrievable once
+	code2, _ := sm.GetPendingConfirmationCode(transition.ID)
+	if code2 != "" {
+		t.Error("Confirmation code should be cleared after first retrieval")
+	}
+}
+
+func TestStateManager_ConfirmTransitionSuccess(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Escalate first
+	sm.BeginTransition(ctx, ModeElevated, "escalate", "admin")
+	sm.CommitTransition(ctx)
+
+	// De-escalate
+	transition, _ := sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+	code, _ := sm.GetPendingConfirmationCode(transition.ID)
+
+	// Confirm with correct code
+	err = sm.ConfirmTransition(ctx, transition.ID, code, "supervisor", "code")
+	if err != nil {
+		t.Fatalf("ConfirmTransition() error = %v", err)
+	}
+
+	// Check confirmation status
+	status, err := sm.GetConfirmationStatus(transition.ID)
+	if err != nil {
+		t.Fatalf("GetConfirmationStatus() error = %v", err)
+	}
+	if !status.Verified {
+		t.Error("Confirmation should be verified")
+	}
+	if len(status.Approvers) != 1 {
+		t.Errorf("Should have 1 approver, got %d", len(status.Approvers))
+	}
+
+	// Now commit should work
+	err = sm.CommitTransition(ctx)
+	if err != nil {
+		t.Errorf("CommitTransition() after confirmation error = %v", err)
+	}
+
+	if sm.GetCurrentMode() != ModeNormal {
+		t.Errorf("Mode = %s, want normal", sm.GetCurrentMode())
+	}
+}
+
+func TestStateManager_ConfirmTransitionInvalidCode(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Escalate and de-escalate
+	sm.BeginTransition(ctx, ModeElevated, "escalate", "admin")
+	sm.CommitTransition(ctx)
+	transition, _ := sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+	sm.GetPendingConfirmationCode(transition.ID) // retrieve and clear
+
+	// Try with wrong code
+	err = sm.ConfirmTransition(ctx, transition.ID, "WRONGCODE", "supervisor", "code")
+	if err != ErrInvalidConfirmation {
+		t.Errorf("Expected ErrInvalidConfirmation, got %v", err)
+	}
+
+	// Check attempts were incremented
+	status, _ := sm.GetConfirmationStatus(transition.ID)
+	if status.Attempts != 1 {
+		t.Errorf("Attempts = %d, want 1", status.Attempts)
+	}
+}
+
+func TestStateManager_ConfirmTransitionTooManyAttempts(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	config.ConfirmationMaxAttempts = 2
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Escalate and de-escalate
+	sm.BeginTransition(ctx, ModeElevated, "escalate", "admin")
+	sm.CommitTransition(ctx)
+	transition, _ := sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+	sm.GetPendingConfirmationCode(transition.ID)
+
+	// Exhaust attempts
+	sm.ConfirmTransition(ctx, transition.ID, "WRONG1", "supervisor", "code")
+	sm.ConfirmTransition(ctx, transition.ID, "WRONG2", "supervisor", "code")
+
+	// Next attempt should fail with too many attempts
+	err = sm.ConfirmTransition(ctx, transition.ID, "WRONG3", "supervisor", "code")
+	if err != ErrTooManyAttempts {
+		t.Errorf("Expected ErrTooManyAttempts, got %v", err)
+	}
+}
+
+func TestStateManager_ConfirmTransitionExpired(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	config.ConfirmationTimeout = 1 * time.Millisecond // Very short timeout
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Escalate and de-escalate
+	sm.BeginTransition(ctx, ModeElevated, "escalate", "admin")
+	sm.CommitTransition(ctx)
+	transition, _ := sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+	code, _ := sm.GetPendingConfirmationCode(transition.ID)
+
+	// Wait for expiration
+	time.Sleep(10 * time.Millisecond)
+
+	// Try to confirm - should fail
+	err = sm.ConfirmTransition(ctx, transition.ID, code, "supervisor", "code")
+	if err != ErrConfirmationExpired {
+		t.Errorf("Expected ErrConfirmationExpired, got %v", err)
+	}
+}
+
+func TestStateManager_ConfirmTransitionDuplicateApprover(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	config.RequiredApprovers = 2
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Escalate and de-escalate
+	sm.BeginTransition(ctx, ModeElevated, "escalate", "admin")
+	sm.CommitTransition(ctx)
+	transition, _ := sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+	code, _ := sm.GetPendingConfirmationCode(transition.ID)
+
+	// First approval
+	err = sm.ConfirmTransition(ctx, transition.ID, code, "supervisor1", "code")
+	if err != nil {
+		t.Fatalf("First approval error = %v", err)
+	}
+
+	// Try same approver again
+	err = sm.ConfirmTransition(ctx, transition.ID, code, "supervisor1", "code")
+	if err != ErrDuplicateApprover {
+		t.Errorf("Expected ErrDuplicateApprover, got %v", err)
+	}
+}
+
+func TestStateManager_MultiApproverConfirmation(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	config.RequiredApprovers = 2
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Escalate and de-escalate
+	sm.BeginTransition(ctx, ModeElevated, "escalate", "admin")
+	sm.CommitTransition(ctx)
+	transition, _ := sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+	code, _ := sm.GetPendingConfirmationCode(transition.ID)
+
+	// First approval
+	err = sm.ConfirmTransition(ctx, transition.ID, code, "supervisor1", "code")
+	if err != nil {
+		t.Fatalf("First approval error = %v", err)
+	}
+
+	// Should still need more approvals
+	status, _ := sm.GetConfirmationStatus(transition.ID)
+	if status.Verified {
+		t.Error("Should not be verified with only 1 approver")
+	}
+
+	// Try to commit - should fail
+	err = sm.CommitTransition(ctx)
+	if err != ErrInsufficientApprovers {
+		t.Errorf("Expected ErrInsufficientApprovers, got %v", err)
+	}
+
+	// Second approval
+	err = sm.ConfirmTransition(ctx, transition.ID, code, "supervisor2", "code")
+	if err != nil {
+		t.Fatalf("Second approval error = %v", err)
+	}
+
+	// Now should be verified
+	status, _ = sm.GetConfirmationStatus(transition.ID)
+	if !status.Verified {
+		t.Error("Should be verified with 2 approvers")
+	}
+	if len(status.Approvers) != 2 {
+		t.Errorf("Should have 2 approvers, got %d", len(status.Approvers))
+	}
+
+	// Now commit should work
+	err = sm.CommitTransition(ctx)
+	if err != nil {
+		t.Errorf("CommitTransition() error = %v", err)
+	}
+}
+
+func TestStateManager_CriticalModeRequiresMultiApproval(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	config.RequiredApprovers = 1        // Normal transitions need 1
+	config.CriticalModeThreshold = 2    // Lockdown (level 2) and above are critical
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Escalate to lockdown (level 2)
+	sm.BeginTransition(ctx, ModeLockdown, "escalate", "admin")
+	sm.CommitTransition(ctx)
+
+	// De-escalate from critical mode
+	transition, _ := sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+
+	// Should require at least 2 approvers
+	status, _ := sm.GetConfirmationStatus(transition.ID)
+	if status.RequiredCount < 2 {
+		t.Errorf("Critical mode deescalation should require at least 2 approvers, got %d", status.RequiredCount)
+	}
+}
+
+func TestStateManager_CancelConfirmation(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Escalate and de-escalate
+	sm.BeginTransition(ctx, ModeElevated, "escalate", "admin")
+	sm.CommitTransition(ctx)
+	transition, _ := sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+
+	// Cancel confirmation
+	err = sm.CancelConfirmation(ctx, transition.ID, "test cancellation")
+	if err != nil {
+		t.Fatalf("CancelConfirmation() error = %v", err)
+	}
+
+	// Status should be back to pending
+	active := sm.GetActiveTransition()
+	if active.Status != "pending" {
+		t.Errorf("Status = %s, want pending", active.Status)
+	}
+	if active.Confirmation != nil {
+		t.Error("Confirmation should be nil after cancellation")
+	}
+}
+
+func TestStateManager_ConfirmationCallback(t *testing.T) {
+	callbackCalled := false
+	var receivedCode string
+	var receivedTransition *ModeTransition
+
+	config := testConfigWithConfirmation(t)
+	config.OnConfirmationRequired = func(transition *ModeTransition, code string) {
+		callbackCalled = true
+		receivedCode = code
+		receivedTransition = transition
+	}
+
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Escalate and de-escalate
+	sm.BeginTransition(ctx, ModeElevated, "escalate", "admin")
+	sm.CommitTransition(ctx)
+	transition, _ := sm.BeginTransition(ctx, ModeNormal, "deescalate", "admin")
+
+	// Give the callback goroutine time to run
+	time.Sleep(10 * time.Millisecond)
+
+	if !callbackCalled {
+		t.Error("OnConfirmationRequired callback should have been called")
+	}
+	if receivedCode == "" {
+		t.Error("Callback should receive non-empty code")
+	}
+	if receivedTransition == nil || receivedTransition.ID != transition.ID {
+		t.Error("Callback should receive the transition")
+	}
+}
+
+func TestStateManager_InitiateConfirmation(t *testing.T) {
+	config := testConfigNoPersistence(t) // Start without auto-confirmation
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Start a transition
+	transition, _ := sm.BeginTransition(ctx, ModeElevated, "test", "admin")
+
+	// Manually initiate confirmation
+	code, err := sm.InitiateConfirmation(ctx, transition.ID)
+	if err != nil {
+		t.Fatalf("InitiateConfirmation() error = %v", err)
+	}
+
+	if code == "" {
+		t.Error("InitiateConfirmation should return a code")
+	}
+
+	// Verify confirmation was created
+	status, err := sm.GetConfirmationStatus(transition.ID)
+	if err != nil {
+		t.Fatalf("GetConfirmationStatus() error = %v", err)
+	}
+	if status == nil {
+		t.Error("Confirmation should exist after InitiateConfirmation")
+	}
+}
+
+func TestStateManager_ConfirmTransition_NoActiveTransition(t *testing.T) {
+	config := testConfigWithConfirmation(t)
+	sm, err := NewStateManager(config, nil)
+	if err != nil {
+		t.Fatalf("NewStateManager() error = %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Try to confirm non-existent transition
+	err = sm.ConfirmTransition(ctx, "non-existent-id", "CODE1234", "approver", "code")
+	if err != ErrNoActiveTransition {
+		t.Errorf("Expected ErrNoActiveTransition, got %v", err)
+	}
+}
+
+func TestDefaultStateManagerConfig_ConfirmationDefaults(t *testing.T) {
+	config := DefaultStateManagerConfig()
+
+	if !config.RequireHumanConfirmation {
+		t.Error("RequireHumanConfirmation should be true by default")
+	}
+	if config.ConfirmationCodeLength <= 0 {
+		t.Error("ConfirmationCodeLength should be positive")
+	}
+	if config.ConfirmationTimeout <= 0 {
+		t.Error("ConfirmationTimeout should be positive")
+	}
+	if config.ConfirmationMaxAttempts <= 0 {
+		t.Error("ConfirmationMaxAttempts should be positive")
+	}
+	if config.RequiredApprovers <= 0 {
+		t.Error("RequiredApprovers should be positive")
 	}
 }
