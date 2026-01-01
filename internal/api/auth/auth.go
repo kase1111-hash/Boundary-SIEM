@@ -341,7 +341,7 @@ func (s *AuthService) initDefaultUsers() {
 
 	s.logger.Warn("default admin user created with default password - CHANGE IMMEDIATELY",
 		"username", "admin",
-		"default_password", "Admin@123!")
+		"password_hint", "[REDACTED - see documentation for default credentials]")
 }
 
 // RegisterRoutes registers auth API routes.
