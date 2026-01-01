@@ -77,7 +77,7 @@ func NewClickHouseClient(cfg ClickHouseConfig) (*ClickHouseClient, error) {
 
 	conn, err := clickhouse.Open(opts)
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to ClickHouse: %w", err)
+		return nil, WrapConnectionError("Open", err)
 	}
 
 	// Verify connection
@@ -85,7 +85,7 @@ func NewClickHouseClient(cfg ClickHouseConfig) (*ClickHouseClient, error) {
 	defer cancel()
 
 	if err := conn.Ping(ctx); err != nil {
-		return nil, fmt.Errorf("failed to ping ClickHouse: %w", err)
+		return nil, WrapConnectionError("Ping", err)
 	}
 
 	return &ClickHouseClient{

@@ -16,9 +16,21 @@ type Config struct {
 	Queue      QueueConfig      `yaml:"queue"`
 	Validation ValidationConfig `yaml:"validation"`
 	Auth       AuthConfig       `yaml:"auth"`
+	CORS       CORSConfig       `yaml:"cors"`
 	Logging    LoggingConfig    `yaml:"logging"`
 	Storage    StorageConfig    `yaml:"storage"`
 	Consumer   ConsumerConfig   `yaml:"consumer"`
+}
+
+// CORSConfig holds CORS settings.
+type CORSConfig struct {
+	Enabled          bool     `yaml:"enabled"`
+	AllowedOrigins   []string `yaml:"allowed_origins"`
+	AllowedMethods   []string `yaml:"allowed_methods"`
+	AllowedHeaders   []string `yaml:"allowed_headers"`
+	ExposedHeaders   []string `yaml:"exposed_headers"`
+	AllowCredentials bool     `yaml:"allow_credentials"`
+	MaxAge           int      `yaml:"max_age"` // Preflight cache duration in seconds
 }
 
 // StorageConfig holds storage settings.
@@ -185,6 +197,27 @@ func DefaultConfig() *Config {
 			APIKeyHeader: "X-API-Key",
 			Enabled:      false, // Disabled by default for development
 		},
+		CORS: CORSConfig{
+			Enabled:        true, // CORS enabled by default for API access
+			AllowedOrigins: []string{"*"},
+			AllowedMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"},
+			AllowedHeaders: []string{
+				"Accept",
+				"Authorization",
+				"Content-Type",
+				"X-API-Key",
+				"X-Request-ID",
+				"X-Tenant-ID",
+			},
+			ExposedHeaders: []string{
+				"X-Request-ID",
+				"X-RateLimit-Limit",
+				"X-RateLimit-Remaining",
+				"X-RateLimit-Reset",
+			},
+			AllowCredentials: false, // Set to false when AllowedOrigins is "*"
+			MaxAge:           86400, // 24 hours preflight cache
+		},
 		Logging: LoggingConfig{
 			Level:  "info",
 			Format: "json",
@@ -282,6 +315,58 @@ func (c *Config) applyEnvOverrides() {
 	if pass := os.Getenv("CLICKHOUSE_PASSWORD"); pass != "" {
 		c.Storage.ClickHouse.Password = pass
 	}
+
+	// CORS settings
+	if enabled := os.Getenv("SIEM_CORS_ENABLED"); enabled == "false" {
+		c.CORS.Enabled = false
+	}
+
+	if origins := os.Getenv("SIEM_CORS_ORIGINS"); origins != "" {
+		c.CORS.AllowedOrigins = splitAndTrim(origins, ",")
+	}
+}
+
+// splitAndTrim splits a string by separator and trims whitespace from each part.
+func splitAndTrim(s, sep string) []string {
+	parts := make([]string, 0)
+	for _, part := range splitString(s, sep) {
+		trimmed := trimSpace(part)
+		if trimmed != "" {
+			parts = append(parts, trimmed)
+		}
+	}
+	return parts
+}
+
+// splitString splits a string by separator (simple implementation to avoid strings package).
+func splitString(s, sep string) []string {
+	if s == "" {
+		return nil
+	}
+	var result []string
+	start := 0
+	for i := 0; i <= len(s)-len(sep); i++ {
+		if s[i:i+len(sep)] == sep {
+			result = append(result, s[start:i])
+			start = i + len(sep)
+			i += len(sep) - 1
+		}
+	}
+	result = append(result, s[start:])
+	return result
+}
+
+// trimSpace trims leading and trailing whitespace.
+func trimSpace(s string) string {
+	start := 0
+	end := len(s)
+	for start < end && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r') {
+		start++
+	}
+	for end > start && (s[end-1] == ' ' || s[end-1] == '\t' || s[end-1] == '\n' || s[end-1] == '\r') {
+		end--
+	}
+	return s[start:end]
 }
 
 // Validate validates the configuration.
