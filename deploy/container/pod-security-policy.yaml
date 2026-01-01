@@ -1,0 +1,298 @@
+# Kubernetes Pod Security Standards for Boundary-SIEM
+# Enforces restricted security context for all pods
+#
+# For Kubernetes 1.25+, use Pod Security Admission (PSA)
+# For older versions, use PodSecurityPolicy (deprecated)
+
+---
+# =============================================================================
+# Pod Security Admission Labels (K8s 1.25+)
+# =============================================================================
+# Apply these labels to the namespace:
+#
+# kubectl label namespace boundary-siem \
+#   pod-security.kubernetes.io/enforce=restricted \
+#   pod-security.kubernetes.io/enforce-version=latest \
+#   pod-security.kubernetes.io/warn=restricted \
+#   pod-security.kubernetes.io/warn-version=latest \
+#   pod-security.kubernetes.io/audit=restricted \
+#   pod-security.kubernetes.io/audit-version=latest
+
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: boundary-siem
+  labels:
+    name: boundary-siem
+    # Pod Security Standards - Restricted
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
+---
+# =============================================================================
+# ResourceQuota - Limit namespace resources
+# =============================================================================
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: siem-resource-quota
+  namespace: boundary-siem
+spec:
+  hard:
+    # Pod limits
+    pods: "20"
+    # CPU limits
+    requests.cpu: "4"
+    limits.cpu: "8"
+    # Memory limits
+    requests.memory: "8Gi"
+    limits.memory: "16Gi"
+    # Storage limits
+    requests.storage: "100Gi"
+    persistentvolumeclaims: "10"
+    # Prevent privileged containers
+    count/pods.spec.containers.securityContext.privileged: "0"
+---
+# =============================================================================
+# LimitRange - Default resource limits
+# =============================================================================
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: siem-limit-range
+  namespace: boundary-siem
+spec:
+  limits:
+    - type: Container
+      default:
+        cpu: "500m"
+        memory: "512Mi"
+      defaultRequest:
+        cpu: "100m"
+        memory: "128Mi"
+      max:
+        cpu: "2"
+        memory: "2Gi"
+      min:
+        cpu: "50m"
+        memory: "64Mi"
+    - type: Pod
+      max:
+        cpu: "4"
+        memory: "4Gi"
+    - type: PersistentVolumeClaim
+      max:
+        storage: "20Gi"
+      min:
+        storage: "1Gi"
+---
+# =============================================================================
+# OPA Gatekeeper Constraints
+# =============================================================================
+# These require Gatekeeper to be installed in the cluster
+
+# Constraint Template: Require non-root user
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequirenonroot
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequireNonRoot
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequirenonroot
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.runAsNonRoot
+          msg := sprintf("Container %v must set runAsNonRoot to true", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.runAsUser == 0
+          msg := sprintf("Container %v must not run as root (UID 0)", [container.name])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequireNonRoot
+metadata:
+  name: require-nonroot-siem
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["boundary-siem"]
+---
+# Constraint Template: Require read-only root filesystem
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sreadonlyrootfilesystem
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sReadOnlyRootFilesystem
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sreadonlyrootfilesystem
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.readOnlyRootFilesystem
+          msg := sprintf("Container %v must set readOnlyRootFilesystem to true", [container.name])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sReadOnlyRootFilesystem
+metadata:
+  name: require-readonly-root-siem
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["boundary-siem"]
+---
+# Constraint Template: Deny privileged containers
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8sdenyprivileged
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sDenyPrivileged
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8sdenyprivileged
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.privileged
+          msg := sprintf("Privileged containers are not allowed: %v", [container.name])
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          container.securityContext.allowPrivilegeEscalation
+          msg := sprintf("Privilege escalation is not allowed: %v", [container.name])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sDenyPrivileged
+metadata:
+  name: deny-privileged-siem
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["boundary-siem"]
+---
+# Constraint Template: Restrict capabilities
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srestrictcapabilities
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRestrictCapabilities
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            allowedCapabilities:
+              type: array
+              items:
+                type: string
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srestrictcapabilities
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          cap := container.securityContext.capabilities.add[_]
+          not allowed_capability(cap)
+          msg := sprintf("Capability %v is not allowed for container %v", [cap, container.name])
+        }
+
+        allowed_capability(cap) {
+          allowed := input.parameters.allowedCapabilities[_]
+          cap == allowed
+        }
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not container.securityContext.capabilities.drop
+          msg := sprintf("Container %v must drop all capabilities", [container.name])
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRestrictCapabilities
+metadata:
+  name: restrict-capabilities-siem
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["boundary-siem"]
+  parameters:
+    allowedCapabilities:
+      - "NET_BIND_SERVICE"
+---
+# Constraint Template: Require seccomp profile
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequireseccomp
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequireSeccomp
+  targets:
+    - target: admission.k8s.gatekeeper.sh
+      rego: |
+        package k8srequireseccomp
+
+        violation[{"msg": msg}] {
+          container := input.review.object.spec.containers[_]
+          not has_seccomp_profile(container)
+          msg := sprintf("Container %v must have a seccomp profile", [container.name])
+        }
+
+        has_seccomp_profile(container) {
+          container.securityContext.seccompProfile.type == "RuntimeDefault"
+        }
+
+        has_seccomp_profile(container) {
+          container.securityContext.seccompProfile.type == "Localhost"
+        }
+---
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequireSeccomp
+metadata:
+  name: require-seccomp-siem
+spec:
+  match:
+    kinds:
+      - apiGroups: [""]
+        kinds: ["Pod"]
+    namespaces: ["boundary-siem"]
