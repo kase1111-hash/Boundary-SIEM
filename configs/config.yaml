@@ -35,7 +35,7 @@ queue:
 validation:
   max_event_age: 168h     # 7 days
   max_future: 5m
-  strict_mode: true
+  strict_mode: false      # Disabled by default - enable for production
 
 auth:
   api_key_header: X-API-Key
