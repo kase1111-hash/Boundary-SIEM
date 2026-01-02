@@ -1,8 +1,8 @@
 # Ecosystem Compatibility Report
 
 **Date:** 2026-01-02
-**Version:** 2.0 (Updated with full integration support)
-**Branch:** `claude/verify-repo-compatibility-vXyXX`
+**Version:** 3.0 (Extended with full 12-repo integration support)
+**Branch:** `claude/test-repo-integration-LrmtS`
 
 ---
 
@@ -12,11 +12,12 @@ Analysis of all 16 repositories under [github.com/kase1111-hash](https://github.
 
 | Category | Count | Status |
 |----------|-------|--------|
-| **Fully Integrated** | 11 | Production-ready with detection rules |
+| **Fully Integrated (Agent-OS)** | 11 | Production-ready with detection rules |
+| **Fully Integrated (Extended)** | 4 | New game/blockchain integrations |
 | **Compatible** | 1 | Uses standard API endpoints |
-| **Unrelated** | 4 | Games, other domains |
 
-**Total Detection Rules:** 200+ across all integrations
+**Total Detection Rules:** 270+ across all integrations
+**Total Integrated Repositories:** 15 (12 unique ecosystem systems + boundary-daemon + games)
 
 ---
 
@@ -265,14 +266,105 @@ Any system that sends events to the standard `/api/v1/events` endpoint is compat
 
 ---
 
-## 4. Unrelated Repositories
+## 4. Extended Integrations (New)
 
-| Repository | Domain | Notes |
-|------------|--------|-------|
-| Midnight-pulse | Game | Procedural night driving |
-| Shredsquatch | Game | 3D snowboarding |
-| Long-Home | Game | GDScript project |
-| (Others) | - | Non-Agent-OS projects |
+The following repositories have been fully integrated with dedicated client, normalizer, ingester, and detection rules:
+
+### 4.1 Finite-Intent-Executor
+
+| Aspect | Details |
+|--------|---------|
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/finiteintent/` |
+| **Detection Rules** | 20 rules (FIE-001 to FIE-020) |
+
+**Event Categories:** Intent lifecycle, Trigger activations, Execution agent decisions, IP token management, Sunset/public domain transitions, Oracle events, Security events
+
+**Key Logged Events:**
+| Action | Description |
+|--------|-------------|
+| `fie.intent.*` | Intent capture, modification, activation |
+| `fie.trigger.*` | Deadman switch, quorum, oracle triggers |
+| `fie.execution.*` | Agent decisions, IP transfers, blocks |
+| `fie.ip.*` | Token creation, transfer, revocation |
+| `fie.sunset.*` | 20-year sunset protocol phases |
+| `fie.oracle.*` | Oracle requests, disputes, timeouts |
+| `fie.security.*` | Access changes, constraint violations |
+
+---
+
+### 4.2 Midnight-pulse (Nightflow)
+
+| Aspect | Details |
+|--------|---------|
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/midnightpulse/` |
+| **Detection Rules** | 15 rules (MP-001 to MP-015) |
+
+**Event Categories:** Sessions, Crashes, Multiplayer, Input anomalies, Save/Load, Performance, Leaderboard, Difficulty
+
+**Key Logged Events:**
+| Action | Description |
+|--------|-------------|
+| `mp.session.*` | Game session lifecycle |
+| `mp.crash.*` | Vehicle crash events with telemetry |
+| `mp.multiplayer.*` | Ghost races, spectator mode |
+| `mp.anomaly.*` | Input anomaly detection (anti-cheat) |
+| `mp.saveload.*` | Save data integrity |
+| `mp.leaderboard.*` | Score submissions, verification |
+| `mp.performance.*` | Frame rate, memory metrics |
+
+---
+
+### 4.3 Long-Home
+
+| Aspect | Details |
+|--------|---------|
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/longhome/` |
+| **Detection Rules** | 15 rules (LH-001 to LH-015) |
+
+**Event Categories:** Sessions, State transitions, Fatal events, Slide mechanics, Rope system, Body conditions, Input validation, Physics anomalies
+
+**Key Logged Events:**
+| Action | Description |
+|--------|-------------|
+| `lh.session.*` | Game session states |
+| `lh.state.*` | Game/movement/slide state transitions |
+| `lh.fatal.*` | Death events (fall, hypothermia, etc.) |
+| `lh.slide.*` | Sliding control mechanics |
+| `lh.rope.*` | Rope deployment, anchor, breaks |
+| `lh.body.*` | Body condition monitoring |
+| `lh.physics.*` | Physics anomaly detection (anti-cheat) |
+| `lh.save.*` | Save file integrity |
+
+---
+
+### 4.4 Shredsquatch
+
+| Aspect | Details |
+|--------|---------|
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/shredsquatch/` |
+| **Detection Rules** | 15 rules (SS-001 to SS-015) |
+
+**Event Categories:** Sessions, Runs, Tricks, Input anomalies, Leaderboard, Performance, Assets, Powerups, Sasquatch AI, Collisions
+
+**Key Logged Events:**
+| Action | Description |
+|--------|-------------|
+| `ss.session.*` | Game session lifecycle |
+| `ss.run.*` | Descent runs, crashes, Sasquatch catches |
+| `ss.trick.*` | Trick execution, combos, landings |
+| `ss.anomaly.*` | Input anomaly detection (anti-cheat) |
+| `ss.leaderboard.*` | Score submissions, suspicious flags |
+| `ss.sasquatch.*` | AI chase events |
+| `ss.collision.*` | Object collision tracking |
+| `ss.asset.*` | Asset loading events |
 
 ---
 
@@ -369,6 +461,10 @@ valueledger:
 | Synth Mind | 8600 |
 | IntentLog | 8700 |
 | RRA-Module | 8800 |
+| **Finite-Intent-Executor** | 8900 |
+| **Midnight-pulse** | 9000 |
+| **Long-Home** | 9100 |
+| **Shredsquatch** | 9200 |
 
 ---
 
@@ -385,16 +481,20 @@ valueledger:
 | Synth Mind | SM- | 10 | Emotional, safety, prediction |
 | IntentLog | IL- | 10 | Chain integrity, signatures, exports |
 | RRA-Module | RRA- | 10 | Ingestion, contracts, governance |
+| **Finite-Intent-Executor** | FIE- | 20 | Intent lifecycle, triggers, IP tokens |
+| **Midnight-pulse** | MP- | 15 | Sessions, crashes, anti-cheat |
+| **Long-Home** | LH- | 15 | State, physics, save integrity |
+| **Shredsquatch** | SS- | 15 | Runs, tricks, leaderboard integrity |
 | Ecosystem | ECO- | 26 | Cross-system correlation |
 | Blockchain | Various | 80+ | Validator, DeFi, infrastructure |
 
-**Grand Total: 200+ detection rules**
+**Grand Total: 270+ detection rules**
 
 ---
 
 ## 8. Verification Checklist
 
-### Implemented Integrations
+### Implemented Integrations (Agent-OS Ecosystem)
 
 - [x] **boundary-daemon**: CEF parsing, signature ID mapping
 - [x] **NatLangChain**: Full client, normalizer, ingester, 20 rules
@@ -408,6 +508,17 @@ valueledger:
 - [x] **IntentLog**: Full client, normalizer, ingester, 10 rules
 - [x] **RRA-Module**: Full client, normalizer, ingester, 10 rules
 
+### Implemented Integrations (Extended - NEW)
+
+- [x] **Finite-Intent-Executor**: Full client, normalizer, ingester, 20 rules
+  - Intent lifecycle, trigger events, execution agent, IP tokens, sunset protocol
+- [x] **Midnight-pulse**: Full client, normalizer, ingester, 15 rules
+  - Sessions, crashes, multiplayer, input anomalies, leaderboard, performance
+- [x] **Long-Home**: Full client, normalizer, ingester, 15 rules
+  - State transitions, fatal events, slides, ropes, physics anomalies
+- [x] **Shredsquatch**: Full client, normalizer, ingester, 15 rules
+  - Runs, tricks, input anomalies, leaderboard, Sasquatch AI, collisions
+
 ### Cross-System Detection
 
 - [x] Ecosystem-wide correlation rules (26 rules)
@@ -416,6 +527,14 @@ valueledger:
 - [x] Data exfiltration chain detection
 - [x] Agent compromise pattern detection
 
+### Important Info Logging Verification
+
+All integrations are configured to log important information by default:
+- [x] All event types enabled in ingester configs
+- [x] Minimum severity set to "low" for security events
+- [x] Complete metadata captured in normalized events
+- [x] Raw event data preserved where applicable
+
 ---
 
-*Report generated during ecosystem integration verification.*
+*Report updated with 12-repo integration support (version 3.0).*
