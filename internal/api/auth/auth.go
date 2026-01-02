@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -67,23 +68,24 @@ const (
 
 // User represents an authenticated user.
 type User struct {
-	ID           string            `json:"id"`
-	Username     string            `json:"username"`
-	Email        string            `json:"email"`
-	DisplayName  string            `json:"display_name"`
-	PasswordHash string            `json:"-"` // Never expose in JSON
-	Roles        []Role            `json:"roles"`
-	Permissions  []Permission      `json:"permissions"`
-	TenantID     string            `json:"tenant_id"`
-	Provider     AuthProvider      `json:"provider"`
-	ProviderID   string            `json:"provider_id,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
-	CreatedAt    time.Time         `json:"created_at"`
-	LastLoginAt  time.Time         `json:"last_login_at"`
-	Disabled     bool              `json:"disabled"`
-	MFAEnabled   bool              `json:"mfa_enabled"`
-	FailedLogins int               `json:"-"` // Track failed login attempts
-	LockedUntil  *time.Time        `json:"-"` // Account lockout time
+	ID                    string            `json:"id"`
+	Username              string            `json:"username"`
+	Email                 string            `json:"email"`
+	DisplayName           string            `json:"display_name"`
+	PasswordHash          string            `json:"-"` // Never expose in JSON
+	Roles                 []Role            `json:"roles"`
+	Permissions           []Permission      `json:"permissions"`
+	TenantID              string            `json:"tenant_id"`
+	Provider              AuthProvider      `json:"provider"`
+	ProviderID            string            `json:"provider_id,omitempty"`
+	Metadata              map[string]string `json:"metadata,omitempty"`
+	CreatedAt             time.Time         `json:"created_at"`
+	LastLoginAt           time.Time         `json:"last_login_at"`
+	Disabled              bool              `json:"disabled"`
+	MFAEnabled            bool              `json:"mfa_enabled"`
+	FailedLogins          int               `json:"-"` // Track failed login attempts
+	LockedUntil           *time.Time        `json:"-"` // Account lockout time
+	RequirePasswordChange bool              `json:"require_password_change"` // Force password change on next login
 }
 
 // Tenant represents an organization/tenant for multi-tenancy.
@@ -203,15 +205,16 @@ type SAMLConfig struct {
 
 // AuthService provides authentication and authorization services.
 type AuthService struct {
-	mu           sync.RWMutex
-	users        map[string]*User
-	sessions     map[string]*Session
-	tenants      map[string]*Tenant
-	auditLog     []*AuditLogEntry
-	oauthConfigs map[string]*OAuthConfig
-	samlConfigs  map[string]*SAMLConfig
-	rolePerms    map[Role][]Permission
-	logger       *slog.Logger
+	mu             sync.RWMutex
+	users          map[string]*User
+	sessionStorage SessionStorage  // Now using SessionStorage interface
+	csrf           *CSRFProtection // CSRF protection
+	tenants        map[string]*Tenant
+	auditLog       []*AuditLogEntry
+	oauthConfigs   map[string]*OAuthConfig
+	samlConfigs    map[string]*SAMLConfig
+	rolePerms      map[Role][]Permission
+	logger         *slog.Logger
 }
 
 // Config holds auth service configuration.
@@ -235,19 +238,37 @@ type PasswordPolicy struct {
 }
 
 // NewAuthService creates a new authentication service.
+// If sessionStorage is nil, defaults to in-memory storage.
 func NewAuthService(logger *slog.Logger) *AuthService {
+	return NewAuthServiceWithStorage(logger, nil)
+}
+
+// NewAuthServiceWithStorage creates a new authentication service with custom session storage.
+func NewAuthServiceWithStorage(logger *slog.Logger, sessionStorage SessionStorage) *AuthService {
+	// Default to in-memory storage if not provided
+	if sessionStorage == nil {
+		sessionStorage = NewMemorySessionStorage()
+	}
+
 	svc := &AuthService{
-		users:        make(map[string]*User),
-		sessions:     make(map[string]*Session),
-		tenants:      make(map[string]*Tenant),
-		auditLog:     make([]*AuditLogEntry, 0),
-		oauthConfigs: make(map[string]*OAuthConfig),
-		samlConfigs:  make(map[string]*SAMLConfig),
-		rolePerms:    initRolePermissions(),
-		logger:       logger,
+		users:          make(map[string]*User),
+		sessionStorage: sessionStorage,
+		csrf:           NewCSRFProtection(DefaultCSRFConfig()),
+		tenants:        make(map[string]*Tenant),
+		auditLog:       make([]*AuditLogEntry, 0),
+		oauthConfigs:   make(map[string]*OAuthConfig),
+		samlConfigs:    make(map[string]*SAMLConfig),
+		rolePerms:      initRolePermissions(),
+		logger:         logger,
 	}
 	svc.initDefaultTenant()
-	svc.initDefaultUsers()
+
+	// Initialize default admin user with environment-based or random credentials
+	if err := svc.initDefaultUsers(nil); err != nil {
+		logger.Error("failed to initialize default admin user", "error", err)
+		// Continue initialization but log the error
+	}
+
 	return svc
 }
 
@@ -312,36 +333,133 @@ func (s *AuthService) initDefaultTenant() {
 	}
 }
 
-// initDefaultUsers creates default system users.
-// IMPORTANT: Change the default admin password immediately after first login!
-func (s *AuthService) initDefaultUsers() {
+// AdminConfig holds configuration for the default admin user.
+type AdminConfig struct {
+	Username              string
+	Password              string
+	Email                 string
+	RequirePasswordChange bool
+}
+
+// initDefaultUsers creates default system users using provided configuration.
+// Credentials should be provided via environment variables or configuration file.
+func (s *AuthService) initDefaultUsers(config *AdminConfig) error {
 	now := time.Now()
 
-	// Default admin password: "Admin@123!" - MUST be changed on first login
-	// Pre-computed bcrypt hash for "Admin@123!" with cost 12
-	defaultAdminHash, err := bcrypt.GenerateFromPassword([]byte("Admin@123!"), bcryptCost)
+	// Use provided config or fallback to environment variables
+	if config == nil {
+		config = &AdminConfig{}
+	}
+
+	// Set defaults if not provided
+	if config.Username == "" {
+		config.Username = "admin"
+	}
+	if config.Email == "" {
+		config.Email = "admin@boundary-siem.local"
+	}
+
+	// Handle password: prefer config, fallback to env var, or generate random
+	password := config.Password
+	if password == "" {
+		// Check environment variable
+		password = os.Getenv("BOUNDARY_ADMIN_PASSWORD")
+	}
+
+	var requirePasswordChange bool
+	if password == "" {
+		// No password provided - generate a secure random one
+		var err error
+		password, err = generateSecurePassword(24)
+		if err != nil {
+			return fmt.Errorf("failed to generate secure password: %w", err)
+		}
+		requirePasswordChange = true
+
+		// Log the generated password ONCE during initialization
+		s.logger.Warn("SECURITY: Generated random admin password - SAVE THIS PASSWORD",
+			"username", config.Username,
+			"password", password,
+			"action_required", "Change password immediately after first login")
+	} else {
+		// Validate provided password strength
+		if err := validatePasswordStrength(password); err != nil {
+			return fmt.Errorf("admin password validation failed: %w", err)
+		}
+		requirePasswordChange = config.RequirePasswordChange
+	}
+
+	// Hash the password
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
-		s.logger.Error("failed to hash default admin password", "error", err)
-		return
+		return fmt.Errorf("failed to hash admin password: %w", err)
 	}
 
-	s.users["admin"] = &User{
-		ID:           "admin",
-		Username:     "admin",
-		Email:        "admin@boundary-siem.local",
-		DisplayName:  "System Administrator",
-		PasswordHash: string(defaultAdminHash),
-		Roles:        []Role{RoleAdmin},
-		Permissions:  s.rolePerms[RoleAdmin],
-		TenantID:     "default",
-		Provider:     AuthProviderLocal,
-		CreatedAt:    now,
-		LastLoginAt:  now,
+	s.users[config.Username] = &User{
+		ID:                    config.Username,
+		Username:              config.Username,
+		Email:                 config.Email,
+		DisplayName:           "System Administrator",
+		PasswordHash:          string(passwordHash),
+		Roles:                 []Role{RoleAdmin},
+		Permissions:           s.rolePerms[RoleAdmin],
+		TenantID:              "default",
+		Provider:              AuthProviderLocal,
+		CreatedAt:             now,
+		LastLoginAt:           now,
+		RequirePasswordChange: requirePasswordChange,
 	}
 
-	s.logger.Warn("default admin user created with default password - CHANGE IMMEDIATELY",
-		"username", "admin",
-		"password_hint", "[REDACTED - see documentation for default credentials]")
+	if !requirePasswordChange && password != "" {
+		s.logger.Info("default admin user created",
+			"username", config.Username,
+			"email", config.Email,
+			"password_source", "configuration")
+	}
+
+	return nil
+}
+
+// validatePasswordStrength validates password meets security requirements.
+func validatePasswordStrength(password string) error {
+	if len(password) < 12 {
+		return fmt.Errorf("password must be at least 12 characters")
+	}
+
+	var (
+		hasUpper   bool
+		hasLower   bool
+		hasDigit   bool
+		hasSpecial bool
+	)
+
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			hasUpper = true
+		case char >= 'a' && char <= 'z':
+			hasLower = true
+		case char >= '0' && char <= '9':
+			hasDigit = true
+		case char >= '!' && char <= '/' || char >= ':' && char <= '@' || char >= '[' && char <= '`' || char >= '{' && char <= '~':
+			hasSpecial = true
+		}
+	}
+
+	if !hasUpper {
+		return fmt.Errorf("password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return fmt.Errorf("password must contain at least one lowercase letter")
+	}
+	if !hasDigit {
+		return fmt.Errorf("password must contain at least one digit")
+	}
+	if !hasSpecial {
+		return fmt.Errorf("password must contain at least one special character")
+	}
+
+	return nil
 }
 
 // RegisterRoutes registers auth API routes.
@@ -422,17 +540,40 @@ func (s *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	s.logAudit(AuditActionLogin, user.ID, user.Username, user.TenantID, "session", session.ID, r, true, "")
 
+	// Generate CSRF token
+	csrfToken, err := s.csrf.GenerateToken()
+	if err != nil {
+		s.logger.Error("failed to generate CSRF token", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "CSRF_ERROR", "Failed to generate CSRF token")
+		return
+	}
+
+	// Set CSRF token cookie
+	s.csrf.SetToken(w, csrfToken)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"token":         session.Token,
 		"refresh_token": session.RefreshToken,
 		"expires_at":    session.ExpiresAt,
 		"user":          user,
+		"csrf_token":    csrfToken,
 	})
 }
 
 // handleLogout handles logout requests.
 func (s *AuthService) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Only POST method is allowed")
+		return
+	}
+
+	// Validate CSRF token
+	if err := s.csrf.ValidateToken(r); err != nil {
+		writeJSONError(w, http.StatusForbidden, "CSRF_INVALID", "CSRF validation failed")
+		return
+	}
+
 	token := extractToken(r)
 	if token == "" {
 		http.Error(w, "No token provided", http.StatusUnauthorized)
@@ -445,9 +586,13 @@ func (s *AuthService) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.Lock()
-	delete(s.sessions, session.ID)
-	s.mu.Unlock()
+	// Delete session using SessionStorage interface
+	ctx := context.Background()
+	if err := s.sessionStorage.Delete(ctx, token); err != nil {
+		s.logger.Error("failed to delete session", "error", err)
+		http.Error(w, "Failed to logout", http.StatusInternalServerError)
+		return
+	}
 
 	s.logAudit(AuditActionLogout, session.UserID, "", session.TenantID, "session", session.ID, r, true, "")
 
@@ -529,6 +674,12 @@ func (s *AuthService) handleUsers(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(users)
 
 	case http.MethodPost:
+		// Validate CSRF token for state-changing operation
+		if err := s.csrf.ValidateToken(r); err != nil {
+			writeJSONError(w, http.StatusForbidden, "CSRF_INVALID", "CSRF validation failed")
+			return
+		}
+
 		var user User
 		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -540,7 +691,13 @@ func (s *AuthService) handleUsers(w http.ResponseWriter, r *http.Request) {
 		user.Permissions = s.getPermissionsForRoles(user.Roles)
 
 		s.mu.Lock()
-		s.users[user.ID] = &user
+		// Check if username already exists
+		if _, exists := s.users[user.Username]; exists {
+			s.mu.Unlock()
+			http.Error(w, "Username already exists", http.StatusConflict)
+			return
+		}
+		s.users[user.Username] = &user // Use username as key for Authenticate() compatibility
 		s.mu.Unlock()
 
 		s.logAudit(AuditActionUserCreated, "", "", user.TenantID, "user", user.ID, r, true, "")
@@ -569,6 +726,12 @@ func (s *AuthService) handleTenants(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(tenants)
 
 	case http.MethodPost:
+		// Validate CSRF token for state-changing operation
+		if err := s.csrf.ValidateToken(r); err != nil {
+			writeJSONError(w, http.StatusForbidden, "CSRF_INVALID", "CSRF validation failed")
+			return
+		}
+
 		var tenant Tenant
 		if err := json.NewDecoder(r.Body).Decode(&tenant); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -659,7 +822,8 @@ func (s *AuthService) Authenticate(username, password, tenantID string) (*User, 
 	if !exists {
 		// Use constant-time comparison to prevent timing attacks
 		// Hash a dummy password to maintain consistent timing
-		_ = bcrypt.CompareHashAndPassword([]byte("$2a$12$dummy.hash.for.timing.attack.prevention"), []byte(password))
+		// This is a valid bcrypt hash (cost 12) for the string "dummy"
+		_ = bcrypt.CompareHashAndPassword([]byte("$2a$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW"), []byte(password))
 		return nil, ErrUserNotFound
 	}
 
@@ -791,44 +955,54 @@ func (s *AuthService) CreateSession(user *User, r *http.Request) (*Session, erro
 		LastActiveAt: time.Now(),
 	}
 
-	s.mu.Lock()
-	s.sessions[session.ID] = session
-	s.mu.Unlock()
+	// Store session using SessionStorage interface
+	ctx := context.Background()
+	if err := s.sessionStorage.Store(ctx, session); err != nil {
+		return nil, fmt.Errorf("failed to store session: %w", err)
+	}
 
 	return session, nil
 }
 
 // ValidateSession validates a session token.
 func (s *AuthService) ValidateSession(token string) (*Session, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	ctx := context.Background()
 
-	for _, session := range s.sessions {
-		if session.Token == token {
-			if time.Now().After(session.ExpiresAt) {
-				return nil, errors.New("session expired")
-			}
-			session.LastActiveAt = time.Now()
-			return session, nil
+	session, err := s.sessionStorage.Get(ctx, token)
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return nil, errors.New("session not found")
 		}
+		if errors.Is(err, ErrSessionExpired) {
+			return nil, errors.New("session expired")
+		}
+		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 
-	return nil, errors.New("session not found")
+	// Update last active time
+	now := time.Now()
+	if err := s.sessionStorage.UpdateActivity(ctx, token, now); err != nil {
+		// Log but don't fail on update error
+		s.logger.Warn("failed to update session activity", "error", err)
+	}
+
+	return session, nil
 }
 
 // HasPermission checks if a user has a specific permission.
 func (s *AuthService) HasPermission(userID string, permission Permission) bool {
 	s.mu.RLock()
-	user, exists := s.users[userID]
-	s.mu.RUnlock()
+	defer s.mu.RUnlock()
 
-	if !exists {
-		return false
-	}
-
-	for _, p := range user.Permissions {
-		if p == permission || p == PermissionAdmin {
-			return true
+	// Iterate through users to find by ID (map is keyed by username)
+	for _, user := range s.users {
+		if user.ID == userID {
+			for _, p := range user.Permissions {
+				if p == permission || p == PermissionAdmin {
+					return true
+				}
+			}
+			return false
 		}
 	}
 
@@ -890,8 +1064,13 @@ func (s *AuthService) logAudit(action AuditAction, userID, username, tenantID, r
 func (s *AuthService) GetUser(id string) (*User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	u, ok := s.users[id]
-	return u, ok
+	// Iterate through users to find by ID (map is keyed by username)
+	for _, u := range s.users {
+		if u.ID == id {
+			return u, true
+		}
+	}
+	return nil, false
 }
 
 // GetTenant returns a tenant by ID.
@@ -1023,6 +1202,65 @@ func generateToken() (string, error) {
 	return base64.URLEncoding.EncodeToString(hash[:]), nil
 }
 
+// generateSecurePassword generates a cryptographically secure random password.
+// The password will contain uppercase, lowercase, digits, and special characters.
+func generateSecurePassword(length int) (string, error) {
+	if length < 12 {
+		length = 24 // Default to 24 characters for strong security
+	}
+
+	const (
+		upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		lowerChars   = "abcdefghijklmnopqrstuvwxyz"
+		digitChars   = "0123456789"
+		specialChars = "!@#$%^&*()-_=+[]{}|;:,.<>?"
+		allChars     = upperChars + lowerChars + digitChars + specialChars
+	)
+
+	// Ensure at least one character from each category
+	password := make([]byte, length)
+
+	// Add one of each required type
+	password[0] = upperChars[randInt(len(upperChars))]
+	password[1] = lowerChars[randInt(len(lowerChars))]
+	password[2] = digitChars[randInt(len(digitChars))]
+	password[3] = specialChars[randInt(len(specialChars))]
+
+	// Fill the rest with random characters from all categories
+	for i := 4; i < length; i++ {
+		password[i] = allChars[randInt(len(allChars))]
+	}
+
+	// Shuffle the password to avoid predictable patterns
+	for i := length - 1; i > 0; i-- {
+		j := randInt(i + 1)
+		password[i], password[j] = password[j], password[i]
+	}
+
+	return string(password), nil
+}
+
+// randInt returns a cryptographically secure random integer in [0, max).
+func randInt(max int) int {
+	if max <= 0 {
+		return 0
+	}
+
+	// Calculate how many bits we need
+	nBig := make([]byte, 4)
+	_, err := rand.Read(nBig)
+	if err != nil {
+		return 0
+	}
+
+	n := int(nBig[0]) | int(nBig[1])<<8 | int(nBig[2])<<16 | int(nBig[3])<<24
+	if n < 0 {
+		n = -n
+	}
+
+	return n % max
+}
+
 func getClientIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
@@ -1051,13 +1289,14 @@ func (s *AuthService) CreateUser(user *User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.users[user.ID]; exists {
+	// Check if username already exists (users map is keyed by username for auth)
+	if _, exists := s.users[user.Username]; exists {
 		return fmt.Errorf("user already exists")
 	}
 
 	user.CreatedAt = time.Now()
 	user.Permissions = s.getPermissionsForRoles(user.Roles)
-	s.users[user.ID] = user
+	s.users[user.Username] = user // Use username as key for Authenticate() compatibility
 	return nil
 }
 

@@ -166,9 +166,13 @@ type ValidationConfig struct {
 
 // AuthConfig holds authentication settings.
 type AuthConfig struct {
-	APIKeyHeader string   `yaml:"api_key_header"`
-	APIKeys      []string `yaml:"api_keys"`
-	Enabled      bool     `yaml:"enabled"`
+	APIKeyHeader         string   `yaml:"api_key_header"`
+	APIKeys              []string `yaml:"api_keys"`
+	Enabled              bool     `yaml:"enabled"`
+	DefaultAdminUsername string   `yaml:"default_admin_username"`
+	DefaultAdminPassword string   `yaml:"default_admin_password"`
+	DefaultAdminEmail    string   `yaml:"default_admin_email"`
+	RequirePasswordChange bool    `yaml:"require_password_change"` // Force password change on first login
 }
 
 // LoggingConfig holds logging settings.
@@ -430,6 +434,23 @@ func trimSpace(s string) string {
 	return s[start:end]
 }
 
+// LoadAuthFromEnv loads authentication configuration from environment variables.
+// Environment variables take precedence over config file values.
+func (c *Config) LoadAuthFromEnv() {
+	if username := os.Getenv("BOUNDARY_ADMIN_USERNAME"); username != "" {
+		c.Auth.DefaultAdminUsername = username
+	}
+	if password := os.Getenv("BOUNDARY_ADMIN_PASSWORD"); password != "" {
+		c.Auth.DefaultAdminPassword = password
+	}
+	if email := os.Getenv("BOUNDARY_ADMIN_EMAIL"); email != "" {
+		c.Auth.DefaultAdminEmail = email
+	}
+	if os.Getenv("BOUNDARY_REQUIRE_PASSWORD_CHANGE") == "true" {
+		c.Auth.RequirePasswordChange = true
+	}
+}
+
 // Validate validates the configuration.
 func (c *Config) Validate() error {
 	if c.Server.HTTPPort <= 0 || c.Server.HTTPPort > 65535 {
@@ -442,6 +463,55 @@ func (c *Config) Validate() error {
 
 	if c.Ingest.MaxBatchSize <= 0 {
 		return fmt.Errorf("max_batch_size must be positive")
+	}
+
+	// Validate admin password strength if provided
+	if c.Auth.DefaultAdminPassword != "" {
+		if err := ValidatePasswordStrength(c.Auth.DefaultAdminPassword); err != nil {
+			return fmt.Errorf("invalid admin password: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// ValidatePasswordStrength validates password meets security requirements.
+func ValidatePasswordStrength(password string) error {
+	if len(password) < 12 {
+		return fmt.Errorf("password must be at least 12 characters")
+	}
+
+	var (
+		hasUpper   bool
+		hasLower   bool
+		hasDigit   bool
+		hasSpecial bool
+	)
+
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			hasUpper = true
+		case char >= 'a' && char <= 'z':
+			hasLower = true
+		case char >= '0' && char <= '9':
+			hasDigit = true
+		case char >= '!' && char <= '/' || char >= ':' && char <= '@' || char >= '[' && char <= '`' || char >= '{' && char <= '~':
+			hasSpecial = true
+		}
+	}
+
+	if !hasUpper {
+		return fmt.Errorf("password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return fmt.Errorf("password must contain at least one lowercase letter")
+	}
+	if !hasDigit {
+		return fmt.Errorf("password must contain at least one digit")
+	}
+	if !hasSpecial {
+		return fmt.Errorf("password must contain at least one special character")
 	}
 
 	return nil

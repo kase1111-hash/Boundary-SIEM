@@ -144,6 +144,162 @@ retention:
 logging:
   level: info
   format: json
+
+auth:
+  # Admin credentials configuration
+  default_admin_username: "admin"
+  default_admin_password: ""  # REQUIRED: Set via env var or config
+  default_admin_email: "admin@boundary-siem.local"
+  require_password_change: true
+```
+
+### Security Configuration
+
+**⚠️ IMPORTANT: Admin Credentials**
+
+For security, the default admin password is **no longer hardcoded**. You must configure it using one of these methods:
+
+#### Method 1: Environment Variables (Recommended)
+```bash
+export BOUNDARY_ADMIN_PASSWORD='YourSecureP@ssw0rd123!'
+export BOUNDARY_ADMIN_EMAIL='admin@yourdomain.com'
+export BOUNDARY_REQUIRE_PASSWORD_CHANGE='true'
+```
+
+#### Method 2: Configuration File
+```yaml
+auth:
+  default_admin_username: "admin"
+  default_admin_password: "YourSecureP@ssw0rd123!"
+  default_admin_email: "admin@yourdomain.com"
+  require_password_change: true
+```
+
+#### Method 3: Auto-Generated (Development Only)
+If no password is configured, the system will generate a secure random password and log it **once** during startup:
+
+```
+SECURITY: Generated random admin password - SAVE THIS PASSWORD
+username=admin password=<random-24-char-password>
+action_required="Change password immediately after first login"
+```
+
+**Password Requirements:**
+- Minimum 12 characters
+- At least one uppercase letter
+- At least one lowercase letter
+- At least one digit
+- At least one special character (!@#$%^&*()etc.)
+
+**Security Best Practices:**
+1. Never commit passwords to version control
+2. Use environment variables or secret management systems (Vault, AWS Secrets Manager)
+3. Enable `require_password_change` to force password change on first login
+4. Change auto-generated passwords immediately after first login
+5. Use strong, unique passwords for production deployments
+
+### Rate Limiting
+
+**Built-in Protection Against Brute Force and DoS Attacks**
+
+The SIEM includes enterprise-grade rate limiting with sensible defaults to protect against:
+- Brute force authentication attempts
+- Denial of Service (DoS) attacks
+- API abuse
+- Resource exhaustion
+
+#### Configuration
+
+```yaml
+rate_limit:
+  enabled: true              # Enable/disable rate limiting
+  requests_per_ip: 1000      # Max requests per IP per window
+  window_size: 1m            # Time window (1 minute)
+  burst_size: 50             # Additional burst allowance
+  cleanup_period: 5m         # Memory cleanup interval
+  exempt_paths:              # Paths exempt from rate limiting
+    - /health
+    - /metrics
+  trust_proxy: false         # Trust X-Forwarded-For header
+```
+
+#### Default Settings (Production-Ready)
+
+- **1000 requests/minute per IP** - Generous limit for normal usage
+- **50 burst allowance** - Handle traffic spikes gracefully
+- **1-minute sliding window** - Fair, predictable limiting
+- **Automatic cleanup** - Prevents memory leaks
+- **Health/metrics exempt** - Monitoring never blocked
+- **Standard headers** - RFC 6585 compliant
+
+#### Rate Limit Headers
+
+All responses include standard rate limit headers:
+
+```http
+X-RateLimit-Limit: 1050        # Total limit (base + burst)
+X-RateLimit-Remaining: 1049    # Requests remaining
+X-RateLimit-Reset: 1704200460  # Unix timestamp when limit resets
+```
+
+When rate limited (429 Too Many Requests):
+
+```http
+HTTP/1.1 429 Too Many Requests
+Retry-After: 42
+Content-Type: application/json
+
+{
+  "code": "RATE_LIMITED",
+  "message": "Too many requests. Please try again later.",
+  "retry_after": 42
+}
+```
+
+#### Environment Variables
+
+Override configuration via environment variables:
+
+```bash
+export BOUNDARY_RATE_LIMIT_ENABLED='true'
+export BOUNDARY_RATE_LIMIT_REQUESTS_PER_IP='500'
+export BOUNDARY_RATE_LIMIT_WINDOW='1m'
+export BOUNDARY_RATE_LIMIT_TRUST_PROXY='true'
+```
+
+#### Features
+
+✅ **Per-IP Tracking** - Each client IP has independent limits
+✅ **Sliding Window Algorithm** - Fair, predictable rate limiting
+✅ **Burst Support** - Handles legitimate traffic spikes
+✅ **Path Exemptions** - Exclude health checks, metrics, etc.
+✅ **Proxy Support** - Respects X-Forwarded-For when configured
+✅ **Auto Cleanup** - Efficient memory management
+✅ **Standard Headers** - RFC 6585 compliant
+✅ **Thread-Safe** - Handles concurrent requests safely
+
+#### Use Cases
+
+**Protecting Authentication Endpoints:**
+```yaml
+rate_limit:
+  requests_per_ip: 10    # Only 10 login attempts per minute
+  window_size: 1m
+  burst_size: 0          # No burst for auth endpoints
+```
+
+**API Rate Limiting:**
+```yaml
+rate_limit:
+  requests_per_ip: 1000  # 1000 API calls per minute
+  window_size: 1m
+  burst_size: 200        # Allow bursts up to 1200
+```
+
+**Development/Testing:**
+```yaml
+rate_limit:
+  enabled: false  # Disable for local development
 ```
 
 ### Sending Events
