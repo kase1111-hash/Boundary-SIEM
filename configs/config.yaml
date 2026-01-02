@@ -103,3 +103,115 @@ natlangchain:
     default_tenant_id: "default"
     source_host: "localhost"
     source_version: "1.0.0"
+
+# Value Ledger integration
+# Enable to ingest events from Value Ledger (value tracking with vector scores)
+valueledger:
+  enabled: false  # Set to true to enable Value Ledger integration
+  client:
+    base_url: "http://localhost:8100"
+    api_key: ""  # Set your Value Ledger API key
+    timeout: 30s
+    max_retries: 3
+    retry_backoff: 1s
+  ingester:
+    poll_interval: 30s
+    batch_size: 100
+
+# ILR-Module integration
+# Enable to ingest events from ILR-Module (Immutable License Registry for dispute resolution)
+ilrmodule:
+  enabled: false  # Set to true to enable ILR-Module integration
+  client:
+    base_url: "http://localhost:8200"
+    api_key: ""  # Set your ILR-Module API key
+    timeout: 30s
+    max_retries: 3
+    retry_backoff: 1s
+  ingester:
+    poll_interval: 30s
+    batch_size: 100
+
+# Learning Contracts integration
+# Enable to ingest events from Learning Contracts (consent management)
+learningcontracts:
+  enabled: false  # Set to true to enable Learning Contracts integration
+  client:
+    base_url: "http://localhost:8300"
+    api_key: ""  # Set your Learning Contracts API key
+    timeout: 30s
+    max_retries: 3
+    retry_backoff: 1s
+  ingester:
+    poll_interval: 30s
+    batch_size: 100
+
+# Mediator Node integration
+# Enable to ingest events from Mediator Node (intent-aligned mediation)
+mediatornode:
+  enabled: false  # Set to true to enable Mediator Node integration
+  client:
+    base_url: "http://localhost:8400"
+    api_key: ""  # Set your Mediator Node API key
+    timeout: 30s
+    max_retries: 3
+    retry_backoff: 1s
+  ingester:
+    poll_interval: 30s
+    batch_size: 100
+
+# Memory Vault integration
+# Enable to ingest events from Memory Vault (secure memory storage)
+memoryvault:
+  enabled: false  # Set to true to enable Memory Vault integration
+  client:
+    base_url: "http://localhost:8500"
+    api_key: ""  # Set your Memory Vault API key
+    timeout: 30s
+    max_retries: 3
+    retry_backoff: 1s
+  ingester:
+    poll_interval: 30s
+    batch_size: 100
+
+# Synth Mind integration
+# Enable to ingest events from Synth Mind (Agent-OS psychological modules)
+synthmind:
+  enabled: false  # Set to true to enable Synth Mind integration
+  client:
+    base_url: "http://localhost:8600"
+    api_key: ""  # Set your Synth Mind API key
+    timeout: 30s
+    max_retries: 3
+    retry_backoff: 1s
+  ingester:
+    poll_interval: 30s
+    batch_size: 100
+
+# IntentLog integration
+# Enable to ingest events from IntentLog (prose-based version control)
+intentlog:
+  enabled: false  # Set to true to enable IntentLog integration
+  client:
+    base_url: "http://localhost:8700"
+    api_key: ""  # Set your IntentLog API key
+    timeout: 30s
+    max_retries: 3
+    retry_backoff: 1s
+  ingester:
+    poll_interval: 30s
+    batch_size: 100
+
+# RRA-Module integration
+# Enable to ingest events from RRA-Module (Revenant Repo Agent)
+rramodule:
+  enabled: false  # Set to true to enable RRA-Module integration
+  client:
+    base_url: "http://localhost:8800"
+    api_key: ""  # Set your RRA-Module API key
+    timeout: 30s
+    max_retries: 3
+    retry_backoff: 1s
+  ingester:
+    poll_interval: 30s
+    batch_size: 100
