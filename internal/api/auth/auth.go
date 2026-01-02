@@ -203,15 +203,15 @@ type SAMLConfig struct {
 
 // AuthService provides authentication and authorization services.
 type AuthService struct {
-	mu           sync.RWMutex
-	users        map[string]*User
-	sessions     map[string]*Session
-	tenants      map[string]*Tenant
-	auditLog     []*AuditLogEntry
-	oauthConfigs map[string]*OAuthConfig
-	samlConfigs  map[string]*SAMLConfig
-	rolePerms    map[Role][]Permission
-	logger       *slog.Logger
+	mu             sync.RWMutex
+	users          map[string]*User
+	sessionStorage SessionStorage // Now using SessionStorage interface
+	tenants        map[string]*Tenant
+	auditLog       []*AuditLogEntry
+	oauthConfigs   map[string]*OAuthConfig
+	samlConfigs    map[string]*SAMLConfig
+	rolePerms      map[Role][]Permission
+	logger         *slog.Logger
 }
 
 // Config holds auth service configuration.
@@ -235,16 +235,27 @@ type PasswordPolicy struct {
 }
 
 // NewAuthService creates a new authentication service.
+// If sessionStorage is nil, defaults to in-memory storage.
 func NewAuthService(logger *slog.Logger) *AuthService {
+	return NewAuthServiceWithStorage(logger, nil)
+}
+
+// NewAuthServiceWithStorage creates a new authentication service with custom session storage.
+func NewAuthServiceWithStorage(logger *slog.Logger, sessionStorage SessionStorage) *AuthService {
+	// Default to in-memory storage if not provided
+	if sessionStorage == nil {
+		sessionStorage = NewMemorySessionStorage()
+	}
+
 	svc := &AuthService{
-		users:        make(map[string]*User),
-		sessions:     make(map[string]*Session),
-		tenants:      make(map[string]*Tenant),
-		auditLog:     make([]*AuditLogEntry, 0),
-		oauthConfigs: make(map[string]*OAuthConfig),
-		samlConfigs:  make(map[string]*SAMLConfig),
-		rolePerms:    initRolePermissions(),
-		logger:       logger,
+		users:          make(map[string]*User),
+		sessionStorage: sessionStorage,
+		tenants:        make(map[string]*Tenant),
+		auditLog:       make([]*AuditLogEntry, 0),
+		oauthConfigs:   make(map[string]*OAuthConfig),
+		samlConfigs:    make(map[string]*SAMLConfig),
+		rolePerms:      initRolePermissions(),
+		logger:         logger,
 	}
 	svc.initDefaultTenant()
 	svc.initDefaultUsers()
@@ -445,9 +456,13 @@ func (s *AuthService) handleLogout(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.mu.Lock()
-	delete(s.sessions, session.ID)
-	s.mu.Unlock()
+	// Delete session using SessionStorage interface
+	ctx := context.Background()
+	if err := s.sessionStorage.Delete(ctx, token); err != nil {
+		s.logger.Error("failed to delete session", "error", err)
+		http.Error(w, "Failed to logout", http.StatusInternalServerError)
+		return
+	}
 
 	s.logAudit(AuditActionLogout, session.UserID, "", session.TenantID, "session", session.ID, r, true, "")
 
@@ -798,29 +813,38 @@ func (s *AuthService) CreateSession(user *User, r *http.Request) (*Session, erro
 		LastActiveAt: time.Now(),
 	}
 
-	s.mu.Lock()
-	s.sessions[session.ID] = session
-	s.mu.Unlock()
+	// Store session using SessionStorage interface
+	ctx := context.Background()
+	if err := s.sessionStorage.Store(ctx, session); err != nil {
+		return nil, fmt.Errorf("failed to store session: %w", err)
+	}
 
 	return session, nil
 }
 
 // ValidateSession validates a session token.
 func (s *AuthService) ValidateSession(token string) (*Session, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+	ctx := context.Background()
 
-	for _, session := range s.sessions {
-		if session.Token == token {
-			if time.Now().After(session.ExpiresAt) {
-				return nil, errors.New("session expired")
-			}
-			session.LastActiveAt = time.Now()
-			return session, nil
+	session, err := s.sessionStorage.Get(ctx, token)
+	if err != nil {
+		if errors.Is(err, ErrSessionNotFound) {
+			return nil, errors.New("session not found")
 		}
+		if errors.Is(err, ErrSessionExpired) {
+			return nil, errors.New("session expired")
+		}
+		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
 
-	return nil, errors.New("session not found")
+	// Update last active time
+	now := time.Now()
+	if err := s.sessionStorage.UpdateActivity(ctx, token, now); err != nil {
+		// Log but don't fail on update error
+		s.logger.Warn("failed to update session activity", "error", err)
+	}
+
+	return session, nil
 }
 
 // HasPermission checks if a user has a specific permission.
