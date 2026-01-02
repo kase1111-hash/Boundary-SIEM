@@ -136,7 +136,7 @@ func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correla
 		ID:          corrAlert.ID,
 		RuleID:      corrAlert.RuleID,
 		RuleName:    corrAlert.RuleName,
-		Severity:    corrAlert.Severity,
+		Severity:    correlation.IntToSeverity(corrAlert.Severity),
 		Status:      StatusNew,
 		Title:       corrAlert.Title,
 		Description: corrAlert.Description,

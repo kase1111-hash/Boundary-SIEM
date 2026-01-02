@@ -34,14 +34,14 @@ func GetCrossSystemSecurityRules() []*correlation.Rule {
 			Description: "Same actor failing authentication across multiple ecosystem systems",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cross-system", "authentication", "brute-force"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0006",
 				TacticName:  "Credential Access",
 				TechniqueID: "T1110",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 				{Field: "action", Operator: "contains", Value: "auth"},
 			},
@@ -62,14 +62,14 @@ func GetCrossSystemSecurityRules() []*correlation.Rule {
 			Description: "Sequential privilege escalation attempts across ecosystem services",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "privilege-escalation", "lateral-movement"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0004",
 				TacticName:  "Privilege Escalation",
 				TechniqueID: "T1068",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "actor.ip", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -110,14 +110,14 @@ func GetCrossSystemSecurityRules() []*correlation.Rule {
 			Description: "Actor being rate limited on one system then moving to another",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"cross-system", "rate-limit", "evasion"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0005",
 				TacticName:  "Defense Evasion",
 				TechniqueID: "T1090",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "actor.ip", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -154,14 +154,14 @@ func GetDataExfiltrationRules() []*correlation.Rule {
 			Description: "High-classification memory accessed then exported via IntentLog",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "data-exfiltration", "memory-vault", "intentlog"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0010",
 				TacticName:  "Exfiltration",
 				TechniqueID: "T1567",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "actor.id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"actor.id"},
@@ -195,14 +195,14 @@ func GetDataExfiltrationRules() []*correlation.Rule {
 			Description: "Data accessed from multiple systems by same actor in short window",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cross-system", "data-staging", "reconnaissance"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0009",
 				TacticName:  "Collection",
 				TechniqueID: "T1074",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "access"},
 				{Field: "outcome", Operator: "eq", Value: "success"},
 			},
@@ -223,14 +223,14 @@ func GetDataExfiltrationRules() []*correlation.Rule {
 			Description: "Rapid queries to RRA-Module agents indicating knowledge extraction",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"rra-module", "knowledge-extraction", "data-theft"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0009",
 				TacticName:  "Collection",
 				TechniqueID: "T1213",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "source.product", Operator: "eq", Value: "rramodule"},
 				{Field: "action", Operator: "contains", Value: "query"},
 			},
@@ -251,14 +251,14 @@ func GetChainIntegrityRules() []*correlation.Rule {
 			Description: "Integrity failures detected across NatLangChain and IntentLog simultaneously",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "chain-integrity", "natlangchain", "intentlog"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1565.001",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "chain"},
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 			},
@@ -274,14 +274,14 @@ func GetChainIntegrityRules() []*correlation.Rule {
 			Description: "Merkle proof failures across Value Ledger and NatLangChain",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "merkle", "tampering", "valueledger", "natlangchain"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1565",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 			},
 			GroupBy: []string{"source.host"},
@@ -315,9 +315,9 @@ func GetChainIntegrityRules() []*correlation.Rule {
 			Description: "IntentLog signature failures followed by ILR-Module dispute escalation",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cross-system", "signature", "dispute", "intentlog", "ilrmodule"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "actor.id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"actor.id"},
@@ -357,14 +357,14 @@ func GetAgentCompromiseRules() []*correlation.Rule {
 			Description: "Synth Mind emotional/behavioral anomaly coinciding with security events",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "agent-compromise", "synthmind", "security"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1499",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "metadata.sm_agent_id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"metadata.sm_agent_id"},
@@ -398,14 +398,14 @@ func GetAgentCompromiseRules() []*correlation.Rule {
 			Description: "Safety guardrails triggered followed by suspicious queries to RRA agents",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "safety-bypass", "synthmind", "rramodule"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0005",
 				TacticName:  "Defense Evasion",
 				TechniqueID: "T1562",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "metadata.sm_agent_id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"metadata.sm_agent_id"},
@@ -439,9 +439,9 @@ func GetAgentCompromiseRules() []*correlation.Rule {
 			Description: "Multiple large prediction mismatches indicating potential agent manipulation",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"synthmind", "dreaming", "manipulation"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "source.product", Operator: "eq", Value: "synthmind"},
 				{Field: "metadata.sm_validation_gap", Operator: "gte", Value: float64(0.8)},
 			},
@@ -457,14 +457,14 @@ func GetAgentCompromiseRules() []*correlation.Rule {
 			Description: "Multiple agents showing anomalies simultaneously suggesting coordinated attack",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"synthmind", "multi-agent", "coordinated-attack"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1498",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "source.product", Operator: "eq", Value: "synthmind"},
 				{Field: "metadata.sm_anomaly", Operator: "eq", Value: true},
 			},
@@ -485,14 +485,14 @@ func GetFinancialFraudRules() []*correlation.Rule {
 			Description: "Value ledger entries modified followed by large RRA revenue events",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "financial-fraud", "valueledger", "rramodule"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1565",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "actor.id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"actor.id"},
@@ -526,9 +526,9 @@ func GetFinancialFraudRules() []*correlation.Rule {
 			Description: "High-value transactions across RRA and NatLangChain contracts",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cross-system", "high-value", "contracts"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "contract"},
 				{Field: "metadata.rra_value", Operator: "gte", Value: float64(50000)},
 			},
@@ -544,9 +544,9 @@ func GetFinancialFraudRules() []*correlation.Rule {
 			Description: "Learning contract violations preceding revenue distribution",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cross-system", "contract-violation", "learningcontracts", "rramodule"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "actor.id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"actor.id"},
@@ -580,9 +580,9 @@ func GetFinancialFraudRules() []*correlation.Rule {
 			Description: "Large number of value ledger entries revoked in short time",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"valueledger", "mass-revocation", "manipulation"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "source.product", Operator: "eq", Value: "valueledger"},
 				{Field: "action", Operator: "contains", Value: "revoked"},
 			},
@@ -603,9 +603,9 @@ func GetTrustManipulationRules() []*correlation.Rule {
 			Description: "Filing disputes after receiving negative reputation in mediation",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"cross-system", "reputation-gaming", "mediatornode", "ilrmodule"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "actor.id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"actor.id"},
@@ -639,9 +639,9 @@ func GetTrustManipulationRules() []*correlation.Rule {
 			Description: "Rapid consent granting and revoking in Learning Contracts",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"learningcontracts", "consent-manipulation"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "source.product", Operator: "eq", Value: "learningcontracts"},
 				{Field: "action", Operator: "contains", Value: "consent"},
 			},
@@ -657,9 +657,9 @@ func GetTrustManipulationRules() []*correlation.Rule {
 			Description: "Multiple parties flagging same target in short window",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"mediatornode", "coordinated-flagging", "harassment"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "source.product", Operator: "eq", Value: "mediatornode"},
 				{Field: "action", Operator: "contains", Value: "flag"},
 			},
@@ -675,9 +675,9 @@ func GetTrustManipulationRules() []*correlation.Rule {
 			Description: "High rejection rate in RRA negotiations causing reputation damage",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"cross-system", "negotiation-attack", "rramodule", "mediatornode"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "metadata.rra_agent_id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"metadata.rra_agent_id"},
@@ -716,14 +716,14 @@ func GetCoordinatedAttackRules() []*correlation.Rule {
 			Description: "Failures across multiple systems from different IPs in coordinated pattern",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "distributed-attack", "coordinated"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1499",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 			},
 			GroupBy: []string{"source.product"},
@@ -743,9 +743,9 @@ func GetCoordinatedAttackRules() []*correlation.Rule {
 			Description: "Governance proposals in RRA followed by ILR proposal activity",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cross-system", "governance", "rramodule", "ilrmodule"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "actor.id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"actor.id"},
@@ -779,9 +779,9 @@ func GetCoordinatedAttackRules() []*correlation.Rule {
 			Description: "Lockdowns triggered across multiple systems indicating major incident",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "lockdown", "cascade", "incident"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "lockdown"},
 			},
 			GroupBy:   []string{"source.host"},
@@ -796,14 +796,14 @@ func GetCoordinatedAttackRules() []*correlation.Rule {
 			Description: "FIDO2 auth failures with physical token events in Memory Vault",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "physical-security", "rramodule", "memoryvault"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0006",
 				TacticName:  "Credential Access",
 				TechniqueID: "T1078.004",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "actor.id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"actor.id"},
@@ -838,9 +838,9 @@ func GetCoordinatedAttackRules() []*correlation.Rule {
 			Description: "Semantic drift in NatLangChain correlating with IntentLog contradictions",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cross-system", "semantic-drift", "natlangchain", "intentlog"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "actor.id", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"actor.id"},
@@ -874,14 +874,14 @@ func GetCoordinatedAttackRules() []*correlation.Rule {
 			Description: "Memory Vault succession events during active security incidents",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cross-system", "succession", "memoryvault", "security"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0003",
 				TacticName:  "Persistence",
 				TechniqueID: "T1098",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "target", Operator: "exists", Value: true},
 			},
 			GroupBy: []string{"target"},

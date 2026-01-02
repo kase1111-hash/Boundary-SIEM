@@ -625,13 +625,13 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Detects sandwich attack patterns in confirmed transactions",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"blockchain", "mev", "sandwich", "attack"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:   "TA0040",
 				TacticName: "Impact",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "tx.swap"},
 			},
 			GroupBy: []string{"metadata.to"},
@@ -667,9 +667,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Multiple flash loans from same source in short period",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"blockchain", "flash-loan", "attack"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.flash_loan"},
 			},
 			GroupBy: []string{"actor.id"},
@@ -685,9 +685,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "High frequency trading activity indicating MEV extraction",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"blockchain", "mev", "bot"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "metadata.is_mev", Operator: "eq", Value: true},
 			},
 			GroupBy: []string{"actor.id"},
@@ -703,9 +703,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Unusually large value transfer detected",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"blockchain", "transfer", "whale"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.transfer"},
 			},
 			GroupBy: []string{"actor.id"},

@@ -538,14 +538,14 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Multiple unauthorized access attempts to cloud resources",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cloud", "security", "access-denied"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0001",
 				TacticName:  "Initial Access",
 				TechniqueID: "T1078",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 				{Field: "metadata.error_code", Operator: "contains", Value: "Unauthorized"},
 			},
@@ -562,9 +562,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "IAM policy or role modification detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cloud", "iam", "policy"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "in", Values: []string{
 					"policy.attach", "policy.detach",
 					"gcp.setiampolicy", "azure.roleassignments",
@@ -583,9 +583,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Critical cloud resource was deleted",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cloud", "deletion", "critical"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "resource.delete"},
 				{Field: "outcome", Operator: "eq", Value: "success"},
 			},
@@ -602,9 +602,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Console login from unusual location or pattern",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"cloud", "authentication", "login"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "auth.login"},
 			},
 			GroupBy: []string{"actor.id", "actor.ip"},
@@ -620,14 +620,14 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Cloud audit logging was disabled or modified",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cloud", "logging", "evasion"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0005",
 				TacticName:  "Defense Evasion",
 				TechniqueID: "T1562.008",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "metadata.event_name", Operator: "in", Values: []string{
 					"StopLogging", "DeleteTrail", "UpdateTrail",
 					"logging.sinks.delete", "logging.logServices.delete",

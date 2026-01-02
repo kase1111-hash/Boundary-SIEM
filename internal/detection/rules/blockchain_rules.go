@@ -41,9 +41,9 @@ func GetDeFiRules() []*correlation.Rule {
 			Description: "Large liquidity removal from DEX pool",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"defi", "liquidity", "removal"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.liquidity.removed"},
 				{Field: "metadata.value_usd", Operator: "gte", Value: float64(100000)},
 			},
@@ -57,14 +57,14 @@ func GetDeFiRules() []*correlation.Rule {
 			Description: "Potential oracle price manipulation detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"defi", "oracle", "manipulation"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1565",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "oracle.price_deviation"},
 				{Field: "metadata.deviation_percent", Operator: "gte", Value: float64(10)},
 			},
@@ -78,9 +78,9 @@ func GetDeFiRules() []*correlation.Rule {
 			Description: "Unusual number of liquidations in lending protocol",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"defi", "lending", "liquidation"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.lending.liquidation"},
 			},
 			GroupBy: []string{"metadata.protocol"},
@@ -93,9 +93,9 @@ func GetDeFiRules() []*correlation.Rule {
 			Description: "Large withdrawal from yield farming protocol",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"defi", "yield", "farming"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.vault.withdraw"},
 				{Field: "metadata.value_usd", Operator: "gte", Value: float64(500000)},
 			},
@@ -109,14 +109,14 @@ func GetDeFiRules() []*correlation.Rule {
 			Description: "Stablecoin price deviated from peg",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"defi", "stablecoin", "depeg"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1565.001",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "stablecoin.depeg"},
 			},
 			GroupBy: []string{"metadata.token"},
@@ -129,9 +129,9 @@ func GetDeFiRules() []*correlation.Rule {
 			Description: "DeFi protocol was paused",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"defi", "protocol", "pause"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.paused"},
 			},
 			GroupBy: []string{"metadata.contract"},
@@ -144,14 +144,14 @@ func GetDeFiRules() []*correlation.Rule {
 			Description: "Unusual bridge deposit activity",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"defi", "bridge", "deposit"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0010",
 				TacticName:  "Exfiltration",
 				TechniqueID: "T1537",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "bridge.deposit"},
 				{Field: "metadata.value_usd", Operator: "gte", Value: float64(1000000)},
 			},
@@ -171,9 +171,9 @@ func GetExchangeRules() []*correlation.Rule {
 			Description: "Abnormally high withdrawal volume detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"exchange", "withdrawal", "volume"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "exchange.withdrawal"},
 			},
 			GroupBy: []string{"metadata.exchange"},
@@ -186,9 +186,9 @@ func GetExchangeRules() []*correlation.Rule {
 			Description: "Exchange hot wallet balance critically low",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"exchange", "wallet", "balance"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "wallet.low_balance"},
 				{Field: "metadata.wallet_type", Operator: "eq", Value: "hot"},
 			},
@@ -202,14 +202,14 @@ func GetExchangeRules() []*correlation.Rule {
 			Description: "Potential order book manipulation detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"exchange", "orderbook", "manipulation"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1565",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "exchange.spoofing"},
 			},
 			GroupBy: []string{"metadata.pair"},
@@ -222,14 +222,14 @@ func GetExchangeRules() []*correlation.Rule {
 			Description: "Exchange API key potentially compromised",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"exchange", "api", "compromise"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0006",
 				TacticName:  "Credential Access",
 				TechniqueID: "T1528",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "exchange.api"},
 			},
 			GroupBy: []string{"metadata.api_key"},
@@ -247,9 +247,9 @@ func GetExchangeRules() []*correlation.Rule {
 			Description: "Potential wash trading pattern detected",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"exchange", "wash", "trading"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "exchange.trade"},
 				{Field: "metadata.self_trade", Operator: "eq", Value: true},
 			},
@@ -263,9 +263,9 @@ func GetExchangeRules() []*correlation.Rule {
 			Description: "Funds moved from cold wallet",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"exchange", "cold", "wallet"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "wallet.cold.transfer"},
 			},
 			GroupBy: []string{"metadata.wallet"},
@@ -284,14 +284,14 @@ func GetValidatorRules() []*correlation.Rule {
 			Description: "Validator was slashed for protocol violation",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"validator", "slashing", "critical"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1485",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.slashing_detected"},
 			},
 			GroupBy: []string{"metadata.validator_index"},
@@ -304,9 +304,9 @@ func GetValidatorRules() []*correlation.Rule {
 			Description: "Validator submitted conflicting votes for same slot",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"validator", "double-vote", "slashing"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.double_vote"},
 			},
 			GroupBy: []string{"metadata.validator_index"},
@@ -319,9 +319,9 @@ func GetValidatorRules() []*correlation.Rule {
 			Description: "Validator submitted surround vote (slashable offense)",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"validator", "surround-vote", "slashing"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.surround_vote"},
 			},
 			GroupBy: []string{"metadata.validator_index"},
@@ -334,9 +334,9 @@ func GetValidatorRules() []*correlation.Rule {
 			Description: "Validator missed multiple attestation duties",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"validator", "attestation", "missed"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.attestation_missed"},
 			},
 			GroupBy: []string{"metadata.validator_index"},
@@ -349,9 +349,9 @@ func GetValidatorRules() []*correlation.Rule {
 			Description: "Validator missed their block proposal duty",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"validator", "proposal", "missed"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.proposal_missed"},
 			},
 			GroupBy: []string{"metadata.validator_index"},
@@ -364,9 +364,9 @@ func GetValidatorRules() []*correlation.Rule {
 			Description: "Validator missed sync committee contribution",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"validator", "sync-committee", "missed"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.sync_committee_missed"},
 			},
 			GroupBy: []string{"metadata.validator_index"},
@@ -379,9 +379,9 @@ func GetValidatorRules() []*correlation.Rule {
 			Description: "Validator effectiveness dropped below threshold",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"validator", "effectiveness", "performance"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "validator.attestation_missed"},
 			},
 			GroupBy: []string{"metadata.validator_index"},
@@ -394,9 +394,9 @@ func GetValidatorRules() []*correlation.Rule {
 			Description: "Validator voluntary exit was initiated",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"validator", "exit", "lifecycle"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.exited"},
 			},
 			GroupBy: []string{"metadata.validator_index"},
@@ -409,9 +409,9 @@ func GetValidatorRules() []*correlation.Rule {
 			Description: "Multiple validators went offline simultaneously",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"validator", "offline", "outage"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.attestation_missed"},
 			},
 			GroupBy: []string{"source.host"},
@@ -424,9 +424,9 @@ func GetValidatorRules() []*correlation.Rule {
 			Description: "Validator balance decreased unexpectedly",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"validator", "balance", "slashing"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.balance_decreased"},
 				{Field: "metadata.decrease_reason", Operator: "eq", Value: "slashing"},
 			},
@@ -446,9 +446,9 @@ func GetConsensusRules() []*correlation.Rule {
 			Description: "Beacon node failed to sync with network",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"consensus", "sync", "failure"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "beacon.sync_failed"},
 			},
 			GroupBy: []string{"source.host"},
@@ -461,9 +461,9 @@ func GetConsensusRules() []*correlation.Rule {
 			Description: "Chain finality is delayed beyond normal threshold",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"consensus", "finality", "delay"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "beacon.finality_delayed"},
 			},
 			GroupBy: []string{"source.host"},
@@ -476,9 +476,9 @@ func GetConsensusRules() []*correlation.Rule {
 			Description: "Chain fork detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"consensus", "fork", "reorg"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "beacon.fork_detected"},
 			},
 			GroupBy: []string{"source.host"},
@@ -491,9 +491,9 @@ func GetConsensusRules() []*correlation.Rule {
 			Description: "Deep chain reorganization detected (>6 blocks)",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"consensus", "reorg", "deep"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "block.reorg"},
 				{Field: "metadata.reorg_depth", Operator: "gte", Value: float64(6)},
 			},
@@ -507,9 +507,9 @@ func GetConsensusRules() []*correlation.Rule {
 			Description: "Node has critically low peer count",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"consensus", "peers", "network"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "peer.low_count"},
 			},
 			GroupBy: []string{"source.host"},
@@ -522,9 +522,9 @@ func GetConsensusRules() []*correlation.Rule {
 			Description: "Execution client disconnected from consensus client",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"consensus", "execution", "disconnect"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "beacon.execution_disconnected"},
 			},
 			GroupBy: []string{"source.host"},
@@ -537,9 +537,9 @@ func GetConsensusRules() []*correlation.Rule {
 			Description: "Node failed to produce block when selected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"consensus", "block", "production"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "block.production_failed"},
 			},
 			GroupBy: []string{"source.host"},
@@ -552,9 +552,9 @@ func GetConsensusRules() []*correlation.Rule {
 			Description: "Node received invalid block from peer",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"consensus", "block", "invalid"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "block.invalid"},
 			},
 			GroupBy: []string{"source.host"},
@@ -573,9 +573,9 @@ func GetTransactionRules() []*correlation.Rule {
 			Description: "Unusually large ETH transfer detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"transaction", "transfer", "whale"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.transfer"},
 				{Field: "metadata.value_eth", Operator: "gte", Value: float64(1000)},
 			},
@@ -589,9 +589,9 @@ func GetTransactionRules() []*correlation.Rule {
 			Description: "Transaction with abnormally high gas price",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"transaction", "gas", "priority"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "tx."},
 				{Field: "metadata.gas_price_gwei", Operator: "gte", Value: float64(500)},
 			},
@@ -605,9 +605,9 @@ func GetTransactionRules() []*correlation.Rule {
 			Description: "Many transactions from same address in short period",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"transaction", "burst", "suspicious"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "tx."},
 			},
 			GroupBy: []string{"metadata.from"},
@@ -620,9 +620,9 @@ func GetTransactionRules() []*correlation.Rule {
 			Description: "High rate of failed transactions",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"transaction", "failed", "errors"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "tx."},
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 			},
@@ -636,9 +636,9 @@ func GetTransactionRules() []*correlation.Rule {
 			Description: "New smart contract deployed",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"transaction", "contract", "deployment"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.contract_deploy"},
 			},
 			GroupBy: []string{"metadata.from"},
@@ -651,9 +651,9 @@ func GetTransactionRules() []*correlation.Rule {
 			Description: "Contract self-destruct detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"transaction", "contract", "selfdestruct"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.selfdestruct"},
 			},
 			GroupBy: []string{"metadata.contract"},
@@ -666,9 +666,9 @@ func GetTransactionRules() []*correlation.Rule {
 			Description: "Transaction nonce gap detected indicating potential issues",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"transaction", "nonce", "gap"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.nonce_gap"},
 			},
 			GroupBy: []string{"metadata.from"},
@@ -681,9 +681,9 @@ func GetTransactionRules() []*correlation.Rule {
 			Description: "Transaction to known bridge contract",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"transaction", "bridge", "cross-chain"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.bridge_deposit"},
 			},
 			GroupBy: []string{"metadata.from"},
@@ -702,9 +702,9 @@ func GetContractRules() []*correlation.Rule {
 			Description: "Smart contract ownership was transferred",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"contract", "ownership", "transfer"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.ownership.transferred"},
 			},
 			GroupBy: []string{"metadata.contract"},
@@ -717,9 +717,9 @@ func GetContractRules() []*correlation.Rule {
 			Description: "Upgradeable proxy implementation was changed",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"contract", "proxy", "upgrade"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.proxy.upgraded"},
 			},
 			GroupBy: []string{"metadata.contract"},
@@ -732,9 +732,9 @@ func GetContractRules() []*correlation.Rule {
 			Description: "Unusually large ERC20 token transfer",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"contract", "erc20", "transfer"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.erc20.transfer"},
 				{Field: "severity", Operator: "gte", Value: 6},
 			},
@@ -748,9 +748,9 @@ func GetContractRules() []*correlation.Rule {
 			Description: "Multiple NFTs transferred in short period",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"contract", "erc721", "bulk"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.erc721.transfer"},
 			},
 			GroupBy: []string{"metadata.from"},
@@ -763,9 +763,9 @@ func GetContractRules() []*correlation.Rule {
 			Description: "Token approval was revoked",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"contract", "approval", "revoke"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.erc20.approval"},
 				{Field: "metadata.value", Operator: "eq", Value: "0"},
 			},
@@ -779,9 +779,9 @@ func GetContractRules() []*correlation.Rule {
 			Description: "Unlimited token approval granted",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"contract", "approval", "unlimited"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.erc20.approval"},
 				{Field: "metadata.unlimited", Operator: "eq", Value: true},
 			},
@@ -795,9 +795,9 @@ func GetContractRules() []*correlation.Rule {
 			Description: "New governance proposal was created",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"contract", "governance", "proposal"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.governance.proposal_created"},
 			},
 			GroupBy: []string{"metadata.contract"},
@@ -810,9 +810,9 @@ func GetContractRules() []*correlation.Rule {
 			Description: "Flash loan transaction detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"contract", "defi", "flashloan"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.flash_loan"},
 			},
 			GroupBy: []string{"metadata.borrower"},
@@ -825,9 +825,9 @@ func GetContractRules() []*correlation.Rule {
 			Description: "Attempt to bypass governance timelock",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"contract", "governance", "timelock"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.timelock.bypass"},
 			},
 			GroupBy: []string{"metadata.contract"},
@@ -840,14 +840,14 @@ func GetContractRules() []*correlation.Rule {
 			Description: "Potential reentrancy attack pattern detected",
 			Type:        correlation.RuleTypeSequence,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"contract", "attack", "reentrancy"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1499",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.call.recursive"},
 			},
 			GroupBy: []string{"metadata.contract"},
@@ -866,9 +866,9 @@ func GetMEVRules() []*correlation.Rule {
 			Description: "Sandwich attack detected in mempool",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"mev", "sandwich", "attack"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.sandwich"},
 			},
 			GroupBy: []string{"metadata.attacker"},
@@ -881,9 +881,9 @@ func GetMEVRules() []*correlation.Rule {
 			Description: "Transaction frontrunning detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"mev", "frontrun"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.mev"},
 				{Field: "metadata.mev_type", Operator: "eq", Value: "frontrun"},
 			},
@@ -897,9 +897,9 @@ func GetMEVRules() []*correlation.Rule {
 			Description: "Transaction backrunning detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"mev", "backrun"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.mev"},
 				{Field: "metadata.mev_type", Operator: "eq", Value: "backrun"},
 			},
@@ -913,9 +913,9 @@ func GetMEVRules() []*correlation.Rule {
 			Description: "Arbitrage transaction detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"mev", "arbitrage"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.arbitrage"},
 			},
 			GroupBy: []string{"metadata.from"},
@@ -928,9 +928,9 @@ func GetMEVRules() []*correlation.Rule {
 			Description: "MEV transaction with high profit",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"mev", "profit", "whale"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "tx."},
 				{Field: "metadata.mev_profit_eth", Operator: "gte", Value: float64(10)},
 			},
@@ -944,9 +944,9 @@ func GetMEVRules() []*correlation.Rule {
 			Description: "Just-in-time liquidity provision detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"mev", "jit", "liquidity"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.jit_liquidity"},
 			},
 			GroupBy: []string{"metadata.from"},
@@ -959,9 +959,9 @@ func GetMEVRules() []*correlation.Rule {
 			Description: "Flashbots/MEV bundle detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"mev", "bundle", "flashbots"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.bundle"},
 			},
 			GroupBy: []string{"metadata.builder"},
@@ -974,9 +974,9 @@ func GetMEVRules() []*correlation.Rule {
 			Description: "Liquidation bot transaction detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"mev", "liquidation", "defi"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.liquidation"},
 			},
 			GroupBy: []string{"metadata.from"},
@@ -995,9 +995,9 @@ func GetInfrastructureRules() []*correlation.Rule {
 			Description: "Node CPU usage above critical threshold",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"infrastructure", "cpu", "performance"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "metric.cpu.usage"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(90)},
 			},
@@ -1011,9 +1011,9 @@ func GetInfrastructureRules() []*correlation.Rule {
 			Description: "Node memory usage critically high",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"infrastructure", "memory", "exhaustion"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "metric.memory.usage"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(95)},
 			},
@@ -1027,9 +1027,9 @@ func GetInfrastructureRules() []*correlation.Rule {
 			Description: "Node disk space critically low",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"infrastructure", "disk", "storage"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "metric.disk.usage"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(95)},
 			},
@@ -1043,9 +1043,9 @@ func GetInfrastructureRules() []*correlation.Rule {
 			Description: "High rate of network errors detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"infrastructure", "network", "errors"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "metric.network.error"},
 			},
 			GroupBy: []string{"source.host"},
@@ -1058,14 +1058,14 @@ func GetInfrastructureRules() []*correlation.Rule {
 			Description: "Abnormally high connection count (potential DDoS)",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"infrastructure", "ddos", "connections"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1498",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "metric.connection.count"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(10000)},
 			},
@@ -1079,9 +1079,9 @@ func GetInfrastructureRules() []*correlation.Rule {
 			Description: "Node process crashed unexpectedly",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"infrastructure", "crash", "process"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "process.crashed"},
 			},
 			GroupBy: []string{"source.host"},
@@ -1094,9 +1094,9 @@ func GetInfrastructureRules() []*correlation.Rule {
 			Description: "Database query latency above threshold",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"infrastructure", "database", "latency"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "metric.latency.database"},
 				{Field: "metadata.value_ms", Operator: "gte", Value: float64(1000)},
 			},
@@ -1110,9 +1110,9 @@ func GetInfrastructureRules() []*correlation.Rule {
 			Description: "SSL certificate expiring soon",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"infrastructure", "ssl", "certificate"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "cert.expiring"},
 				{Field: "metadata.days_remaining", Operator: "lte", Value: float64(30)},
 			},
@@ -1132,14 +1132,14 @@ func GetSecurityRules() []*correlation.Rule {
 			Description: "Attempt to call blocked/sensitive RPC method",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"security", "rpc", "blocked"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0001",
 				TacticName:  "Initial Access",
 				TechniqueID: "T1190",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "rpc.admin"},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -1152,14 +1152,14 @@ func GetSecurityRules() []*correlation.Rule {
 			Description: "Source enumerating available RPC methods",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"security", "rpc", "enumeration"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0007",
 				TacticName:  "Discovery",
 				TechniqueID: "T1046",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "rpc."},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -1177,9 +1177,9 @@ func GetSecurityRules() []*correlation.Rule {
 			Description: "Source exceeded API rate limits",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"security", "ratelimit", "abuse"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "rpc."},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -1192,14 +1192,14 @@ func GetSecurityRules() []*correlation.Rule {
 			Description: "Multiple authentication failures from source",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"security", "auth", "brute-force"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0006",
 				TacticName:  "Credential Access",
 				TechniqueID: "T1110",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "auth.failed"},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -1212,14 +1212,14 @@ func GetSecurityRules() []*correlation.Rule {
 			Description: "Attempt to export cryptographic key",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"security", "keys", "export"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0010",
 				TacticName:  "Exfiltration",
 				TechniqueID: "T1552",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.export"},
 			},
 			GroupBy: []string{"target"},
@@ -1232,9 +1232,9 @@ func GetSecurityRules() []*correlation.Rule {
 			Description: "Unusual signing pattern detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"security", "signing", "anomaly"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.sign"},
 			},
 			GroupBy: []string{"target"},
@@ -1247,14 +1247,14 @@ func GetSecurityRules() []*correlation.Rule {
 			Description: "Privilege escalation attempt detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"security", "privilege", "escalation"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0004",
 				TacticName:  "Privilege Escalation",
 				TechniqueID: "T1068",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "auth.privilege_escalation"},
 			},
 			GroupBy: []string{"actor.id"},
@@ -1267,14 +1267,14 @@ func GetSecurityRules() []*correlation.Rule {
 			Description: "Suspicious process execution detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"security", "process", "suspicious"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0002",
 				TacticName:  "Execution",
 				TechniqueID: "T1059",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "process.suspicious"},
 			},
 			GroupBy: []string{"source.host"},
@@ -1287,14 +1287,14 @@ func GetSecurityRules() []*correlation.Rule {
 			Description: "SSH brute force attack detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"security", "ssh", "brute-force"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0006",
 				TacticName:  "Credential Access",
 				TechniqueID: "T1110.001",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "ssh.failed"},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -1307,9 +1307,9 @@ func GetSecurityRules() []*correlation.Rule {
 			Description: "Firewall rules were modified",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"security", "firewall", "change"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "firewall.rule_changed"},
 			},
 			GroupBy: []string{"actor.id"},
@@ -1328,9 +1328,9 @@ func GetComplianceRules() []*correlation.Rule {
 			Description: "Transaction involving OFAC sanctioned address",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"compliance", "ofac", "sanctions"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "threat.screening"},
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 				{Field: "metadata.risk_level", Operator: "eq", Value: "critical"},
@@ -1345,9 +1345,9 @@ func GetComplianceRules() []*correlation.Rule {
 			Description: "Transaction involving known mixer service",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"compliance", "mixer", "aml"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "threat.screening"},
 				{Field: "metadata.threat_types", Operator: "contains", Value: "mixer"},
 			},
@@ -1361,9 +1361,9 @@ func GetComplianceRules() []*correlation.Rule {
 			Description: "Transaction above reporting threshold",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"compliance", "reporting", "threshold"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "tx."},
 				{Field: "metadata.value_usd", Operator: "gte", Value: float64(10000)},
 			},
@@ -1377,9 +1377,9 @@ func GetComplianceRules() []*correlation.Rule {
 			Description: "Possible structuring pattern detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"compliance", "structuring", "suspicious"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "tx."},
 				{Field: "metadata.value_usd", Operator: "gte", Value: float64(8000)},
 				{Field: "metadata.value_usd", Operator: "lt", Value: float64(10000)},
@@ -1394,9 +1394,9 @@ func GetComplianceRules() []*correlation.Rule {
 			Description: "Transaction involving high-risk jurisdiction",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"compliance", "jurisdiction", "fatf"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "threat.screening"},
 				{Field: "metadata.high_risk_jurisdiction", Operator: "eq", Value: true},
 			},
@@ -1410,9 +1410,9 @@ func GetComplianceRules() []*correlation.Rule {
 			Description: "Transaction involving known ransomware address",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"compliance", "ransomware", "cybercrime"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "threat.screening"},
 				{Field: "metadata.threat_types", Operator: "contains", Value: "ransomware"},
 			},
@@ -1432,9 +1432,9 @@ func GetKeyManagementRules() []*correlation.Rule {
 			Description: "Cryptographic key export was attempted",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"keys", "export", "critical"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.export"},
 			},
 			GroupBy: []string{"target"},
@@ -1447,9 +1447,9 @@ func GetKeyManagementRules() []*correlation.Rule {
 			Description: "Cryptographic key was imported",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"keys", "import"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.import"},
 			},
 			GroupBy: []string{"target"},
@@ -1462,9 +1462,9 @@ func GetKeyManagementRules() []*correlation.Rule {
 			Description: "Cryptographic key was rotated",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"keys", "rotation"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.rotate"},
 			},
 			GroupBy: []string{"target"},
@@ -1477,9 +1477,9 @@ func GetKeyManagementRules() []*correlation.Rule {
 			Description: "Cryptographic key was revoked",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"keys", "revocation"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.revoke"},
 			},
 			GroupBy: []string{"target"},
@@ -1492,9 +1492,9 @@ func GetKeyManagementRules() []*correlation.Rule {
 			Description: "Multiple key operation failures",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"keys", "failures"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "key."},
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 			},
@@ -1508,9 +1508,9 @@ func GetKeyManagementRules() []*correlation.Rule {
 			Description: "Access to validator signing key",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"keys", "validator"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "metadata.key_type", Operator: "eq", Value: "validator"},
 				{Field: "action", Operator: "in", Values: []string{"key.access", "key.sign"}},
 			},
@@ -1524,9 +1524,9 @@ func GetKeyManagementRules() []*correlation.Rule {
 			Description: "Access to withdrawal key",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"keys", "withdrawal"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "metadata.key_type", Operator: "eq", Value: "withdrawal"},
 			},
 			GroupBy: []string{"target"},
@@ -1539,9 +1539,9 @@ func GetKeyManagementRules() []*correlation.Rule {
 			Description: "Key accessed by unusual actor",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"keys", "unauthorized"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "key."},
 			},
 			GroupBy: []string{"target"},
@@ -1565,9 +1565,9 @@ func GetCloudSecurityRules() []*correlation.Rule {
 			Description: "IAM policy was modified",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cloud", "iam", "policy"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "in", Values: []string{
 					"policy.attach", "policy.detach", "gcp.setiampolicy",
 				}},
@@ -1582,14 +1582,14 @@ func GetCloudSecurityRules() []*correlation.Rule {
 			Description: "Unauthorized access to cloud resource",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"cloud", "access", "unauthorized"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0001",
 				TacticName:  "Initial Access",
 				TechniqueID: "T1078",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 				{Field: "metadata.error_code", Operator: "contains", Value: "Unauthorized"},
 			},
@@ -1603,9 +1603,9 @@ func GetCloudSecurityRules() []*correlation.Rule {
 			Description: "Cloud resource was deleted",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cloud", "deletion", "critical"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "resource.delete"},
 				{Field: "outcome", Operator: "eq", Value: "success"},
 			},
@@ -1619,14 +1619,14 @@ func GetCloudSecurityRules() []*correlation.Rule {
 			Description: "Cloud audit logging was disabled",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"cloud", "logging", "evasion"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0005",
 				TacticName:  "Defense Evasion",
 				TechniqueID: "T1562.008",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "metadata.event_name", Operator: "in", Values: []string{
 					"StopLogging", "DeleteTrail", "UpdateTrail",
 				}},
@@ -1641,9 +1641,9 @@ func GetCloudSecurityRules() []*correlation.Rule {
 			Description: "Security group rules were modified",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"cloud", "security-group", "network"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "metadata.event_name", Operator: "in", Values: []string{
 					"AuthorizeSecurityGroupIngress", "AuthorizeSecurityGroupEgress",
 					"RevokeSecurityGroupIngress", "RevokeSecurityGroupEgress",
@@ -1659,9 +1659,9 @@ func GetCloudSecurityRules() []*correlation.Rule {
 			Description: "Activity in previously unused region",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"cloud", "region", "anomaly"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "cloud."},
 				{Field: "metadata.new_region", Operator: "eq", Value: true},
 			},
@@ -1681,14 +1681,14 @@ func GetNetworkRules() []*correlation.Rule {
 			Description: "Port scanning activity detected",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"network", "scan", "reconnaissance"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0007",
 				TacticName:  "Discovery",
 				TechniqueID: "T1046",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "network.connection_refused"},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -1706,14 +1706,14 @@ func GetNetworkRules() []*correlation.Rule {
 			Description: "Outbound connection to known malicious IP",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"network", "malicious", "c2"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0011",
 				TacticName:  "Command and Control",
 				TechniqueID: "T1071",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "network.outbound"},
 				{Field: "metadata.threat_intel_match", Operator: "eq", Value: true},
 			},
@@ -1727,14 +1727,14 @@ func GetNetworkRules() []*correlation.Rule {
 			Description: "Possible DNS tunneling detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"network", "dns", "tunnel"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0011",
 				TacticName:  "Command and Control",
 				TechniqueID: "T1071.004",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "dns.query"},
 				{Field: "metadata.query_length", Operator: "gte", Value: float64(100)},
 			},
@@ -1748,9 +1748,9 @@ func GetNetworkRules() []*correlation.Rule {
 			Description: "Unusual P2P network traffic pattern",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"network", "p2p", "anomaly"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "network.p2p"},
 				{Field: "metadata.peers_connected", Operator: "gte", Value: float64(200)},
 			},
@@ -1770,9 +1770,9 @@ func GetAPISecurityRules() []*correlation.Rule {
 			Description: "API key used from multiple locations",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"api", "key", "abuse"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "api."},
 				{Field: "metadata.api_key", Operator: "exists", Value: true},
 			},
@@ -1791,9 +1791,9 @@ func GetAPISecurityRules() []*correlation.Rule {
 			Description: "GraphQL introspection query detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"api", "graphql", "introspection"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "api.graphql.introspection"},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -1806,9 +1806,9 @@ func GetAPISecurityRules() []*correlation.Rule {
 			Description: "WebSocket message flood detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"api", "websocket", "flood"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "api.websocket.message"},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -1821,9 +1821,9 @@ func GetAPISecurityRules() []*correlation.Rule {
 			Description: "Deprecated API endpoint accessed",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityLow,
+			Severity:    correlation.SeverityToInt(correlation.SeverityLow),
 			Tags:        []string{"api", "deprecated"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "api.deprecated"},
 			},
 			GroupBy: []string{"metadata.endpoint"},
