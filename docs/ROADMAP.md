@@ -73,6 +73,14 @@ This document outlines planned features and future enhancements for the Boundary
 
 See [ECOSYSTEM_COMPATIBILITY_REPORT.md](./ECOSYSTEM_COMPATIBILITY_REPORT.md) for full integration details.
 
+### Phase 10: CI/CD & DevOps
+- ✅ GitHub Actions CI workflow (lint, security, test, build)
+- ✅ GitHub Actions security workflow (gosec, govulncheck, dependency review)
+- ✅ Makefile targets for local security scanning
+- ✅ SARIF output for GitHub Security tab integration
+- ✅ Daily scheduled security scans
+- ✅ Race condition detection in tests
+
 ---
 
 ## Future Features (Planned)
