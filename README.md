@@ -96,17 +96,26 @@ A comprehensive Security Information and Event Management (SIEM) platform design
 git clone https://github.com/boundary-siem/boundary-siem.git
 cd boundary-siem
 
+# Install dependencies
+make deps
+
 # Start dependencies
 docker-compose -f deployments/clickhouse/docker-compose.yaml up -d
 
 # Build
-go build -o bin/siem-ingest ./cmd/siem-ingest
+make build
 
 # Run
-./bin/siem-ingest
+make run
 
 # Run tests
-go test ./...
+make test
+
+# Run security scan
+make security
+
+# Run all CI checks (lint, security, test)
+make ci
 ```
 
 ### Configuration
@@ -349,6 +358,51 @@ kubectl apply -f deploy/container/network-policy.yaml
 - **OPA Gatekeeper**: Policy enforcement for non-root, read-only root, capability restrictions
 - **Resource Quotas**: CPU/memory/storage limits per namespace
 
+## CI/CD & Security Scanning
+
+### GitHub Actions
+
+The project includes automated CI/CD pipelines:
+
+| Workflow | Triggers | Jobs |
+|----------|----------|------|
+| `ci.yml` | Push, PR | Lint, Security, Test, Build |
+| `security.yml` | Push, PR, Daily | Gosec, Govulncheck, Dependency Review |
+
+### Local Security Scanning
+
+```bash
+# Run gosec security scanner
+make security
+
+# Generate detailed security reports (JSON + HTML)
+make security-report
+
+# Run all CI checks locally
+make ci
+```
+
+### Security Tools
+
+| Tool | Purpose |
+|------|---------|
+| [gosec](https://github.com/securego/gosec) | Go source code security analyzer |
+| [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) | Go dependency vulnerability scanner |
+| [golangci-lint](https://golangci-lint.run/) | Go linters aggregator |
+
+### Installing Security Tools
+
+```bash
+# Install gosec
+go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+# Install govulncheck
+go install golang.org/x/vuln/cmd/govulncheck@latest
+
+# Install golangci-lint
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
 ## Testing
 
 ```bash
@@ -395,10 +449,13 @@ See [docs/ROADMAP.md](docs/ROADMAP.md) for planned features:
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
 3. Write tests for new functionality
-4. Ensure all tests pass (`go test ./...`)
-5. Commit changes (`git commit -m 'Add amazing feature'`)
-6. Push to branch (`git push origin feature/amazing-feature`)
-7. Open a Pull Request
+4. Run all CI checks locally (`make ci`)
+5. Ensure security scanning passes (`make security`)
+6. Commit changes (`git commit -m 'Add amazing feature'`)
+7. Push to branch (`git push origin feature/amazing-feature`)
+8. Open a Pull Request
+
+All PRs trigger automated security scanning and must pass before merge.
 
 ## License
 
