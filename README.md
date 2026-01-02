@@ -302,6 +302,309 @@ rate_limit:
   enabled: false  # Disable for local development
 ```
 
+### Secrets Management
+
+**Enterprise-Grade Secret Management with HashiCorp Vault Integration**
+
+The SIEM includes a comprehensive secrets management system that supports multiple providers with automatic fallback:
+
+- **HashiCorp Vault** - Enterprise secret management with versioning and audit logs
+- **Environment Variables** - Simple, portable secret configuration
+- **File-Based Secrets** - Docker secrets and Kubernetes mounted volumes
+
+#### Configuration
+
+```yaml
+secrets:
+  # Provider selection (in priority order: Vault → Env → File)
+  enable_vault: false           # HashiCorp Vault (requires configuration)
+  enable_env: true              # Environment variables (enabled by default)
+  enable_file: false            # File-based secrets (for Docker/K8s)
+
+  # Vault configuration
+  vault_address: "https://vault.example.com:8200"
+  vault_token: ""               # Set via VAULT_TOKEN env var
+  vault_path: "secret/boundary-siem"
+  vault_timeout: 10s
+
+  # File provider configuration
+  file_secrets_dir: "/etc/secrets"
+
+  # Cache configuration
+  cache_ttl: 5m                 # Cache secrets for 5 minutes
+```
+
+#### Method 1: Environment Variables (Default)
+
+Simple and portable, ideal for development and small deployments:
+
+```bash
+# Admin credentials
+export BOUNDARY_ADMIN_USERNAME='admin'
+export BOUNDARY_ADMIN_PASSWORD='YourSecureP@ssw0rd123!'
+export BOUNDARY_ADMIN_EMAIL='admin@yourdomain.com'
+
+# Database credentials
+export BOUNDARY_CLICKHOUSE_PASSWORD='db-password'
+
+# API keys
+export BOUNDARY_API_KEY='your-api-key'
+```
+
+The secrets manager automatically normalizes key names:
+- `admin_password` → `BOUNDARY_ADMIN_PASSWORD`
+- `database.password` → `BOUNDARY_DATABASE_PASSWORD`
+- `app-api.key` → `BOUNDARY_APP_API_KEY`
+
+#### Method 2: HashiCorp Vault (Recommended for Production)
+
+Enterprise-grade secret management with versioning, audit logs, and dynamic secrets:
+
+**1. Enable Vault in configuration:**
+
+```yaml
+secrets:
+  enable_vault: true
+  enable_env: true              # Fallback to env vars
+  vault_address: "https://vault.example.com:8200"
+  vault_path: "secret/boundary-siem"
+```
+
+**2. Configure Vault connection via environment:**
+
+```bash
+export VAULT_ADDR='https://vault.example.com:8200'
+export VAULT_TOKEN='s.your-vault-token'
+export VAULT_PATH='secret/boundary-siem'
+```
+
+**3. Store secrets in Vault:**
+
+```bash
+# Using Vault CLI
+vault kv put secret/boundary-siem/admin_password value='SecureP@ssw0rd123!'
+vault kv put secret/boundary-siem/database_password value='db-password'
+vault kv put secret/boundary-siem/api_key value='your-api-key'
+
+# Using Vault API
+curl -X POST https://vault.example.com:8200/v1/secret/data/boundary-siem/admin_password \
+  -H "X-Vault-Token: $VAULT_TOKEN" \
+  -d '{"data": {"value": "SecureP@ssw0rd123!"}}'
+```
+
+**Vault Features:**
+- ✅ **Secret Versioning** - Track changes and rollback
+- ✅ **Audit Logging** - Complete access audit trail
+- ✅ **Dynamic Secrets** - Generate time-limited credentials
+- ✅ **Access Policies** - Fine-grained permission control
+- ✅ **Encryption at Rest** - AES-256-GCM encryption
+- ✅ **High Availability** - Clustered deployment support
+
+#### Method 3: File-Based Secrets (Docker/Kubernetes)
+
+Ideal for containerized deployments with Docker secrets or Kubernetes mounted volumes:
+
+**1. Enable file provider:**
+
+```yaml
+secrets:
+  enable_file: true
+  file_secrets_dir: "/run/secrets"  # Docker secrets default path
+```
+
+**2. Mount secrets as files:**
+
+**Docker:**
+```bash
+# Create secrets
+echo "SecureP@ssw0rd123!" | docker secret create admin_password -
+
+# Run container
+docker service create \
+  --name boundary-siem \
+  --secret admin_password \
+  --secret database_password \
+  boundary-siem:latest
+```
+
+**Kubernetes:**
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: boundary-siem-secrets
+type: Opaque
+stringData:
+  admin_password: "SecureP@ssw0rd123!"
+  database_password: "db-password"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: boundary-siem
+spec:
+  containers:
+  - name: siem
+    image: boundary-siem:latest
+    volumeMounts:
+    - name: secrets
+      mountPath: "/etc/secrets"
+      readOnly: true
+  volumes:
+  - name: secrets
+    secret:
+      secretName: boundary-siem-secrets
+```
+
+**File Format:**
+- One secret per file
+- Filename = secret key (normalized: `admin_password`, `database_password`)
+- File content = secret value
+- Newlines automatically trimmed
+
+#### Provider Fallback Chain
+
+The secrets manager tries providers in priority order until a secret is found:
+
+```
+1. HashiCorp Vault (if enabled)
+   ↓ (secret not found)
+2. Environment Variables (if enabled)
+   ↓ (secret not found)
+3. File-Based Secrets (if enabled)
+   ↓ (secret not found)
+4. Error: Secret not found
+```
+
+This allows flexible deployment strategies:
+- **Development**: Environment variables only
+- **Staging**: Environment + Vault for sensitive secrets
+- **Production**: Vault primary, environment fallback
+- **Kubernetes**: File-based secrets with environment fallback
+
+#### Using Secrets in Code
+
+```go
+// Create secrets manager
+mgr, err := cfg.NewSecretsManager()
+if err != nil {
+    log.Fatal(err)
+}
+defer mgr.Close()
+
+// Get a secret
+password, err := mgr.Get(ctx, "ADMIN_PASSWORD")
+if err != nil {
+    log.Fatal(err)
+}
+
+// Get with default fallback
+apiKey := mgr.GetWithDefault(ctx, "API_KEY", "default-key")
+
+// Resolve secret references
+// Formats: "literal", "env:VAR", "vault:path", "file:/path"
+value, err := mgr.ResolveSecret(ctx, "env:DATABASE_PASSWORD")
+```
+
+#### Environment Variables
+
+Override secrets configuration via environment:
+
+```bash
+# Enable/disable providers
+export SIEM_SECRETS_VAULT_ENABLED='true'
+export SIEM_SECRETS_FILE_ENABLED='true'
+
+# Vault configuration
+export VAULT_ADDR='https://vault.example.com:8200'
+export VAULT_TOKEN='s.your-token'
+export VAULT_PATH='secret/boundary-siem'
+
+# File provider
+export SIEM_SECRETS_DIR='/run/secrets'
+```
+
+#### Security Best Practices
+
+**1. Never Commit Secrets to Version Control**
+```bash
+# Add to .gitignore
+.env
+*.pem
+*.key
+secrets/
+```
+
+**2. Use Vault for Production**
+- Centralized secret management
+- Automatic rotation and revocation
+- Complete audit trail
+- Dynamic secret generation
+
+**3. Rotate Secrets Regularly**
+```bash
+# Vault automatic rotation
+vault write sys/leases/renew lease_id="secret/..."
+
+# Manual rotation
+vault kv put secret/boundary-siem/admin_password value='NewSecureP@ss!'
+```
+
+**4. Principle of Least Privilege**
+```hcl
+# Vault policy - read-only access
+path "secret/data/boundary-siem/*" {
+  capabilities = ["read"]
+}
+```
+
+**5. Enable Secrets Caching**
+```yaml
+secrets:
+  cache_ttl: 5m  # Cache for 5 minutes to reduce provider calls
+```
+
+**6. Monitor Secret Access**
+- Enable Vault audit logging
+- Monitor secrets manager metrics
+- Alert on unusual access patterns
+
+#### Troubleshooting
+
+**Secret Not Found:**
+```bash
+# Check which providers are enabled
+curl http://localhost:8080/health | jq '.secrets'
+
+# Verify environment variable
+echo $BOUNDARY_ADMIN_PASSWORD
+
+# Check Vault
+vault kv get secret/boundary-siem/admin_password
+
+# Check file
+cat /etc/secrets/admin_password
+```
+
+**Vault Connection Failed:**
+```bash
+# Verify Vault is accessible
+curl -H "X-Vault-Token: $VAULT_TOKEN" \
+  https://vault.example.com:8200/v1/sys/health
+
+# Check Vault token
+vault token lookup
+
+# Verify path
+vault kv list secret/boundary-siem
+```
+
+**Permission Denied:**
+```bash
+# Check Vault policy
+vault token capabilities secret/boundary-siem/admin_password
+```
+
 ### Sending Events
 
 ```bash

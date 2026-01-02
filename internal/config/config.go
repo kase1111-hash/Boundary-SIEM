@@ -2,9 +2,12 @@
 package config
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"time"
+
+	"boundary-siem/internal/secrets"
 
 	"gopkg.in/yaml.v3"
 )
@@ -21,6 +24,7 @@ type Config struct {
 	Logging    LoggingConfig    `yaml:"logging"`
 	Storage    StorageConfig    `yaml:"storage"`
 	Consumer   ConsumerConfig   `yaml:"consumer"`
+	Secrets    SecretsConfig    `yaml:"secrets"`
 }
 
 // RateLimitConfig holds rate limiting settings.
@@ -181,6 +185,26 @@ type LoggingConfig struct {
 	Format string `yaml:"format"`
 }
 
+// SecretsConfig holds secrets management settings.
+type SecretsConfig struct {
+	// Provider selection (vault, env, file)
+	EnableVault bool `yaml:"enable_vault"`
+	EnableEnv   bool `yaml:"enable_env"`
+	EnableFile  bool `yaml:"enable_file"`
+
+	// Vault configuration
+	VaultAddress string        `yaml:"vault_address"`
+	VaultToken   string        `yaml:"vault_token"`
+	VaultPath    string        `yaml:"vault_path"`
+	VaultTimeout time.Duration `yaml:"vault_timeout"`
+
+	// File provider configuration
+	FileSecretsDir string `yaml:"file_secrets_dir"`
+
+	// Cache configuration
+	CacheTTL time.Duration `yaml:"cache_ttl"`
+}
+
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
@@ -299,6 +323,17 @@ func DefaultConfig() *Config {
 			PollInterval: 10 * time.Millisecond,
 			ShutdownWait: 30 * time.Second,
 		},
+		Secrets: SecretsConfig{
+			EnableVault:    false,            // Vault disabled by default
+			EnableEnv:      true,             // Environment variables enabled by default
+			EnableFile:     false,            // File secrets disabled by default
+			VaultAddress:   "",               // Must be configured if Vault is enabled
+			VaultToken:     "",               // Must be configured if Vault is enabled
+			VaultPath:      "secret/boundary-siem", // Default Vault path
+			VaultTimeout:   10 * time.Second, // Vault request timeout
+			FileSecretsDir: "/etc/secrets",   // Default directory for file-based secrets
+			CacheTTL:       5 * time.Minute,  // Cache secrets for 5 minutes
+		},
 	}
 }
 
@@ -389,6 +424,31 @@ func (c *Config) applyEnvOverrides() {
 	if burst := os.Getenv("SIEM_RATELIMIT_BURST"); burst != "" {
 		fmt.Sscanf(burst, "%d", &c.RateLimit.BurstSize)
 	}
+
+	// Secrets management settings
+	if enabled := os.Getenv("SIEM_SECRETS_VAULT_ENABLED"); enabled == "true" {
+		c.Secrets.EnableVault = true
+	}
+
+	if addr := os.Getenv("VAULT_ADDR"); addr != "" {
+		c.Secrets.VaultAddress = addr
+	}
+
+	if token := os.Getenv("VAULT_TOKEN"); token != "" {
+		c.Secrets.VaultToken = token
+	}
+
+	if path := os.Getenv("VAULT_PATH"); path != "" {
+		c.Secrets.VaultPath = path
+	}
+
+	if enabled := os.Getenv("SIEM_SECRETS_FILE_ENABLED"); enabled == "true" {
+		c.Secrets.EnableFile = true
+	}
+
+	if dir := os.Getenv("SIEM_SECRETS_DIR"); dir != "" {
+		c.Secrets.FileSecretsDir = dir
+	}
 }
 
 // splitAndTrim splits a string by separator and trims whitespace from each part.
@@ -449,6 +509,28 @@ func (c *Config) LoadAuthFromEnv() {
 	if os.Getenv("BOUNDARY_REQUIRE_PASSWORD_CHANGE") == "true" {
 		c.Auth.RequirePasswordChange = true
 	}
+}
+
+// LoadAuthFromSecrets loads authentication configuration from the secrets manager.
+// This method should be called after LoadAuthFromEnv() to allow secrets manager
+// to override environment variables when configured.
+func (c *Config) LoadAuthFromSecrets(ctx context.Context, mgr *secrets.Manager) error {
+	// Try to get admin username from secrets
+	if username, err := mgr.Get(ctx, "ADMIN_USERNAME"); err == nil {
+		c.Auth.DefaultAdminUsername = username
+	}
+
+	// Try to get admin password from secrets
+	if password, err := mgr.Get(ctx, "ADMIN_PASSWORD"); err == nil {
+		c.Auth.DefaultAdminPassword = password
+	}
+
+	// Try to get admin email from secrets
+	if email, err := mgr.Get(ctx, "ADMIN_EMAIL"); err == nil {
+		c.Auth.DefaultAdminEmail = email
+	}
+
+	return nil
 }
 
 // Validate validates the configuration.
@@ -515,4 +597,41 @@ func ValidatePasswordStrength(password string) error {
 	}
 
 	return nil
+}
+
+// NewSecretsManager creates a secrets manager from the configuration.
+func (c *Config) NewSecretsManager() (*secrets.Manager, error) {
+	secretsCfg := &secrets.Config{
+		EnableVault:  c.Secrets.EnableVault,
+		EnableEnv:    c.Secrets.EnableEnv,
+		EnableFile:   c.Secrets.EnableFile,
+		VaultAddress: c.Secrets.VaultAddress,
+		VaultToken:   c.Secrets.VaultToken,
+		VaultPath:    c.Secrets.VaultPath,
+		CacheTTL:     c.Secrets.CacheTTL,
+	}
+
+	return secrets.NewManager(secretsCfg)
+}
+
+// GetSecret retrieves a secret using the secrets manager.
+// This is a convenience method that creates a temporary secrets manager.
+// For better performance, create a long-lived secrets manager instead.
+func (c *Config) GetSecret(ctx context.Context, key string) (string, error) {
+	mgr, err := c.NewSecretsManager()
+	if err != nil {
+		return "", fmt.Errorf("failed to create secrets manager: %w", err)
+	}
+	defer mgr.Close()
+
+	return mgr.Get(ctx, key)
+}
+
+// GetSecretWithDefault retrieves a secret or returns a default value.
+func (c *Config) GetSecretWithDefault(ctx context.Context, key, defaultValue string) string {
+	value, err := c.GetSecret(ctx, key)
+	if err != nil {
+		return defaultValue
+	}
+	return value
 }
