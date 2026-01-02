@@ -2,6 +2,14 @@
 
 A comprehensive Security Information and Event Management (SIEM) platform designed for blockchain infrastructure protection. Built in Go with high-performance event processing, blockchain-specific detection rules, and enterprise-grade features.
 
+## Overview
+
+**Production-Ready Security:** Enterprise-grade security features including rate limiting (1000 req/min), HashiCorp Vault integration, AES-256-GCM encryption at rest, comprehensive HTTP security headers (A+ rating), CSRF protection, Redis session storage, and bcrypt password hashing.
+
+**Comprehensive Testing:** 664 test functions across 45 test files, covering all core functionality including authentication, encryption, secrets management, rate limiting, and security headers.
+
+**Blockchain-Specific:** 143 detection rules for validator monitoring, transaction analysis, smart contract security, DeFi protocols, and cross-chain monitoring.
+
 ## Features
 
 ### Core SIEM Capabilities
@@ -16,7 +24,7 @@ A comprehensive Security Information and Event Management (SIEM) platform design
 - **boundary-daemon**: CEF/JSON ingestion for session, auth, and access events
 - **NatLangChain**: Natural language blockchain monitoring with 20 detection rules for semantic drift, disputes, and consensus events
 
-### Blockchain Security (123+ Detection Rules)
+### Blockchain Security (143 Detection Rules)
 - **Validator Monitoring**: Attestation tracking, slashing detection, sync committee analysis
 - **Transaction Analysis**: Gas anomalies, MEV detection, flash loan identification
 - **Smart Contract Security**: Reentrancy detection, access control analysis, upgrade monitoring
@@ -31,6 +39,16 @@ A comprehensive Security Information and Event Management (SIEM) platform design
 - **Authentication**: OAuth 2.0, SAML 2.0, OIDC, LDAP with MFA support
 - **RBAC**: 7 roles, 16 permissions, multi-tenancy, audit logging
 - **Compliance Reports**: SOC 2 Type II, ISO 27001, NIST CSF, PCI DSS, GDPR
+
+### Security Features
+- **Rate Limiting**: Enterprise-grade with 1000 req/min defaults, RFC 6585 headers, burst support
+- **Secrets Management**: Multi-provider (HashiCorp Vault → Env → File) with 5-min caching
+- **Encryption at Rest**: AES-256-GCM with key rotation, selective encryption (sessions, users, API keys)
+- **Security Headers**: HSTS, CSP, X-Frame-Options, and 7 more headers for A+ security rating
+- **CSRF Protection**: Double-submit cookie pattern with secure token generation
+- **Session Management**: Redis-backed with encryption, configurable TTL
+- **Password Security**: Bcrypt hashing (cost 12), account lockout (5 failed attempts, 15-min lockout)
+- **Admin Security**: No hardcoded credentials, auto-generated secure passwords, forced password change
 
 ### Advanced Capabilities
 - **Threat Hunting**: 10 built-in templates, 7 hunt types, 6 query languages
@@ -74,7 +92,7 @@ A comprehensive Security Information and Event Management (SIEM) platform design
 │  └── gRPC (Internal services)                                           │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Detection & Response                                                    │
-│  ├── 103 Blockchain Detection Rules                                     │
+│  ├── 143 Blockchain Detection Rules                                     │
 │  ├── 9 Incident Playbooks                                               │
 │  ├── 8 SOAR Workflows                                                   │
 │  └── MITRE ATT&CK Mappings                                              │
@@ -1360,7 +1378,7 @@ Default headers provide comprehensive protection against:
 
 ```bash
 # JSON HTTP
-curl -X POST http://localhost:8080/api/v1/events \
+curl -X POST http://localhost:8080/v1/events \
   -H "Content-Type: application/json" \
   -d '{
     "timestamp": "2024-01-15T10:30:00Z",
@@ -1428,7 +1446,7 @@ boundary-siem/
 
 ## Detection Rules
 
-### Categories (103 Rules)
+### Categories (143 Rules)
 
 | Category | Rules | Description |
 |----------|-------|-------------|
@@ -1447,46 +1465,155 @@ boundary-siem/
 
 ### MITRE ATT&CK Mapping
 
-All 103 rules are mapped to MITRE ATT&CK techniques for standardized threat classification.
+All 143 rules are mapped to MITRE ATT&CK techniques for standardized threat classification.
 
 ## API Reference
+
+### Core Endpoints
+
+```bash
+# Health check
+GET /health
+
+# Metrics
+GET /metrics
+
+# System status
+GET /api/system/dreaming
+```
 
 ### Events
 
 ```bash
-# List events
-GET /api/v1/events?start=2024-01-01&end=2024-01-31&severity=8
+# Create event
+POST /v1/events
 
 # Get event by ID
-GET /api/v1/events/{id}
+GET /v1/events/{id}
 
-# Create event
-POST /api/v1/events
-```
+# Get field values
+GET /v1/fields/{field}/values
 
-### Alerts
-
-```bash
-# List alerts
-GET /api/v1/alerts?status=open&severity=critical
-
-# Acknowledge alert
-POST /api/v1/alerts/{id}/acknowledge
-
-# Close alert
-POST /api/v1/alerts/{id}/close
+# Get statistics
+GET /v1/stats
 ```
 
 ### Search
 
 ```bash
-# Execute search
-POST /api/v1/search
+# Execute search (POST)
+POST /v1/search
 {
   "query": "action:validator.* AND severity:>=8",
   "time_range": {"start": "2024-01-01", "end": "2024-01-31"},
   "limit": 100
 }
+
+# Execute search (GET)
+GET /v1/search?query=action:validator.*&limit=100
+
+# Execute aggregations
+POST /v1/aggregations
+{
+  "field": "severity",
+  "type": "terms",
+  "time_range": {"start": "2024-01-01", "end": "2024-01-31"}
+}
+```
+
+### Authentication
+
+```bash
+# Login
+POST /api/auth/login
+{
+  "username": "admin",
+  "password": "password",
+  "tenant_id": "default"
+}
+
+# Logout
+POST /api/auth/logout
+
+# Get session
+GET /api/auth/session
+
+# OAuth callback
+GET /api/auth/oauth/callback
+
+# SAML ACS
+POST /api/auth/saml/acs
+```
+
+### User & Tenant Management
+
+```bash
+# List users
+GET /api/users
+
+# Create user
+POST /api/users
+{
+  "username": "analyst",
+  "email": "analyst@example.com",
+  "roles": ["analyst"],
+  "tenant_id": "default"
+}
+
+# List tenants
+GET /api/tenants
+
+# Create tenant
+POST /api/tenants
+{
+  "name": "Acme Corp",
+  "description": "Acme Corporation tenant"
+}
+
+# Get audit log
+GET /api/audit
+```
+
+### Dashboard
+
+```bash
+# Get dashboard statistics
+GET /api/dashboard/stats
+
+# Get dashboard widgets
+GET /api/dashboard/widgets
+
+# Get dashboard layouts
+GET /api/dashboard/layouts
+
+# Get dashboard preferences
+GET /api/dashboard/preferences
+
+# Get time series data
+GET /api/dashboard/timeseries
+```
+
+### Compliance & Reports
+
+```bash
+# List reports
+GET /api/reports
+
+# Get report templates
+GET /api/reports/templates
+
+# Generate report
+POST /api/reports/generate
+{
+  "template": "SOC2_TYPE_II",
+  "time_range": {"start": "2024-01-01", "end": "2024-01-31"}
+}
+
+# Get compliance controls
+GET /api/compliance/controls
+
+# Get compliance score
+GET /api/compliance/score
 ```
 
 ### GraphQL
@@ -1631,18 +1758,27 @@ go test -v ./internal/detection/...
 
 ### Test Coverage
 
-| Package | Tests | Coverage |
-|---------|-------|----------|
-| internal/advanced | 30 | 85% |
-| internal/api | 48 | 82% |
-| internal/blockchain | 24 | 78% |
-| internal/correlation | 18 | 90% |
-| internal/detection | 24 | 88% |
-| internal/enterprise | 56 | 85% |
-| internal/ingest | 12 | 92% |
-| internal/schema | 8 | 95% |
-| internal/security | 45 | 88% |
-| internal/storage | 15 | 80% |
+The project includes **664 test functions** across **45 test files** covering:
+
+| Package | Description |
+|---------|-------------|
+| internal/api/auth | Authentication, sessions, CSRF protection (22 tests) |
+| internal/api/dashboard | Dashboard API endpoints |
+| internal/api/reports | Compliance reports and templates |
+| internal/blockchain | Blockchain event parsing and monitoring |
+| internal/config | Configuration management, secrets, encryption (17 tests) |
+| internal/correlation | Event correlation engine |
+| internal/detection | 143 blockchain detection rules |
+| internal/encryption | AES-256-GCM encryption (11 tests) |
+| internal/enterprise | Enterprise features (HA, retention, GraphQL) |
+| internal/ingest | CEF parser, event ingestion, validation |
+| internal/middleware | Rate limiting (6 tests), security headers (13 tests) |
+| internal/queue | Ring buffer queue |
+| internal/schema | Event schema validation |
+| internal/search | Search and aggregation engine |
+| internal/secrets | Secrets management with Vault/env/file providers (8 tests) |
+| internal/storage | ClickHouse storage, batch writer, migrations |
+| internal/security | Platform security, audit logging, hardware key storage |
 
 ## Roadmap
 
