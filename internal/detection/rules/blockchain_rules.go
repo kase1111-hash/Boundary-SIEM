@@ -26,6 +26,9 @@ func GetAllRules() []*correlation.Rule {
 	rules = append(rules, GetDeFiRules()...)
 	rules = append(rules, GetExchangeRules()...)
 
+	// Cross-system ecosystem rules
+	rules = append(rules, GetEcosystemRules()...)
+
 	return rules
 }
 

@@ -22,7 +22,11 @@ This document outlines planned features and future enhancements for the Boundary
 - ✅ Network monitoring
 
 ### Phase 4: Detection & Response
-- ✅ 123+ blockchain-specific detection rules (including 20 NatLangChain rules)
+- ✅ 200+ detection rules across all integrations
+  - 80+ blockchain/infrastructure rules
+  - 20 NatLangChain rules (NLC-001 to NLC-020)
+  - 78 integration-specific rules (VL/ILR/LC/MN/MV/SM/IL/RRA)
+  - 26 cross-system ecosystem rules (ECO-001 to ECO-065)
 - ✅ MITRE ATT&CK mappings
 - ✅ Threat intelligence integration (OFAC, Chainalysis)
 - ✅ Incident playbooks (9 built-in)
@@ -54,13 +58,20 @@ This document outlines planned features and future enhancements for the Boundary
 - ✅ Container isolation (Docker seccomp/AppArmor, K8s NetworkPolicy)
 - ✅ TPM 2.0 hardware key storage with PCR policy binding
 
-### Phase 9: External Integrations
-- ✅ boundary-daemon integration (CEF/JSON, session/auth/access events)
-- ✅ NatLangChain integration (natural language blockchain monitoring)
-  - REST API client for NatLangChain nodes
-  - 25+ event type mappings (entries, blocks, disputes, contracts, negotiations)
-  - 20 detection rules (NLC-001 to NLC-020)
-  - Semantic drift and adversarial pattern detection
+### Phase 9: External Integrations (11 Production-Ready)
+- ✅ **boundary-daemon** - CEF protocol (UDP:5514/TCP:5515), session/auth/access events
+- ✅ **NatLangChain** - Natural language blockchain (20 rules, NLC-001 to NLC-020)
+- ✅ **Agent-OS** - `/api/system/dreaming` endpoint for system status
+- ✅ **Value Ledger** - Financial tracking with vector scores (8 rules, VL-001 to VL-008)
+- ✅ **ILR-Module** - Immutable License Registry disputes (10 rules, ILR-001 to ILR-010)
+- ✅ **Learning Contracts** - Consent management (10 rules, LC-001 to LC-010)
+- ✅ **Mediator Node** - Intent-aligned mediation (10 rules, MN-001 to MN-010)
+- ✅ **Memory Vault** - Secure memory storage (10 rules, MV-001 to MV-010)
+- ✅ **Synth Mind** - Agent-OS psychological modules (10 rules, SM-001 to SM-010)
+- ✅ **IntentLog** - Prose-based version control (10 rules, IL-001 to IL-010)
+- ✅ **RRA-Module** - Revenant Repo Agent (10 rules, RRA-001 to RRA-010)
+
+See [ECOSYSTEM_COMPATIBILITY_REPORT.md](./ECOSYSTEM_COMPATIBILITY_REPORT.md) for full integration details.
 
 ---
 
@@ -308,6 +319,7 @@ We welcome contributions to these planned features! Here's how to get started:
 | Version | Date | Features |
 |---------|------|----------|
 | 0.1.0-alpha | 2026-01-01 | Core SIEM, Blockchain Security, boundary-daemon & NatLangChain integrations |
+| 0.1.1-alpha | 2026-01-02 | 11 ecosystem integrations, 200+ detection rules, cross-system correlation |
 | 0.2.0 | TBD | ML/UEBA (planned) |
 | 0.3.0 | TBD | Advanced Visualizations (planned) |
 | 0.4.0 | TBD | Mobile App (planned) |

@@ -1,21 +1,22 @@
 # Ecosystem Compatibility Report
 
 **Date:** 2026-01-02
-**Analyzed By:** Claude (Automated Verification)
+**Version:** 2.0 (Updated with full integration support)
 **Branch:** `claude/verify-repo-compatibility-vXyXX`
 
 ---
 
 ## Executive Summary
 
-Analysis of all 16 repositories under [github.com/kase1111-hash](https://github.com/kase1111-hash?tab=repositories) to verify integration compatibility with Boundary-SIEM.
+Analysis of all 16 repositories under [github.com/kase1111-hash](https://github.com/kase1111-hash?tab=repositories) for integration compatibility with Boundary-SIEM.
 
 | Category | Count | Status |
 |----------|-------|--------|
-| **Fully Integrated** | 3 | Production-ready |
-| **Reference Boundary-SIEM** | 4 | Compatible, documentation references |
-| **Potential Integrations** | 4 | Could benefit from SIEM integration |
-| **Unrelated** | 5 | Games, other domains |
+| **Fully Integrated** | 11 | Production-ready with detection rules |
+| **Compatible** | 1 | Uses standard API endpoints |
+| **Unrelated** | 4 | Games, other domains |
+
+**Total Detection Rules:** 200+ across all integrations
 
 ---
 
@@ -25,38 +26,23 @@ Analysis of all 16 repositories under [github.com/kase1111-hash](https://github.
 
 | Aspect | Details |
 |--------|---------|
-| **Status** | FULLY IMPLEMENTED |
-| **Integration Type** | Primary target, CEF protocol |
-| **Code Location** | `internal/ingest/cef/normalizer.go:15-35` |
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | CEF protocol (UDP/TCP) |
+| **Package** | `internal/ingest/cef/` |
 
-**Implementation Evidence:**
+**Supported Events:**
 
-```go
-// From internal/ingest/cef/normalizer.go
-var DefaultActionMappings = map[string]string{
-    // Boundary-daemon mappings
-    "100": "session.created",
-    "101": "session.terminated",
-    "102": "session.expired",
-    "200": "auth.login",
-    "201": "auth.logout",
-    "400": "auth.failure",
-    "401": "auth.mfa_failure",
-    "500": "access.granted",
-    "501": "access.denied",
-}
-```
-
-**Compatibility Matrix:**
-
-| boundary-daemon Feature | Boundary-SIEM Support |
-|------------------------|----------------------|
-| CEF event emission | UDP :5514, TCP :5515 |
-| SIEM integration (CEF/LEEF) | Full CEF v0/v1 parsing |
-| Hash-chained logs | SHA-256 event signing |
-| Session events | Mapped to canonical schema |
-| Auth events | Full mapping with actor extraction |
-| Access events | Outcome detection (success/failure) |
+| Signature ID | Action | Description |
+|--------------|--------|-------------|
+| 100 | session.created | New session established |
+| 101 | session.terminated | Session ended |
+| 102 | session.expired | Session timeout |
+| 200 | auth.login | Successful authentication |
+| 201 | auth.logout | User logout |
+| 400 | auth.failure | Failed authentication |
+| 401 | auth.mfa_failure | MFA verification failed |
+| 500 | access.granted | Resource access allowed |
+| 501 | access.denied | Resource access blocked |
 
 ---
 
@@ -64,51 +50,14 @@ var DefaultActionMappings = map[string]string{
 
 | Aspect | Details |
 |--------|---------|
-| **Status** | FULLY IMPLEMENTED |
+| **Status** | PRODUCTION-READY |
 | **Integration Type** | HTTP API polling |
-| **Code Location** | `internal/natlangchain/` (4 files) |
+| **Package** | `internal/natlangchain/` |
+| **Detection Rules** | 20 rules (NLC-001 to NLC-020) |
 
-**Implementation Components:**
+**Event Categories:** Entries, Blocks, Disputes, Contracts, Negotiations, Validation, Semantic Drift, Security
 
-1. **Client** (`client.go`) - 425 lines
-   - REST API client for NatLangChain nodes
-   - Endpoints: `/api/v1/chains`, `/api/v1/entries`, `/api/v1/disputes`, etc.
-   - Health checks and chain statistics
-
-2. **Normalizer** (`normalizer.go`)
-   - Converts NatLangChain events to canonical SIEM schema
-   - 25+ event type mappings
-
-3. **Ingester** (`ingester.go`)
-   - Polling-based event ingestion
-   - Configurable batch sizes and intervals
-
-4. **Detection Rules** (`detection_rules.go`)
-   - 20 NatLangChain-specific rules (NLC-001 to NLC-020)
-
-**Supported Event Categories:**
-
-| Category | Events |
-|----------|--------|
-| Entries | created, validated, rejected, modified |
-| Blocks | mined, validated, rejected |
-| Disputes | filed, resolved, escalated, dismissed |
-| Contracts | created, matched, completed, cancelled |
-| Negotiations | started, round, completed, failed, timeout |
-| Validation | paraphrase, debate, consensus, rejection |
-| Semantic | drift detected, drift critical |
-| Security | adversarial, manipulation, impersonation |
-
-**Configuration:**
-
-```yaml
-# configs/config.yaml
-natlangchain:
-  enabled: true
-  client:
-    base_url: "http://localhost:5000"
-    api_key: "your-api-key"
-```
+See [NATLANGCHAIN_INTEGRATION.md](./NATLANGCHAIN_INTEGRATION.md) for complete documentation.
 
 ---
 
@@ -116,285 +65,357 @@ natlangchain:
 
 | Aspect | Details |
 |--------|---------|
-| **Status** | IMPLEMENTED |
-| **Integration Type** | Dreaming endpoint for activity reporting |
-| **Code Location** | `internal/ingest/handler.go:282-360` |
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | Dreaming endpoint |
+| **Endpoint** | `GET /api/system/dreaming` |
 
-**Implementation:**
-
-The `/api/system/dreaming` endpoint provides Agent-OS with real-time system activity:
-
-```go
-// GET /api/system/dreaming
-type DreamingResponse struct {
-    Status      string          // idle, active, busy
-    Activity    string          // waiting, ingesting, processing_events, etc.
-    Description string          // Human-readable status
-    Metrics     DreamingMetrics // Queue depth, events/sec, uptime
-    Timestamp   time.Time
-}
-```
-
-**Status Mappings:**
-
-| Queue State | Status | Activity | Description |
-|-------------|--------|----------|-------------|
-| >90% capacity | busy | processing_backlog | Processing event backlog |
-| >50% capacity | active | processing_events | Actively processing |
-| >10 events/sec | active | high_throughput | High throughput ingestion |
-| >1 events/sec | active | ingesting | Normal ingestion |
-| >0 events/sec | idle | low_activity | Low activity monitoring |
-| 0 events/sec | idle | waiting | All systems ready |
+Provides real-time system status for Agent-OS integration.
 
 ---
 
-## 2. Repositories Referencing Boundary-SIEM
-
-These repositories document integration with Boundary-SIEM but don't require code changes in this repo:
-
-### 2.1 value-ledger
+### 1.4 value-ledger
 
 | Aspect | Details |
 |--------|---------|
-| **Reference Type** | Security event logging |
-| **Endpoint Used** | `http://siem:8080/api/v1/events` |
-| **Socket Used** | `/var/run/boundary-daemon/api.sock` |
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/valueledger/` |
+| **Detection Rules** | 8 rules (VL-001 to VL-008) |
 
-The Value Ledger's `security.py` module integrates with Boundary-SIEM for:
-- `@protected_operation` decorator for security events
-- `SecurityEventType` enums for categorization
-- Event logging via HTTP POST
+**Components:**
+- `client.go` - API client for ledger entries, security events, Merkle proofs
+- `normalizer.go` - Converts events to canonical SIEM schema
+- `ingester.go` - Polling-based event ingestion
+- `detection_rules.go` - Security rules for financial monitoring
 
-**Compatibility:** VERIFIED - Uses standard `/api/v1/events` endpoint
+**Event Types:**
+| Action | Description |
+|--------|-------------|
+| `vl.entry.created` | New ledger entry |
+| `vl.entry.updated` | Entry modification |
+| `vl.entry.revoked` | Entry revocation |
+| `vl.security.*` | Security events |
+| `vl.merkle.*` | Merkle proof verification |
 
 ---
 
-### 2.2 ILR-module
+### 1.5 ILR-module
 
 | Aspect | Details |
 |--------|---------|
-| **Reference Type** | SDK documentation |
-| **Context** | Event logging, connection protection |
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/ilrmodule/` |
+| **Detection Rules** | 10 rules (ILR-001 to ILR-010) |
 
-The ILR-Module SDK documentation mentions:
-- Boundary-SIEM for "event logging"
-- boundary-daemon for secure connection management
-
-**Compatibility:** VERIFIED - Standard integration patterns
+**Event Types:**
+| Action | Description |
+|--------|-------------|
+| `ilr.dispute.*` | Dispute lifecycle events |
+| `ilr.proposal.*` | Governance proposals |
+| `ilr.compliance.*` | Compliance events |
+| `ilr.l3.*` | L3 batch events |
+| `ilr.oracle.*` | Oracle interactions |
 
 ---
 
-### 2.3 learning-contracts
+### 1.6 learning-contracts
 
 | Aspect | Details |
 |--------|---------|
-| **Reference Type** | Documentation reference |
-| **Context** | Security monitoring |
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/learningcontracts/` |
+| **Detection Rules** | 10 rules (LC-001 to LC-010) |
 
-References Boundary-SIEM as part of the Agent-OS ecosystem for:
-- Security event monitoring
-- Enforcement hook integration
-
-**Compatibility:** VERIFIED - Compatible via boundary-daemon CEF
+**Event Types:**
+| Action | Description |
+|--------|-------------|
+| `lc.contract.*` | Contract lifecycle |
+| `lc.enforcement.*` | Enforcement actions |
+| `lc.state.*` | State changes |
+| `lc.violation.*` | Violation detection |
 
 ---
 
-### 2.4 mediator-node
+### 1.7 mediator-node
 
 | Aspect | Details |
 |--------|---------|
-| **Reference Type** | Documentation |
-| **Context** | Security monitoring of mediation activities |
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/mediatornode/` |
+| **Detection Rules** | 10 rules (MN-001 to MN-010) |
 
-Documentation mentions:
-- Boundary-SIEM for "real-time correlation and MITRE ATT&CK mapping"
-- boundary-daemon for "policy enforcement and audit logging"
-
-**Compatibility:** VERIFIED - NatLangChain events can be correlated
-
----
-
-## 3. Potential Future Integrations
-
-These repositories could benefit from Boundary-SIEM integration:
-
-### 3.1 memory-vault
-
-**Current Integration Path:** Uses NatLangChain for audit trail anchoring
-
-**Potential SIEM Integration:**
-- Log high-classification recall attempts
-- Monitor emergency lockdown events
-- Track heir/succession access
-- Alert on integrity verification failures
-
-**Recommended Events:**
-```
-memory.recalled (severity 3-5 based on classification)
-memory.locked (severity 6)
-memory.breach_attempt (severity 9)
-memory.heir_access (severity 7)
-```
+**Event Types:**
+| Action | Description |
+|--------|-------------|
+| `mn.alignment.*` | Intent alignment events |
+| `mn.negotiation.*` | Negotiation sessions |
+| `mn.settlement.*` | Settlement outcomes |
+| `mn.flag.*` | Flag events |
+| `mn.reputation.*` | Reputation changes |
 
 ---
 
-### 3.2 synth-mind
+### 1.8 memory-vault
 
-**Current Integration:** None
+| Aspect | Details |
+|--------|---------|
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/memoryvault/` |
+| **Detection Rules** | 10 rules (MV-001 to MV-010) |
 
-**Potential SIEM Integration:**
-- Monitor emotional state anomalies
-- Track tool usage patterns
-- Alert on meta-reflection failures
-- Log social peer communications
-
----
-
-### 3.3 IntentLog
-
-**Current Integration:** None
-
-**Potential SIEM Integration:**
-- Monitor commit signature failures
-- Track branch manipulation attempts
-- Alert on chain integrity violations
-- Log export operations
+**Event Types:**
+| Action | Description |
+|--------|-------------|
+| `mv.access.*` | Memory access events |
+| `mv.integrity.*` | Integrity verification |
+| `mv.lockdown.*` | Emergency lockdowns |
+| `mv.succession.*` | Heir access events |
+| `mv.backup.*` | Backup operations |
+| `mv.token.*` | Physical token events |
 
 ---
 
-### 3.4 RRA-Module
+### 1.9 synth-mind
 
-**Current Integration:** NatLangChain-based (indirect)
+| Aspect | Details |
+|--------|---------|
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/synthmind/` |
+| **Detection Rules** | 10 rules (SM-001 to SM-010) |
 
-**Potential SIEM Integration:**
-- Monitor repository ingestion events
-- Track negotiation failures
-- Alert on smart contract deployment anomalies
-- Log DeFi transaction patterns
+**Event Types:**
+| Action | Description |
+|--------|-------------|
+| `sm.emotional.*` | Emotional state tracking |
+| `sm.module.*` | Module events (reflection, dreaming) |
+| `sm.safety.*` | Safety guardrail triggers |
+| `sm.tool.*` | Tool usage in sandbox |
+| `sm.social.*` | Peer communication |
+
+---
+
+### 1.10 IntentLog
+
+| Aspect | Details |
+|--------|---------|
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/intentlog/` |
+| **Detection Rules** | 10 rules (IL-001 to IL-010) |
+
+**Event Types:**
+| Action | Description |
+|--------|-------------|
+| `il.commit.*` | Prose commit events |
+| `il.diff.*` | Semantic diff analysis |
+| `il.branch.*` | Branch operations |
+| `il.chain.*` | Chain integrity verification |
+| `il.export.*` | Data export events |
+| `il.key.*` | Key management events |
+
+---
+
+### 1.11 RRA-Module
+
+| Aspect | Details |
+|--------|---------|
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/rramodule/` |
+| **Detection Rules** | 10 rules (RRA-001 to RRA-010) |
+
+**Event Types:**
+| Action | Description |
+|--------|-------------|
+| `rra.ingestion.*` | Repository ingestion |
+| `rra.negotiation.*` | License negotiations |
+| `rra.contract.*` | Smart contract events |
+| `rra.revenue.*` | Revenue distribution |
+| `rra.security.*` | Security events (FIDO2, rate limits) |
+| `rra.governance.*` | DAO governance |
+
+---
+
+## 2. Cross-System Ecosystem Rules
+
+In addition to per-integration rules, Boundary-SIEM includes 26 cross-system correlation rules that detect patterns spanning multiple integrations:
+
+| Category | Rules | Description |
+|----------|-------|-------------|
+| Cross-System Security | ECO-001 to ECO-003 | Multi-system auth, privilege escalation |
+| Data Exfiltration | ECO-010 to ECO-012 | Cross-system data staging |
+| Chain Integrity | ECO-020 to ECO-022 | Multi-chain verification failures |
+| Agent Compromise | ECO-030 to ECO-033 | Synth Mind + security correlations |
+| Financial Fraud | ECO-040 to ECO-043 | Value Ledger + RRA patterns |
+| Trust Manipulation | ECO-050 to ECO-053 | Reputation gaming detection |
+| Coordinated Attacks | ECO-060 to ECO-065 | Distributed ecosystem attacks |
+
+---
+
+## 3. Compatible Repository
+
+### 3.1 (Generic API Consumers)
+
+Any system that sends events to the standard `/api/v1/events` endpoint is compatible.
 
 ---
 
 ## 4. Unrelated Repositories
-
-These repositories are outside the Agent-OS ecosystem:
 
 | Repository | Domain | Notes |
 |------------|--------|-------|
 | Midnight-pulse | Game | Procedural night driving |
 | Shredsquatch | Game | 3D snowboarding |
 | Long-Home | Game | GDScript project |
-| (None applicable) | - | - |
+| (Others) | - | Non-Agent-OS projects |
 
 ---
 
-## 5. Integration Architecture
+## 5. Architecture Overview
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                         Agent-OS Ecosystem                               │
-├─────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌──────────────┐   ┌──────────────┐   ┌──────────────┐                 │
-│  │ synth-mind   │   │ memory-vault │   │ learning-    │                 │
-│  │   (Agent)    │   │  (Storage)   │   │  contracts   │                 │
-│  └──────┬───────┘   └──────┬───────┘   └──────┬───────┘                 │
-│         │                  │                   │                         │
-│         ▼                  ▼                   ▼                         │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                     boundary-daemon                              │    │
-│  │             (Policy Enforcement & Audit Layer)                   │    │
-│  └─────────────────────────────┬───────────────────────────────────┘    │
-│                                │ CEF/UDP:5514                            │
-│                                ▼                                         │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                      BOUNDARY-SIEM                               │    │
-│  │  ┌─────────────┐  ┌─────────────┐  ┌────────────────────────┐   │    │
-│  │  │ CEF Parser  │  │ NatLangChain│  │ Dreaming Endpoint      │   │    │
-│  │  │ (daemon)    │  │ Client      │  │ (Agent-OS status)      │   │    │
-│  │  └─────────────┘  └─────────────┘  └────────────────────────┘   │    │
-│  │                                                                  │    │
-│  │  ┌─────────────────────────────────────────────────────────┐    │    │
-│  │  │            143+ Detection Rules                          │    │    │
-│  │  │  (103 Blockchain + 20 NatLangChain + 20 Correlation)    │    │    │
-│  │  └─────────────────────────────────────────────────────────┘    │    │
-│  └─────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────┐    │
-│  │                      NatLangChain                                │    │
-│  │           (Natural Language Blockchain Protocol)                 │    │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │    │
-│  │  │ mediator-    │  │ ILR-module   │  │ value-ledger │           │    │
-│  │  │   node       │  │ (Disputes)   │  │ (Economics)  │           │    │
-│  │  └──────────────┘  └──────────────┘  └──────────────┘           │    │
-│  └─────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-└─────────────────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                         Agent-OS Ecosystem                                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │                    AI Agent Layer                                   │    │
+│   │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │    │
+│   │  │  synth-mind  │  │ memory-vault │  │  IntentLog   │              │    │
+│   │  │  (10 rules)  │  │  (10 rules)  │  │  (10 rules)  │              │    │
+│   │  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘              │    │
+│   └─────────┼─────────────────┼─────────────────┼──────────────────────┘    │
+│             │                 │                 │                            │
+│   ┌─────────▼─────────────────▼─────────────────▼──────────────────────┐    │
+│   │                   Policy & Audit Layer                              │    │
+│   │           boundary-daemon (CEF/UDP:5514, TCP:5515)                  │    │
+│   └─────────────────────────────┬───────────────────────────────────────┘    │
+│                                 │                                            │
+│   ┌─────────────────────────────▼───────────────────────────────────────┐    │
+│   │                      BOUNDARY-SIEM                                   │    │
+│   │  ┌────────────────────────────────────────────────────────────────┐ │    │
+│   │  │  Ingesters (11 integrations)                                   │ │    │
+│   │  │  ├── CEF Parser (boundary-daemon)                              │ │    │
+│   │  │  ├── NatLangChain Client         ├── IntentLog Client         │ │    │
+│   │  │  ├── Value Ledger Client         ├── RRA-Module Client        │ │    │
+│   │  │  ├── ILR-Module Client           ├── Synth Mind Client        │ │    │
+│   │  │  ├── Learning Contracts Client   └── Memory Vault Client      │ │    │
+│   │  │  └── Mediator Node Client                                      │ │    │
+│   │  └────────────────────────────────────────────────────────────────┘ │    │
+│   │                                                                      │    │
+│   │  ┌────────────────────────────────────────────────────────────────┐ │    │
+│   │  │  Detection Engine (200+ rules)                                 │ │    │
+│   │  │  ├── 80+ Blockchain/Infrastructure rules                       │ │    │
+│   │  │  ├── 20 NatLangChain rules (NLC-001 to NLC-020)               │ │    │
+│   │  │  ├── 78 Integration rules (VL/ILR/LC/MN/MV/SM/IL/RRA)         │ │    │
+│   │  │  └── 26 Cross-System Ecosystem rules (ECO-001 to ECO-065)     │ │    │
+│   │  └────────────────────────────────────────────────────────────────┘ │    │
+│   │                                                                      │    │
+│   │  ┌────────────────────────────────────────────────────────────────┐ │    │
+│   │  │  Storage (ClickHouse) & Alerting                               │ │    │
+│   │  └────────────────────────────────────────────────────────────────┘ │    │
+│   └──────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+│   ┌────────────────────────────────────────────────────────────────────┐    │
+│   │                   Blockchain Layer                                  │    │
+│   │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │    │
+│   │  │ NatLangChain │  │  ILR-Module  │  │ value-ledger │              │    │
+│   │  │  (20 rules)  │  │  (10 rules)  │  │  (8 rules)   │              │    │
+│   │  └──────────────┘  └──────────────┘  └──────────────┘              │    │
+│   │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐              │    │
+│   │  │ mediator-    │  │  learning-   │  │  RRA-Module  │              │    │
+│   │  │    node      │  │  contracts   │  │  (10 rules)  │              │    │
+│   │  │  (10 rules)  │  │  (10 rules)  │  │              │              │    │
+│   │  └──────────────┘  └──────────────┘  └──────────────┘              │    │
+│   └────────────────────────────────────────────────────────────────────┘    │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## 6. Verification Checklist
+## 6. Configuration
+
+All integrations are configured in `configs/config.yaml`:
+
+```yaml
+# Example: Enable Value Ledger integration
+valueledger:
+  enabled: true
+  client:
+    base_url: "http://localhost:8100"
+    api_key: "your-api-key"
+    timeout: 30s
+  ingester:
+    poll_interval: 30s
+    batch_size: 100
+```
+
+**Default Ports:**
+
+| Integration | Port |
+|-------------|------|
+| NatLangChain | 5000 |
+| Value Ledger | 8100 |
+| ILR-Module | 8200 |
+| Learning Contracts | 8300 |
+| Mediator Node | 8400 |
+| Memory Vault | 8500 |
+| Synth Mind | 8600 |
+| IntentLog | 8700 |
+| RRA-Module | 8800 |
+
+---
+
+## 7. Detection Rule Summary
+
+| Integration | Rule Prefix | Count | Categories |
+|-------------|-------------|-------|------------|
+| NatLangChain | NLC- | 20 | Semantic, disputes, validation |
+| Value Ledger | VL- | 8 | Financial, Merkle, revocation |
+| ILR-Module | ILR- | 10 | Disputes, compliance, oracles |
+| Learning Contracts | LC- | 10 | Consent, violations, enforcement |
+| Mediator Node | MN- | 10 | Alignment, settlements, reputation |
+| Memory Vault | MV- | 10 | Access, integrity, succession |
+| Synth Mind | SM- | 10 | Emotional, safety, prediction |
+| IntentLog | IL- | 10 | Chain integrity, signatures, exports |
+| RRA-Module | RRA- | 10 | Ingestion, contracts, governance |
+| Ecosystem | ECO- | 26 | Cross-system correlation |
+| Blockchain | Various | 80+ | Validator, DeFi, infrastructure |
+
+**Grand Total: 200+ detection rules**
+
+---
+
+## 8. Verification Checklist
 
 ### Implemented Integrations
 
-- [x] **boundary-daemon**: CEF parsing, signature ID mapping, test coverage
-- [x] **NatLangChain**: Client, normalizer, ingester, 20 detection rules
+- [x] **boundary-daemon**: CEF parsing, signature ID mapping
+- [x] **NatLangChain**: Full client, normalizer, ingester, 20 rules
 - [x] **Agent-OS**: `/api/system/dreaming` endpoint
+- [x] **Value Ledger**: Full client, normalizer, ingester, 8 rules
+- [x] **ILR-Module**: Full client, normalizer, ingester, 10 rules
+- [x] **Learning Contracts**: Full client, normalizer, ingester, 10 rules
+- [x] **Mediator Node**: Full client, normalizer, ingester, 10 rules
+- [x] **Memory Vault**: Full client, normalizer, ingester, 10 rules
+- [x] **Synth Mind**: Full client, normalizer, ingester, 10 rules
+- [x] **IntentLog**: Full client, normalizer, ingester, 10 rules
+- [x] **RRA-Module**: Full client, normalizer, ingester, 10 rules
 
-### API Compatibility
+### Cross-System Detection
 
-- [x] `/api/v1/events` accepts JSON POST (value-ledger compatible)
-- [x] CEF UDP :5514 and TCP :5515 listeners (boundary-daemon compatible)
-- [x] `/api/system/dreaming` returns activity status (Agent-OS compatible)
-- [x] NatLangChain polling via `/api/v1/chains/*` endpoints
-
-### Configuration
-
-- [x] `configs/config.yaml` includes NatLangChain section
-- [x] CEF normalizer includes boundary-daemon action mappings
-- [x] Feature toggles for all NatLangChain event types
-
----
-
-## 7. Recommendations
-
-### 7.1 No Action Required
-
-All primary integrations are implemented and functional:
-1. boundary-daemon via CEF
-2. NatLangChain via HTTP polling
-3. Agent-OS via dreaming endpoint
-
-### 7.2 Optional Enhancements
-
-For deeper ecosystem integration, consider:
-
-1. **memory-vault events** - Add event ingester for high-value memory operations
-2. **value-ledger events** - Accept economic accounting events
-3. **IntentLog correlation** - Correlate commit events with security incidents
-
-### 7.3 Documentation Updates
-
-Consider adding integration examples for:
-- value-ledger security module configuration
-- ILR-module SIEM connection setup
-- mediator-node audit logging
+- [x] Ecosystem-wide correlation rules (26 rules)
+- [x] MITRE ATT&CK mappings for security rules
+- [x] Multi-system authentication failure detection
+- [x] Data exfiltration chain detection
+- [x] Agent compromise pattern detection
 
 ---
 
-## 8. Conclusion
-
-Boundary-SIEM is **fully compatible** with the core Agent-OS ecosystem:
-
-| Integration | Status | Evidence |
-|-------------|--------|----------|
-| boundary-daemon | PRODUCTION-READY | CEF parsing, tests, docs |
-| NatLangChain | PRODUCTION-READY | Full client, 20 rules, docs |
-| Agent-OS | PRODUCTION-READY | Dreaming endpoint |
-| Ecosystem modules | COMPATIBLE | Standard API usage |
-
-All repositories designed to interact with Boundary-SIEM can do so using the implemented integration points.
-
----
-
-*Report generated automatically during repository compatibility verification.*
+*Report generated during ecosystem integration verification.*
