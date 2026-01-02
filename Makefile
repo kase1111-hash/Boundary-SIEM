@@ -1,4 +1,4 @@
-.PHONY: all build test run clean lint fmt deps
+.PHONY: all build test run clean lint fmt deps security security-report ci
 
 # Go parameters
 GOCMD=go
@@ -70,10 +70,37 @@ fmt:
 clean:
 	rm -rf $(BIN_DIR)
 	rm -f coverage.out coverage.html
+	rm -f security-report.json security-report.html
 
 ## docker-build: Build Docker image
 docker-build:
 	docker build -t boundary-siem/ingest:latest -f Dockerfile.ingest .
+
+## security: Run security scanners (gosec)
+security:
+	@if command -v gosec >/dev/null 2>&1; then \
+		echo "Running gosec security scanner..."; \
+		gosec -fmt=text -severity=medium ./...; \
+	else \
+		echo "gosec not installed. Install with: go install github.com/securego/gosec/v2/cmd/gosec@latest"; \
+		exit 1; \
+	fi
+
+## security-report: Run security scanners with detailed report
+security-report:
+	@if command -v gosec >/dev/null 2>&1; then \
+		echo "Running gosec security scanner..."; \
+		gosec -fmt=json -out=security-report.json ./... || true; \
+		gosec -fmt=html -out=security-report.html ./... || true; \
+		echo "Security reports generated: security-report.json, security-report.html"; \
+	else \
+		echo "gosec not installed. Install with: go install github.com/securego/gosec/v2/cmd/gosec@latest"; \
+		exit 1; \
+	fi
+
+## ci: Run all CI checks (lint, security, test)
+ci: lint security test
+	@echo "All CI checks passed!"
 
 ## help: Show this help
 help:
