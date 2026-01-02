@@ -566,14 +566,14 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Attempts to call blocked/sensitive RPC methods",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"rpc", "security", "blocked"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0001",
 				TacticName:  "Initial Access",
 				TechniqueID: "T1190",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "rpc.admin"},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -589,14 +589,14 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Source is enumerating available RPC methods",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"rpc", "enumeration", "reconnaissance"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0007",
 				TacticName:  "Discovery",
 				TechniqueID: "T1046",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "rpc."},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -614,9 +614,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Source is making excessive RPC requests",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"rpc", "rate-limit", "abuse"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "rpc."},
 			},
 			GroupBy: []string{"actor.ip"},
@@ -632,9 +632,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Multiple accesses to sensitive RPC methods",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"rpc", "sensitive", "burst"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "in", Values: []string{
 					"rpc.eth_accounts", "rpc.eth_sign", "rpc.personal_listAccounts",
 				}},
@@ -652,9 +652,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "High rate of RPC errors from single source",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"rpc", "errors"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "rpc."},
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 			},

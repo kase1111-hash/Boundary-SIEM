@@ -657,9 +657,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Detects ownership transfers in smart contracts",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"blockchain", "contract", "ownership", "security"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.ownable.ownershiptransferred"},
 			},
 			GroupBy: []string{"metadata.contract_address"},
@@ -675,9 +675,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Detects upgrades to proxy contract implementations",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"blockchain", "contract", "proxy", "upgrade"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.proxy.upgraded"},
 			},
 			GroupBy: []string{"metadata.contract_address"},
@@ -693,9 +693,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Contract has been paused - may indicate emergency",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"blockchain", "contract", "pause", "emergency"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.pausable.paused"},
 			},
 			GroupBy: []string{"metadata.contract_address"},
@@ -711,9 +711,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Multiple access control role changes in short period",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"blockchain", "contract", "access-control"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "contract.accesscontrol.role"},
 			},
 			GroupBy: []string{"metadata.contract_address"},
@@ -729,9 +729,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Governance proposal has been executed",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"blockchain", "governance", "execution"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.governor.proposalexecuted"},
 			},
 			GroupBy: []string{"metadata.contract_address"},
@@ -747,9 +747,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Detects unlimited token approvals (potential phishing)",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"blockchain", "token", "approval", "security"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.erc20.approval"},
 			},
 			GroupBy: []string{"actor.id", "metadata.spender"},

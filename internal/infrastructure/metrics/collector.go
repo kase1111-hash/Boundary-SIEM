@@ -340,9 +340,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "CPU usage above 90% for extended period",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"infrastructure", "cpu", "performance"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "metric.cpu.usage"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(90)},
 			},
@@ -359,9 +359,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Memory usage critically high",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"infrastructure", "memory", "critical"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "metric.memory.usage"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(95)},
 			},
@@ -378,9 +378,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Disk usage above 95%",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"infrastructure", "disk", "critical"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "metric.disk.usage"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(95)},
 			},
@@ -397,9 +397,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "High rate of network errors detected",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"infrastructure", "network", "errors"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "metric.network.error"},
 			},
 			GroupBy: []string{"source.host"},
@@ -415,14 +415,14 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Abnormally high number of connections",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"infrastructure", "network", "ddos"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0040",
 				TacticName:  "Impact",
 				TechniqueID: "T1498",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "metric.connection.count"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(10000)},
 			},

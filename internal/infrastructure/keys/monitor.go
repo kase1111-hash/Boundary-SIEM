@@ -612,14 +612,14 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Attempt to export a cryptographic key",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"keys", "export", "critical"},
 			MITRE: &correlation.MITREMapping{
 				TacticID:    "TA0010",
 				TacticName:  "Exfiltration",
 				TechniqueID: "T1552",
 			},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.export"},
 			},
 			GroupBy: []string{"target"},
@@ -635,9 +635,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Unusually high rate of signing operations",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"keys", "signing", "anomaly"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.sign"},
 			},
 			GroupBy: []string{"target"},
@@ -653,9 +653,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Multiple failed key operations",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"keys", "failures"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "key."},
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 			},
@@ -672,9 +672,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Access to validator signing keys",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"keys", "validator", "access"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "metadata.key_type", Operator: "eq", Value: "validator"},
 				{Field: "action", Operator: "in", Values: []string{"key.access", "key.sign"}},
 			},
@@ -691,9 +691,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Key access from unusual actor",
 			Type:        correlation.RuleTypeAggregate,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"keys", "unauthorized", "access"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "key."},
 			},
 			GroupBy: []string{"target"},
@@ -711,9 +711,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Cryptographic key was rotated",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityMedium,
+			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"keys", "rotation"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.rotate"},
 			},
 			GroupBy: []string{"target"},

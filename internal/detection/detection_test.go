@@ -209,15 +209,22 @@ func TestPlaybookTrigger(t *testing.T) {
 		t.Fatal("expected incident to be created")
 	}
 
-	// Wait for execution
-	time.Sleep(200 * time.Millisecond)
+	// Wait for execution with polling to avoid race condition
+	var status playbook.ActionStatus
+	for i := 0; i < 20; i++ {
+		time.Sleep(50 * time.Millisecond)
+		inc, found := engine.GetIncident(incident.ID)
+		if found {
+			status = inc.Status
+			if status == playbook.StatusCompleted {
+				break
+			}
+		}
+	}
 
-	// Check incident status
-	inc, found := engine.GetIncident(incident.ID)
-	if !found {
-		t.Error("incident not found")
-	} else if inc.Status != playbook.StatusCompleted {
-		t.Errorf("Status = %v, want completed", inc.Status)
+	// Check incident status after loop
+	if status != playbook.StatusCompleted {
+		t.Errorf("Status = %v, want completed", status)
 	}
 }
 

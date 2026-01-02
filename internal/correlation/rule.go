@@ -38,18 +38,19 @@ const (
 
 // Rule represents a correlation rule definition.
 type Rule struct {
-	ID          string               `yaml:"id"`
-	Name        string               `yaml:"name"`
-	Description string               `yaml:"description"`
-	Type        RuleType             `yaml:"type"`
-	Enabled     bool                 `yaml:"enabled"`
-	Severity    int                  `yaml:"severity"`
-	Category    string               `yaml:"category,omitempty"`
-	Tags        []string             `yaml:"tags,omitempty"`
-	MITRE       *MITREMapping        `yaml:"mitre,omitempty"`
-	Conditions  Conditions           `yaml:"conditions"`
-	Condition   Condition             `yaml:"condition,omitempty"`   // Alternative single condition
-	GroupBy     []string             `yaml:"group_by,omitempty"`
+	ID              string               `yaml:"id"`
+	Name            string               `yaml:"name"`
+	Description     string               `yaml:"description"`
+	Type            RuleType             `yaml:"type"`
+	Enabled         bool                 `yaml:"enabled"`
+	Severity        int                  `yaml:"severity"`
+	Category        string               `yaml:"category,omitempty"`
+	Tags            []string             `yaml:"tags,omitempty"`
+	MITRE           *MITREMapping        `yaml:"mitre,omitempty"`
+	Conditions      Conditions           `yaml:"conditions"`
+	Condition       Condition            `yaml:"condition,omitempty"`        // Alternative single condition
+	EventConditions []Condition          `yaml:"event_conditions,omitempty"` // Slice of conditions for programmatic use
+	GroupBy         []string             `yaml:"group_by,omitempty"`
 	Window      time.Duration        `yaml:"window"`
 	Threshold   *ThresholdConfig     `yaml:"threshold,omitempty"`
 	Sequence    *SequenceConfig      `yaml:"sequence,omitempty"`
@@ -403,5 +404,19 @@ func SeverityToInt(s Severity) int {
 		return 10
 	default:
 		return 5
+	}
+}
+
+// IntToSeverity converts numeric severity to Severity type.
+func IntToSeverity(i int) Severity {
+	switch {
+	case i <= 2:
+		return SeverityLow
+	case i <= 5:
+		return SeverityMedium
+	case i <= 8:
+		return SeverityHigh
+	default:
+		return SeverityCritical
 	}
 }

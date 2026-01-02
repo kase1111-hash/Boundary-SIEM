@@ -558,9 +558,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Validator has missed multiple attestations in a short period",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"blockchain", "validator", "attestation"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.attestation_missed"},
 			},
 			GroupBy: []string{"metadata.validator_index"},
@@ -576,9 +576,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Potential slashing condition (double vote or surround vote)",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityCritical,
+			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"blockchain", "validator", "slashing", "critical"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "in", Values: []string{
 					"validator.double_vote",
 					"validator.surround_vote",
@@ -598,9 +598,9 @@ func CreateCorrelationRules() []*correlation.Rule {
 			Description: "Validator missed a block proposal duty",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityHigh,
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"blockchain", "validator", "proposal"},
-			Conditions: []correlation.Condition{
+			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.proposal_missed"},
 			},
 			GroupBy: []string{"metadata.validator_index"},

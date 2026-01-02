@@ -364,14 +364,18 @@ func matchPattern(value, pattern string) bool {
 }
 
 func (e *Engine) executeIncident(ctx context.Context, incident *Incident) {
+	e.mu.Lock()
 	incident.Status = StatusRunning
+	e.mu.Unlock()
 
 	e.mu.RLock()
 	playbook, ok := e.playbooks[incident.PlaybookID]
 	e.mu.RUnlock()
 
 	if !ok {
+		e.mu.Lock()
 		incident.Status = StatusFailed
+		e.mu.Unlock()
 		return
 	}
 
@@ -389,7 +393,9 @@ func (e *Engine) executeIncident(ctx context.Context, incident *Incident) {
 		}
 
 		result := e.executeAction(ctx, &action, incident.TriggerEvent)
+		e.mu.Lock()
 		incident.ActionResults = append(incident.ActionResults, *result)
+		e.mu.Unlock()
 
 		if result.Status == StatusFailed {
 			slog.Error("action failed",
@@ -399,8 +405,10 @@ func (e *Engine) executeIncident(ctx context.Context, incident *Incident) {
 		}
 	}
 
+	e.mu.Lock()
 	incident.Status = StatusCompleted
 	incident.EndTime = time.Now()
+	e.mu.Unlock()
 
 	slog.Info("playbook completed",
 		"playbook", playbook.Name,
@@ -449,12 +457,17 @@ func (e *Engine) executeAction(ctx context.Context, action *Action, event *schem
 	return result
 }
 
-// GetIncident returns an incident by ID.
+// GetIncident returns a copy of an incident by ID to avoid race conditions.
 func (e *Engine) GetIncident(id uuid.UUID) (*Incident, bool) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	inc, ok := e.incidents[id]
-	return inc, ok
+	if !ok {
+		return nil, false
+	}
+	// Return a shallow copy to avoid race conditions on fields
+	incCopy := *inc
+	return &incCopy, true
 }
 
 // GetStats returns engine statistics.
