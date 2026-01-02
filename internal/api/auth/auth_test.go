@@ -710,9 +710,14 @@ func TestHandleLogout(t *testing.T) {
 	req := httptest.NewRequest("POST", "/api/auth/login", nil)
 	session, _ := svc.CreateSession(user, req)
 
+	// Generate CSRF token
+	csrfToken, _ := svc.csrf.GenerateToken()
+
 	// Test successful logout
 	logoutReq := httptest.NewRequest("POST", "/api/auth/logout", nil)
 	logoutReq.Header.Set("Authorization", "Bearer "+session.Token)
+	logoutReq.Header.Set(CSRFHeaderName, csrfToken)
+	logoutReq.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: csrfToken})
 	w := httptest.NewRecorder()
 
 	svc.handleLogout(w, logoutReq)
@@ -727,13 +732,25 @@ func TestHandleLogout(t *testing.T) {
 		t.Error("expected session to be deleted")
 	}
 
-	// Test logout without token
+	// Test logout without CSRF token (should fail with 403)
 	logoutReq2 := httptest.NewRequest("POST", "/api/auth/logout", nil)
+	logoutReq2.Header.Set("Authorization", "Bearer "+session.Token)
 	w2 := httptest.NewRecorder()
 	svc.handleLogout(w2, logoutReq2)
 
-	if w2.Code != http.StatusUnauthorized {
-		t.Errorf("expected status 401, got %d", w2.Code)
+	if w2.Code != http.StatusForbidden {
+		t.Errorf("expected status 403, got %d", w2.Code)
+	}
+
+	// Test logout without session token (should fail with 401 after CSRF validation)
+	logoutReq3 := httptest.NewRequest("POST", "/api/auth/logout", nil)
+	logoutReq3.Header.Set(CSRFHeaderName, csrfToken)
+	logoutReq3.AddCookie(&http.Cookie{Name: CSRFCookieName, Value: csrfToken})
+	w3 := httptest.NewRecorder()
+	svc.handleLogout(w3, logoutReq3)
+
+	if w3.Code != http.StatusUnauthorized {
+		t.Errorf("expected status 401, got %d", w3.Code)
 	}
 }
 

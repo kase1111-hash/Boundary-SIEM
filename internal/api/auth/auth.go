@@ -205,7 +205,8 @@ type SAMLConfig struct {
 type AuthService struct {
 	mu             sync.RWMutex
 	users          map[string]*User
-	sessionStorage SessionStorage // Now using SessionStorage interface
+	sessionStorage SessionStorage  // Now using SessionStorage interface
+	csrf           *CSRFProtection // CSRF protection
 	tenants        map[string]*Tenant
 	auditLog       []*AuditLogEntry
 	oauthConfigs   map[string]*OAuthConfig
@@ -250,6 +251,7 @@ func NewAuthServiceWithStorage(logger *slog.Logger, sessionStorage SessionStorag
 	svc := &AuthService{
 		users:          make(map[string]*User),
 		sessionStorage: sessionStorage,
+		csrf:           NewCSRFProtection(DefaultCSRFConfig()),
 		tenants:        make(map[string]*Tenant),
 		auditLog:       make([]*AuditLogEntry, 0),
 		oauthConfigs:   make(map[string]*OAuthConfig),
@@ -433,17 +435,40 @@ func (s *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	s.logAudit(AuditActionLogin, user.ID, user.Username, user.TenantID, "session", session.ID, r, true, "")
 
+	// Generate CSRF token
+	csrfToken, err := s.csrf.GenerateToken()
+	if err != nil {
+		s.logger.Error("failed to generate CSRF token", "error", err)
+		writeJSONError(w, http.StatusInternalServerError, "CSRF_ERROR", "Failed to generate CSRF token")
+		return
+	}
+
+	// Set CSRF token cookie
+	s.csrf.SetToken(w, csrfToken)
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"token":         session.Token,
 		"refresh_token": session.RefreshToken,
 		"expires_at":    session.ExpiresAt,
 		"user":          user,
+		"csrf_token":    csrfToken,
 	})
 }
 
 // handleLogout handles logout requests.
 func (s *AuthService) handleLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Only POST method is allowed")
+		return
+	}
+
+	// Validate CSRF token
+	if err := s.csrf.ValidateToken(r); err != nil {
+		writeJSONError(w, http.StatusForbidden, "CSRF_INVALID", "CSRF validation failed")
+		return
+	}
+
 	token := extractToken(r)
 	if token == "" {
 		http.Error(w, "No token provided", http.StatusUnauthorized)
@@ -544,6 +569,12 @@ func (s *AuthService) handleUsers(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(users)
 
 	case http.MethodPost:
+		// Validate CSRF token for state-changing operation
+		if err := s.csrf.ValidateToken(r); err != nil {
+			writeJSONError(w, http.StatusForbidden, "CSRF_INVALID", "CSRF validation failed")
+			return
+		}
+
 		var user User
 		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
@@ -590,6 +621,12 @@ func (s *AuthService) handleTenants(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(tenants)
 
 	case http.MethodPost:
+		// Validate CSRF token for state-changing operation
+		if err := s.csrf.ValidateToken(r); err != nil {
+			writeJSONError(w, http.StatusForbidden, "CSRF_INVALID", "CSRF validation failed")
+			return
+		}
+
 		var tenant Tenant
 		if err := json.NewDecoder(r.Body).Decode(&tenant); err != nil {
 			http.Error(w, "Invalid request", http.StatusBadRequest)
