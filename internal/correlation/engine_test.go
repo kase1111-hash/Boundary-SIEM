@@ -111,13 +111,15 @@ func TestRule_Validate(t *testing.T) {
 		{
 			name: "valid threshold rule",
 			rule: Rule{
-				ID:      "test-1",
-				Name:    "Test Rule",
-				Type:    RuleTypeThreshold,
-				Enabled: true,
-				Window:  5 * time.Minute,
-				Conditions: []Condition{
-					{Field: "action", Operator: "eq", Value: "auth.failure"},
+				ID:       "test-1",
+				Name:     "Test Rule",
+				Type:     RuleTypeThreshold,
+				Enabled:  true,
+				Severity: 7,
+				Conditions: Conditions{
+					Match: []MatchCondition{
+						{Field: "action", Operator: "eq", Value: "auth.failure"},
+					},
 				},
 				Threshold: &ThresholdConfig{Count: 10, Operator: "gte"},
 			},
@@ -126,19 +128,8 @@ func TestRule_Validate(t *testing.T) {
 		{
 			name: "missing ID",
 			rule: Rule{
-				Name:   "Test Rule",
-				Type:   RuleTypeThreshold,
-				Window: 5 * time.Minute,
-				Threshold: &ThresholdConfig{Count: 10},
-			},
-			wantErr: true,
-		},
-		{
-			name: "missing window",
-			rule: Rule{
-				ID:   "test-1",
-				Name: "Test Rule",
-				Type: RuleTypeThreshold,
+				Name:      "Test Rule",
+				Type:      RuleTypeThreshold,
 				Threshold: &ThresholdConfig{Count: 10},
 			},
 			wantErr: true,
@@ -146,20 +137,18 @@ func TestRule_Validate(t *testing.T) {
 		{
 			name: "threshold rule without config",
 			rule: Rule{
-				ID:     "test-1",
-				Name:   "Test Rule",
-				Type:   RuleTypeThreshold,
-				Window: 5 * time.Minute,
+				ID:   "test-1",
+				Name: "Test Rule",
+				Type: RuleTypeThreshold,
 			},
 			wantErr: true,
 		},
 		{
 			name: "sequence rule with insufficient steps",
 			rule: Rule{
-				ID:     "test-1",
-				Name:   "Test Rule",
-				Type:   RuleTypeSequence,
-				Window: 5 * time.Minute,
+				ID:   "test-1",
+				Name: "Test Rule",
+				Type: RuleTypeSequence,
 				Sequence: &SequenceConfig{
 					Steps: []SequenceStep{
 						{Name: "step1"},
@@ -167,6 +156,22 @@ func TestRule_Validate(t *testing.T) {
 				},
 			},
 			wantErr: true,
+		},
+		{
+			name: "valid custom rule",
+			rule: Rule{
+				ID:       "test-custom",
+				Name:     "Custom Rule",
+				Type:     RuleTypeCustom,
+				Enabled:  true,
+				Severity: 5,
+				Conditions: Conditions{
+					Match: []MatchCondition{
+						{Field: "action", Operator: "eq", Value: "test"},
+					},
+				},
+			},
+			wantErr: false,
 		},
 	}
 
@@ -198,10 +203,12 @@ func TestEngine_ThresholdRule(t *testing.T) {
 		Name:     "Brute Force Detection",
 		Type:     RuleTypeThreshold,
 		Enabled:  true,
-		Severity: SeverityHigh,
+		Severity: 7,
 		Window:   1 * time.Minute,
-		Conditions: []Condition{
-			{Field: "action", Operator: "eq", Value: "auth.failure"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "eq", Value: "auth.failure"},
+			},
 		},
 		GroupBy: []string{"actor.ip"},
 		Threshold: &ThresholdConfig{
@@ -243,8 +250,8 @@ func TestEngine_ThresholdRule(t *testing.T) {
 		if alertReceived.RuleID != rule.ID {
 			t.Errorf("alert rule ID = %s, want %s", alertReceived.RuleID, rule.ID)
 		}
-		if alertReceived.Severity != SeverityHigh {
-			t.Errorf("alert severity = %s, want high", alertReceived.Severity)
+		if alertReceived.Severity != 7 {
+			t.Errorf("alert severity = %d, want 7", alertReceived.Severity)
 		}
 	}
 }
@@ -267,9 +274,11 @@ func TestEngine_NoAlertBelowThreshold(t *testing.T) {
 		Name:     "Test Threshold",
 		Type:     RuleTypeThreshold,
 		Enabled:  true,
-		Window:   1 * time.Minute,
-		Conditions: []Condition{
-			{Field: "action", Operator: "eq", Value: "auth.failure"},
+		Severity: 5,
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "eq", Value: "auth.failure"},
+			},
 		},
 		Threshold: &ThresholdConfig{
 			Count:    10,
@@ -322,9 +331,12 @@ func TestEngine_GroupBy(t *testing.T) {
 		Name:     "Grouped Threshold",
 		Type:     RuleTypeThreshold,
 		Enabled:  true,
+		Severity: 5,
 		Window:   1 * time.Minute,
-		Conditions: []Condition{
-			{Field: "action", Operator: "eq", Value: "auth.failure"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "eq", Value: "auth.failure"},
+			},
 		},
 		GroupBy: []string{"actor.ip"},
 		Threshold: &ThresholdConfig{
@@ -388,9 +400,11 @@ func TestEngine_Stats(t *testing.T) {
 		Name:     "Stats Test",
 		Type:     RuleTypeThreshold,
 		Enabled:  true,
-		Window:   1 * time.Minute,
-		Conditions: []Condition{
-			{Field: "action", Operator: "eq", Value: "test"},
+		Severity: 5,
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "eq", Value: "test"},
+			},
 		},
 		Threshold: &ThresholdConfig{Count: 5, Operator: "gte"},
 	}

@@ -1,7 +1,7 @@
 package rramodule
 
 import (
-	"boundary-siem/internal/core/schema"
+	"boundary-siem/internal/schema"
 	"fmt"
 	"time"
 

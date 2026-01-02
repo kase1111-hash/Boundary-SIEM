@@ -31,15 +31,18 @@ func BruteForceRule() *Rule {
 		Description: "Multiple failed login attempts from the same source",
 		Type:        RuleTypeThreshold,
 		Enabled:     true,
-		Severity:    SeverityHigh,
+		Severity:    7,
+		Category:    "Authentication",
 		Tags:        []string{"authentication", "attack", "brute-force"},
 		MITRE: &MITREMapping{
 			TacticID:    "TA0006",
 			TacticName:  "Credential Access",
 			TechniqueID: "T1110",
 		},
-		Conditions: []Condition{
-			{Field: "action", Operator: "eq", Value: "auth.failure"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "eq", Value: "auth.failure"},
+			},
 		},
 		GroupBy: []string{"actor.ip"},
 		Window:  5 * time.Minute,
@@ -58,15 +61,18 @@ func CredentialStuffingRule() *Rule {
 		Description: "Multiple failed logins for different users from same source",
 		Type:        RuleTypeAggregate,
 		Enabled:     true,
-		Severity:    SeverityHigh,
+		Severity:    7,
+		Category:    "Authentication",
 		Tags:        []string{"authentication", "attack", "credential-stuffing"},
 		MITRE: &MITREMapping{
 			TacticID:    "TA0006",
 			TacticName:  "Credential Access",
 			TechniqueID: "T1110.004",
 		},
-		Conditions: []Condition{
-			{Field: "action", Operator: "eq", Value: "auth.failure"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "eq", Value: "auth.failure"},
+			},
 		},
 		GroupBy: []string{"actor.ip"},
 		Window:  10 * time.Minute,
@@ -87,10 +93,13 @@ func AccountLockoutRule() *Rule {
 		Description: "Multiple accounts locked out in short period",
 		Type:        RuleTypeThreshold,
 		Enabled:     true,
-		Severity:    SeverityMedium,
+		Severity:    5,
+		Category:    "Authentication",
 		Tags:        []string{"authentication", "lockout"},
-		Conditions: []Condition{
-			{Field: "action", Operator: "eq", Value: "account.locked"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "eq", Value: "account.locked"},
+			},
 		},
 		GroupBy: []string{"tenant_id"},
 		Window:  15 * time.Minute,
@@ -109,10 +118,13 @@ func ValidatorMissedAttestationsRule() *Rule {
 		Description: "Validator has missed multiple attestations",
 		Type:        RuleTypeThreshold,
 		Enabled:     true,
-		Severity:    SeverityHigh,
+		Severity:    7,
+		Category:    "Blockchain",
 		Tags:        []string{"blockchain", "validator", "attestation"},
-		Conditions: []Condition{
-			{Field: "action", Operator: "eq", Value: "validator.attestation_missed"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "eq", Value: "validator.attestation_missed"},
+			},
 		},
 		GroupBy: []string{"metadata.validator_index"},
 		Window:  1 * time.Hour,
@@ -131,14 +143,17 @@ func SlashingRiskRule() *Rule {
 		Description: "Potential slashing condition detected for validator",
 		Type:        RuleTypeSequence,
 		Enabled:     true,
-		Severity:    SeverityCritical,
+		Severity:    10,
+		Category:    "Blockchain",
 		Tags:        []string{"blockchain", "validator", "slashing", "critical"},
 		MITRE: &MITREMapping{
 			TacticID:   "TA0040",
 			TacticName: "Impact",
 		},
-		Conditions: []Condition{
-			{Field: "source.product", Operator: "contains", Value: "validator"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "source.product", Operator: "contains", Value: "validator"},
+			},
 		},
 		GroupBy: []string{"metadata.validator_index"},
 		Window:  5 * time.Minute,
@@ -173,10 +188,13 @@ func LargeTransferRule() *Rule {
 		Description: "Unusually large token transfer detected",
 		Type:        RuleTypeAggregate,
 		Enabled:     true,
-		Severity:    SeverityMedium,
+		Severity:    5,
+		Category:    "Blockchain",
 		Tags:        []string{"blockchain", "transaction", "transfer"},
-		Conditions: []Condition{
-			{Field: "action", Operator: "eq", Value: "token.transfer"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "eq", Value: "token.transfer"},
+			},
 		},
 		GroupBy: []string{"metadata.token_address"},
 		Window:  1 * time.Hour,
@@ -197,10 +215,13 @@ func SuspiciousWithdrawalRule() *Rule {
 		Description: "Multiple withdrawals in short period",
 		Type:        RuleTypeThreshold,
 		Enabled:     true,
-		Severity:    SeverityHigh,
+		Severity:    7,
+		Category:    "Blockchain",
 		Tags:        []string{"blockchain", "withdrawal", "suspicious"},
-		Conditions: []Condition{
-			{Field: "action", Operator: "eq", Value: "funds.withdrawn"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "eq", Value: "funds.withdrawn"},
+			},
 		},
 		GroupBy: []string{"actor.id"},
 		Window:  15 * time.Minute,
@@ -219,15 +240,18 @@ func DDoSDetectionRule() *Rule {
 		Description: "High volume of requests from single source",
 		Type:        RuleTypeThreshold,
 		Enabled:     true,
-		Severity:    SeverityHigh,
+		Severity:    7,
+		Category:    "Infrastructure",
 		Tags:        []string{"infrastructure", "ddos", "network"},
 		MITRE: &MITREMapping{
 			TacticID:    "TA0040",
 			TacticName:  "Impact",
 			TechniqueID: "T1498",
 		},
-		Conditions: []Condition{
-			{Field: "action", Operator: "contains", Value: "request"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "contains", Value: "request"},
+			},
 		},
 		GroupBy: []string{"actor.ip"},
 		Window:  1 * time.Minute,
@@ -246,11 +270,14 @@ func RPCAbuseRule() *Rule {
 		Description: "Excessive RPC calls or sensitive method access",
 		Type:        RuleTypeThreshold,
 		Enabled:     true,
-		Severity:    SeverityMedium,
+		Severity:    5,
+		Category:    "Blockchain",
 		Tags:        []string{"blockchain", "rpc", "abuse"},
-		Conditions: []Condition{
-			{Field: "action", Operator: "contains", Value: "rpc."},
-			{Field: "outcome", Operator: "eq", Value: "failure"},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "contains", Value: "rpc."},
+				{Field: "outcome", Operator: "eq", Value: "failure"},
+			},
 		},
 		GroupBy: []string{"actor.ip"},
 		Window:  5 * time.Minute,
@@ -269,15 +296,18 @@ func UnauthorizedAccessRule() *Rule {
 		Description: "Multiple unauthorized access attempts detected",
 		Type:        RuleTypeThreshold,
 		Enabled:     true,
-		Severity:    SeverityHigh,
+		Severity:    7,
+		Category:    "Security",
 		Tags:        []string{"security", "access", "unauthorized"},
 		MITRE: &MITREMapping{
 			TacticID:    "TA0001",
 			TacticName:  "Initial Access",
 			TechniqueID: "T1190",
 		},
-		Conditions: []Condition{
-			{Field: "action", Operator: "in", Values: []string{"access.denied", "auth.unauthorized"}},
+		Conditions: Conditions{
+			Match: []MatchCondition{
+				{Field: "action", Operator: "in", Value: []string{"access.denied", "auth.unauthorized"}},
+			},
 		},
 		GroupBy: []string{"actor.ip"},
 		Window:  10 * time.Minute,

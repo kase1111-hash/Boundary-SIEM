@@ -1,7 +1,7 @@
 package mediatornode
 
 import (
-	"boundary-siem/internal/core/schema"
+	"boundary-siem/internal/schema"
 	"context"
 	"log"
 	"sync"

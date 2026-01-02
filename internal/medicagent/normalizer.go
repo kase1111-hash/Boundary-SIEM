@@ -12,10 +12,10 @@ import (
 // ActionMappings maps Medic-Agent events to canonical actions.
 var ActionMappings = map[string]string{
 	// Kill notification events
-	"kill.received":    "ma.kill.received",
-	"kill.processed":   "ma.kill.processed",
-	"kill.validated":   "ma.kill.validated",
-	"kill.rejected":    "ma.kill.rejected",
+	"kill.received":  "ma.kill.received",
+	"kill.processed": "ma.kill.processed",
+	"kill.validated": "ma.kill.validated",
+	"kill.rejected":  "ma.kill.rejected",
 
 	// Risk assessment events
 	"assessment.started":   "ma.assessment.started",
@@ -26,19 +26,19 @@ var ActionMappings = map[string]string{
 	"verdict.invalid":      "ma.verdict.invalid",
 
 	// Resurrection events
-	"resurrection.initiated":  "ma.resurrection.initiated",
-	"resurrection.approved":   "ma.resurrection.approved",
-	"resurrection.rejected":   "ma.resurrection.rejected",
-	"resurrection.completed":  "ma.resurrection.completed",
-	"resurrection.failed":     "ma.resurrection.failed",
+	"resurrection.initiated":   "ma.resurrection.initiated",
+	"resurrection.approved":    "ma.resurrection.approved",
+	"resurrection.rejected":    "ma.resurrection.rejected",
+	"resurrection.completed":   "ma.resurrection.completed",
+	"resurrection.failed":      "ma.resurrection.failed",
 	"resurrection.rolled_back": "ma.resurrection.rolled_back",
 
 	// Approval workflow events
-	"approval.requested":  "ma.approval.requested",
-	"approval.approved":   "ma.approval.approved",
-	"approval.rejected":   "ma.approval.rejected",
-	"approval.escalated":  "ma.approval.escalated",
-	"approval.timeout":    "ma.approval.timeout",
+	"approval.requested": "ma.approval.requested",
+	"approval.approved":  "ma.approval.approved",
+	"approval.rejected":  "ma.approval.rejected",
+	"approval.escalated": "ma.approval.escalated",
+	"approval.timeout":   "ma.approval.timeout",
 
 	// Anomaly events
 	"anomaly.kill_pattern":        "ma.anomaly.kill_pattern",
@@ -47,10 +47,10 @@ var ActionMappings = map[string]string{
 	"anomaly.detected":            "ma.anomaly.detected",
 
 	// Threshold events
-	"threshold.adjusted":  "ma.threshold.adjusted",
-	"threshold.auto":      "ma.threshold.auto_adjusted",
-	"threshold.manual":    "ma.threshold.manual_adjusted",
-	"threshold.policy":    "ma.threshold.policy_adjusted",
+	"threshold.adjusted": "ma.threshold.adjusted",
+	"threshold.auto":     "ma.threshold.auto_adjusted",
+	"threshold.manual":   "ma.threshold.manual_adjusted",
+	"threshold.policy":   "ma.threshold.policy_adjusted",
 
 	// Rollback events
 	"rollback.initiated": "ma.rollback.initiated",
@@ -67,15 +67,21 @@ var ActionMappings = map[string]string{
 
 // Normalizer converts Medic-Agent events to the canonical schema.
 type Normalizer struct {
-	source string
+	sourceProduct   string
+	sourceHost      string
+	defaultTenantID string
 }
 
 // NewNormalizer creates a new Medic-Agent normalizer.
-func NewNormalizer(source string) *Normalizer {
-	if source == "" {
-		source = "medic-agent"
+func NewNormalizer(sourceProduct, sourceHost, tenantID string) *Normalizer {
+	if sourceProduct == "" {
+		sourceProduct = "medic-agent"
 	}
-	return &Normalizer{source: source}
+	return &Normalizer{
+		sourceProduct:   sourceProduct,
+		sourceHost:      sourceHost,
+		defaultTenantID: tenantID,
+	}
 }
 
 // NormalizeKillNotification normalizes a kill notification event.
@@ -92,25 +98,35 @@ func (n *Normalizer) NormalizeKillNotification(k *KillNotification) (*schema.Eve
 	severity := n.mapSeverity(k.Severity)
 
 	event := &schema.Event{
-		EventID:   uuid.New().String(),
-		Timestamp: k.Timestamp,
-		Source:    n.source,
-		Action:    action,
-		Outcome:   "success",
-		Severity:  severity,
-		Actor: schema.Actor{
+		EventID:       uuid.New(),
+		Timestamp:     k.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: k.ID,
+		},
+
+		Action:   action,
+		Target:   fmt.Sprintf("process:%s", k.ProcessID),
+		Outcome:  schema.OutcomeSuccess,
+		Severity: severity,
+
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
 			ID:   k.SmithNodeID,
-			Type: "smith_node",
+			Name: "smith-node",
 		},
-		Target: schema.Target{
-			ID:   k.ProcessID,
-			Type: "process",
-			Name: k.ProcessName,
-		},
-		Metadata: map[string]interface{}{
-			"ma_kill_id":       k.ID,
-			"ma_kill_reason":   k.KillReason,
-			"ma_smith_node_id": k.SmithNodeID,
+
+		Metadata: map[string]any{
+			"ma_kill_id":        k.ID,
+			"ma_process_id":     k.ProcessID,
+			"ma_process_name":   k.ProcessName,
+			"ma_kill_reason":    k.KillReason,
+			"ma_smith_node_id":  k.SmithNodeID,
 			"ma_resource_usage": k.ResourceUsage,
 		},
 	}
@@ -133,21 +149,30 @@ func (n *Normalizer) NormalizeRiskAssessment(r *RiskAssessment) (*schema.Event, 
 	severity := n.riskScoreToSeverity(r.RiskScore)
 
 	event := &schema.Event{
-		EventID:   uuid.New().String(),
-		Timestamp: r.Timestamp,
-		Source:    n.source,
-		Action:    action,
-		Outcome:   "success",
-		Severity:  severity,
-		Actor: schema.Actor{
-			ID:   n.source,
-			Type: "medic_agent",
+		EventID:       uuid.New(),
+		Timestamp:     r.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: r.ID,
 		},
-		Target: schema.Target{
-			ID:   r.ProcessID,
-			Type: "process",
+
+		Action:   action,
+		Target:   fmt.Sprintf("process:%s", r.ProcessID),
+		Outcome:  schema.OutcomeSuccess,
+		Severity: severity,
+
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
+			ID:   n.sourceProduct,
+			Name: "medic-agent",
 		},
-		Metadata: map[string]interface{}{
+
+		Metadata: map[string]any{
 			"ma_assessment_id":      r.ID,
 			"ma_kill_id":            r.KillID,
 			"ma_risk_score":         r.RiskScore,
@@ -171,35 +196,44 @@ func (n *Normalizer) NormalizeResurrection(r *ResurrectionEvent) (*schema.Event,
 		action = "ma.resurrection." + r.Status
 	}
 
-	outcome := "success"
+	outcome := schema.OutcomeSuccess
 	severity := 5
 	if r.Status == "failed" || r.Status == "rolled_back" {
-		outcome = "failure"
+		outcome = schema.OutcomeFailure
 		severity = 7
 	} else if r.Status == "rejected" {
-		outcome = "denied"
+		outcome = schema.OutcomeFailure
 		severity = 6
 	}
 
 	event := &schema.Event{
-		EventID:   uuid.New().String(),
-		Timestamp: r.Timestamp,
-		Source:    n.source,
-		Action:    action,
-		Outcome:   outcome,
-		Severity:  severity,
-		Actor: schema.Actor{
-			ID:   n.source,
-			Type: "medic_agent",
+		EventID:       uuid.New(),
+		Timestamp:     r.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: r.ID,
 		},
-		Target: schema.Target{
-			ID:   r.ProcessID,
-			Type: "process",
-			Name: r.ProcessName,
+
+		Action:   action,
+		Target:   fmt.Sprintf("process:%s", r.ProcessID),
+		Outcome:  outcome,
+		Severity: severity,
+
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
+			ID:   n.sourceProduct,
+			Name: "medic-agent",
 		},
-		Metadata: map[string]interface{}{
+
+		Metadata: map[string]any{
 			"ma_resurrection_id":  r.ID,
 			"ma_kill_id":          r.KillID,
+			"ma_process_name":     r.ProcessName,
 			"ma_status":           r.Status,
 			"ma_resurrection_ttl": r.ResurrectionTTL,
 			"ma_attempts":         r.Attempts,
@@ -228,21 +262,30 @@ func (n *Normalizer) NormalizeAnomaly(a *AnomalyEvent) (*schema.Event, error) {
 	severity := n.mapSeverity(a.Severity)
 
 	event := &schema.Event{
-		EventID:   uuid.New().String(),
-		Timestamp: a.Timestamp,
-		Source:    n.source,
-		Action:    action,
-		Outcome:   "success",
-		Severity:  severity,
-		Actor: schema.Actor{
-			ID:   n.source,
-			Type: "medic_agent",
+		EventID:       uuid.New(),
+		Timestamp:     a.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: a.ID,
 		},
-		Target: schema.Target{
-			ID:   fmt.Sprintf("anomaly-%s", a.ID),
-			Type: "anomaly",
+
+		Action:   action,
+		Target:   fmt.Sprintf("anomaly:%s", a.ID),
+		Outcome:  schema.OutcomeSuccess,
+		Severity: severity,
+
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
+			ID:   n.sourceProduct,
+			Name: "medic-agent",
 		},
-		Metadata: map[string]interface{}{
+
+		Metadata: map[string]any{
 			"ma_anomaly_id":    a.ID,
 			"ma_anomaly_type":  a.Type,
 			"ma_description":   a.Description,
@@ -267,21 +310,30 @@ func (n *Normalizer) NormalizeThresholdAdjustment(t *ThresholdAdjustment) (*sche
 	}
 
 	event := &schema.Event{
-		EventID:   uuid.New().String(),
-		Timestamp: t.Timestamp,
-		Source:    n.source,
-		Action:    action,
-		Outcome:   "success",
-		Severity:  4,
-		Actor: schema.Actor{
+		EventID:       uuid.New(),
+		Timestamp:     t.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: t.ID,
+		},
+
+		Action:   action,
+		Target:   fmt.Sprintf("threshold:%s", t.ThresholdKey),
+		Outcome:  schema.OutcomeSuccess,
+		Severity: 4,
+
+		Actor: &schema.Actor{
+			Type: schema.ActorSystem,
 			ID:   t.Triggeredby,
-			Type: "threshold_trigger",
+			Name: t.Triggeredby,
 		},
-		Target: schema.Target{
-			ID:   t.ThresholdKey,
-			Type: "threshold",
-		},
-		Metadata: map[string]interface{}{
+
+		Metadata: map[string]any{
 			"ma_adjustment_id": t.ID,
 			"ma_threshold_key": t.ThresholdKey,
 			"ma_old_value":     t.OldValue,
@@ -306,29 +358,38 @@ func (n *Normalizer) NormalizeRollback(r *RollbackEvent) (*schema.Event, error) 
 		action = mapped
 	}
 
-	outcome := "success"
+	outcome := schema.OutcomeSuccess
 	severity := 6
 	if r.RollbackStatus == "failed" {
-		outcome = "failure"
+		outcome = schema.OutcomeFailure
 		severity = 8
 	}
 
 	event := &schema.Event{
-		EventID:   uuid.New().String(),
-		Timestamp: r.Timestamp,
-		Source:    n.source,
-		Action:    action,
-		Outcome:   outcome,
-		Severity:  severity,
-		Actor: schema.Actor{
+		EventID:       uuid.New(),
+		Timestamp:     r.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: r.ID,
+		},
+
+		Action:   action,
+		Target:   fmt.Sprintf("process:%s", r.ProcessID),
+		Outcome:  outcome,
+		Severity: severity,
+
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
 			ID:   r.InitiatedBy,
-			Type: "rollback_initiator",
+			Name: r.InitiatedBy,
 		},
-		Target: schema.Target{
-			ID:   r.ProcessID,
-			Type: "process",
-		},
-		Metadata: map[string]interface{}{
+
+		Metadata: map[string]any{
 			"ma_rollback_id":      r.ID,
 			"ma_resurrection_id":  r.ResurrectionID,
 			"ma_reason":           r.Reason,
@@ -355,34 +416,43 @@ func (n *Normalizer) NormalizeApproval(a *ApprovalWorkflowEvent) (*schema.Event,
 		action = "ma.approval." + a.Action
 	}
 
-	outcome := "success"
+	outcome := schema.OutcomeSuccess
 	severity := 4
 	if a.Action == "rejected" {
-		outcome = "denied"
+		outcome = schema.OutcomeFailure
 		severity = 5
 	} else if a.Action == "timeout" {
-		outcome = "failure"
+		outcome = schema.OutcomeFailure
 		severity = 6
 	} else if a.Action == "escalated" {
 		severity = 5
 	}
 
 	event := &schema.Event{
-		EventID:   uuid.New().String(),
-		Timestamp: a.Timestamp,
-		Source:    n.source,
-		Action:    action,
-		Outcome:   outcome,
-		Severity:  severity,
-		Actor: schema.Actor{
+		EventID:       uuid.New(),
+		Timestamp:     a.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: a.ID,
+		},
+
+		Action:   action,
+		Target:   fmt.Sprintf("resurrection:%s", a.ResurrectionID),
+		Outcome:  outcome,
+		Severity: severity,
+
+		Actor: &schema.Actor{
+			Type: schema.ActorUser,
 			ID:   a.Approver,
-			Type: "approver",
+			Name: a.Approver,
 		},
-		Target: schema.Target{
-			ID:   a.ResurrectionID,
-			Type: "resurrection",
-		},
-		Metadata: map[string]interface{}{
+
+		Metadata: map[string]any{
 			"ma_approval_id":      a.ID,
 			"ma_workflow_id":      a.WorkflowID,
 			"ma_resurrection_id":  a.ResurrectionID,
@@ -415,29 +485,38 @@ func (n *Normalizer) NormalizeSmithIntegration(s *SmithIntegrationEvent) (*schem
 		action = ActionMappings["smith.error"]
 	}
 
-	outcome := "success"
+	outcome := schema.OutcomeSuccess
 	severity := 3
 	if s.Status != "success" && s.Status != "ok" {
-		outcome = "failure"
+		outcome = schema.OutcomeFailure
 		severity = 6
 	}
 
 	event := &schema.Event{
-		EventID:   uuid.New().String(),
-		Timestamp: s.Timestamp,
-		Source:    n.source,
-		Action:    action,
-		Outcome:   outcome,
-		Severity:  severity,
-		Actor: schema.Actor{
+		EventID:       uuid.New(),
+		Timestamp:     s.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: s.ID,
+		},
+
+		Action:   action,
+		Target:   fmt.Sprintf("smith:%s", s.SmithNodeID),
+		Outcome:  outcome,
+		Severity: severity,
+
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
 			ID:   s.SmithNodeID,
-			Type: "smith_node",
+			Name: "smith-node",
 		},
-		Target: schema.Target{
-			ID:   n.source,
-			Type: "medic_agent",
-		},
-		Metadata: map[string]interface{}{
+
+		Metadata: map[string]any{
 			"ma_integration_id": s.ID,
 			"ma_event_type":     s.EventType,
 			"ma_smith_node_id":  s.SmithNodeID,

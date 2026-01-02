@@ -88,3 +88,6 @@ func (a ActorType) IsValid() bool {
 
 // SchemaVersionCurrent is the current version of the event schema.
 const SchemaVersionCurrent = "1.0.0"
+
+// CanonicalEvent is an alias for Event for backward compatibility.
+type CanonicalEvent = Event
