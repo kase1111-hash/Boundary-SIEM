@@ -53,6 +53,9 @@ type Engine struct {
 	keyVersion int
 	logger     *slog.Logger
 	mu         sync.RWMutex
+
+	// Key rotation support: map of version to key for backward compatibility
+	oldKeys    map[int][]byte
 }
 
 // NewEngine creates a new encryption engine.
@@ -91,6 +94,7 @@ func NewEngine(cfg *Config) (*Engine, error) {
 		masterKey:  derivedKey,
 		keyVersion: cfg.KeyVersion,
 		logger:     logger,
+		oldKeys:    make(map[int][]byte),
 	}, nil
 }
 
@@ -182,17 +186,30 @@ func (e *Engine) Decrypt(encodedCiphertext string) ([]byte, error) {
 
 	// Extract version
 	version := int(data[0])
-	if version != e.keyVersion {
-		// Key version mismatch - this supports key rotation
-		e.logger.Warn("key version mismatch",
-			"stored_version", version,
-			"current_version", e.keyVersion)
-		// In a production system, you would attempt decryption with the old key
-		// For now, we'll continue with the current key
+
+	// Select appropriate key for decryption
+	var decryptionKey []byte
+	if version == e.keyVersion {
+		decryptionKey = e.masterKey
+	} else {
+		// Try to use old key for backward compatibility
+		if oldKey, exists := e.oldKeys[version]; exists {
+			decryptionKey = oldKey
+			e.logger.Debug("using old key for decryption",
+				"stored_version", version,
+				"current_version", e.keyVersion)
+		} else {
+			e.logger.Warn("key version mismatch - no old key available",
+				"stored_version", version,
+				"current_version", e.keyVersion,
+				"available_old_versions", len(e.oldKeys))
+			// Fall back to current key (may fail if data was encrypted with different key)
+			decryptionKey = e.masterKey
+		}
 	}
 
-	// Create AES cipher block
-	block, err := aes.NewCipher(e.masterKey)
+	// Create AES cipher block with appropriate key
+	block, err := aes.NewCipher(decryptionKey)
 	if err != nil {
 		e.logger.Error("failed to create cipher block", "error", err)
 		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
@@ -244,8 +261,9 @@ func (e *Engine) DecryptString(ciphertext string) (string, error) {
 	return string(plaintext), nil
 }
 
-// RotateKey rotates the encryption key.
-// This re-encrypts data with a new key version.
+// RotateKey rotates the encryption key and stores the old key for backward compatibility.
+// This allows existing encrypted data to be decrypted while new data uses the new key.
+// Use ReEncrypt() to migrate existing data to the new key.
 func (e *Engine) RotateKey(newMasterKey []byte, newVersion int) error {
 	if !e.enabled {
 		return fmt.Errorf("encryption is not enabled")
@@ -255,20 +273,114 @@ func (e *Engine) RotateKey(newMasterKey []byte, newVersion int) error {
 		return fmt.Errorf("%w: new master key is required", ErrInvalidKey)
 	}
 
+	if newVersion <= e.keyVersion {
+		return fmt.Errorf("new version (%d) must be greater than current version (%d)", newVersion, e.keyVersion)
+	}
+
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	// Store current key as old key for backward compatibility
+	e.oldKeys[e.keyVersion] = e.masterKey
 
 	// Derive new key
 	derivedKey := deriveKey(newMasterKey)
 
-	// Update key and version
+	// Update to new key and version
+	oldVersion := e.keyVersion
 	e.masterKey = derivedKey
 	e.keyVersion = newVersion
 
 	e.logger.Info("encryption key rotated",
-		"new_version", newVersion)
+		"old_version", oldVersion,
+		"new_version", newVersion,
+		"old_keys_retained", len(e.oldKeys))
 
 	return nil
+}
+
+// ReEncrypt decrypts data with any available key and re-encrypts it with the current key.
+// This is used during key rotation to migrate data to the new encryption key.
+// Returns the re-encrypted data and true if re-encryption was performed, or the original
+// data and false if it was already encrypted with the current key version.
+func (e *Engine) ReEncrypt(encodedCiphertext string) (string, bool, error) {
+	if !e.enabled {
+		return encodedCiphertext, false, nil
+	}
+
+	if encodedCiphertext == "" {
+		return "", false, nil
+	}
+
+	// Decode to check version
+	data, err := base64.StdEncoding.DecodeString(encodedCiphertext)
+	if err != nil {
+		return "", false, fmt.Errorf("%w: invalid base64: %v", ErrInvalidCiphertext, err)
+	}
+
+	if len(data) < 29 {
+		return "", false, fmt.Errorf("%w: data too short", ErrInvalidCiphertext)
+	}
+
+	version := int(data[0])
+
+	// Already using current key version - no re-encryption needed
+	if version == e.keyVersion {
+		return encodedCiphertext, false, nil
+	}
+
+	// Decrypt with old key
+	plaintext, err := e.Decrypt(encodedCiphertext)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to decrypt during re-encryption: %w", err)
+	}
+
+	// Re-encrypt with current key
+	newCiphertext, err := e.Encrypt(plaintext)
+	if err != nil {
+		return "", false, fmt.Errorf("failed to encrypt during re-encryption: %w", err)
+	}
+
+	e.logger.Debug("re-encrypted data with new key",
+		"old_version", version,
+		"new_version", e.keyVersion)
+
+	return newCiphertext, true, nil
+}
+
+// GetKeyVersion returns the current encryption key version.
+func (e *Engine) GetKeyVersion() int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.keyVersion
+}
+
+// GetOldKeyVersions returns the list of old key versions still available for decryption.
+func (e *Engine) GetOldKeyVersions() []int {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	versions := make([]int, 0, len(e.oldKeys))
+	for v := range e.oldKeys {
+		versions = append(versions, v)
+	}
+	return versions
+}
+
+// PurgeOldKeys removes old keys from memory. Use with caution - this will make
+// data encrypted with old keys unrecoverable unless it has been re-encrypted.
+func (e *Engine) PurgeOldKeys() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	count := len(e.oldKeys)
+	e.oldKeys = make(map[int][]byte)
+
+	e.logger.Warn("purged old encryption keys",
+		"keys_removed", count,
+		"current_version", e.keyVersion)
+
+	return count
 }
 
 // EncryptedField represents an encrypted field with metadata.

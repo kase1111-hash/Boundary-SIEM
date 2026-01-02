@@ -1,0 +1,106 @@
+# Security-focused Makefile targets for Boundary-SIEM
+# Include this in your main Makefile with: include Makefile.security
+
+.PHONY: security-scan security-govulncheck security-gosec security-trivy security-nancy security-install-tools
+
+# Run all security scans
+security-scan: security-govulncheck security-gosec
+
+# Install security scanning tools
+security-install-tools:
+	@echo "Installing security scanning tools..."
+	go install golang.org/x/vuln/cmd/govulncheck@latest
+	go install github.com/securego/gosec/v2/cmd/gosec@latest
+	@echo "✅ Security tools installed"
+
+# Run govulncheck for Go vulnerability scanning
+security-govulncheck:
+	@echo "Running govulncheck..."
+	@command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found. Run 'make security-install-tools'"; exit 1; }
+	govulncheck ./...
+
+# Run govulncheck with JSON output
+security-govulncheck-json:
+	@echo "Running govulncheck (JSON output)..."
+	@command -v govulncheck >/dev/null 2>&1 || { echo "govulncheck not found. Run 'make security-install-tools'"; exit 1; }
+	@mkdir -p reports
+	govulncheck -json ./... > reports/govulncheck-$(shell date +%Y%m%d-%H%M%S).json
+	@echo "✅ Report saved to reports/"
+
+# Run gosec security scanner
+security-gosec:
+	@echo "Running gosec security scanner..."
+	@command -v gosec >/dev/null 2>&1 || { echo "gosec not found. Run 'make security-install-tools'"; exit 1; }
+	gosec -fmt=text ./...
+
+# Run gosec with detailed output
+security-gosec-full:
+	@echo "Running gosec security scanner (detailed)..."
+	@command -v gosec >/dev/null 2>&1 || { echo "gosec not found. Run 'make security-install-tools'"; exit 1; }
+	@mkdir -p reports
+	gosec -fmt=json -out=reports/gosec-$(shell date +%Y%m%d-%H%M%S).json ./...
+	gosec -fmt=html -out=reports/gosec-$(shell date +%Y%m%d-%H%M%S).html ./...
+	gosec -fmt=text ./...
+	@echo "✅ Reports saved to reports/"
+
+# Run Trivy scanner (if Docker is available)
+security-trivy:
+	@echo "Running Trivy scanner..."
+	@command -v docker >/dev/null 2>&1 || { echo "Docker not found. Skipping Trivy scan."; exit 0; }
+	@mkdir -p reports
+	docker run --rm -v $(PWD):/scan aquasec/trivy:latest fs --security-checks vuln,config,secret --format json --output /scan/reports/trivy-$(shell date +%Y%m%d-%H%M%S).json /scan
+	@echo "✅ Trivy scan complete"
+
+# Run Nancy for dependency checking
+security-nancy:
+	@echo "Running Nancy dependency checker..."
+	@mkdir -p reports
+	go list -json -deps ./... | docker run --rm -i sonatypecommunity/nancy:latest sleuth --output json > reports/nancy-$(shell date +%Y%m%d-%H%M%S).json || true
+	@echo "✅ Nancy scan complete"
+
+# Check for sensitive data in code
+security-check-secrets:
+	@echo "Checking for potential secrets in code..."
+	@echo "Searching for potential passwords..."
+	@! grep -rn --include="*.go" --exclude-dir=vendor --exclude-dir=.git "password.*=.*\"" . || echo "⚠️  Found potential hardcoded passwords"
+	@echo "Searching for potential API keys..."
+	@! grep -rn --include="*.go" --exclude-dir=vendor --exclude-dir=.git "api[_-]key.*=.*\"" . || echo "⚠️  Found potential hardcoded API keys"
+	@echo "Searching for potential tokens..."
+	@! grep -rn --include="*.go" --exclude-dir=vendor --exclude-dir=.git "token.*=.*\"" . || echo "⚠️  Found potential hardcoded tokens"
+	@echo "✅ Secret scan complete"
+
+# Generate security report
+security-report:
+	@echo "Generating security report..."
+	@mkdir -p reports
+	@echo "# Security Scan Report - $(shell date +%Y-%m-%d\ %H:%M:%S)" > reports/security-report.md
+	@echo "" >> reports/security-report.md
+	@echo "## Go Vulnerability Check (govulncheck)" >> reports/security-report.md
+	@govulncheck ./... >> reports/security-report.md 2>&1 || echo "Vulnerabilities found" >> reports/security-report.md
+	@echo "" >> reports/security-report.md
+	@echo "## Security Issues (gosec)" >> reports/security-report.md
+	@gosec -fmt=text ./... >> reports/security-report.md 2>&1 || echo "Issues found" >> reports/security-report.md
+	@echo "✅ Security report generated: reports/security-report.md"
+
+# Quick security check (fast scan for CI)
+security-quick:
+	@echo "Running quick security check..."
+	@govulncheck ./... || echo "⚠️  Vulnerabilities detected"
+	@gosec -quiet ./... || echo "⚠️  Security issues detected"
+	@echo "✅ Quick security check complete"
+
+# Help target
+security-help:
+	@echo "Boundary-SIEM Security Scanning Targets:"
+	@echo ""
+	@echo "  make security-install-tools  - Install required security tools"
+	@echo "  make security-scan          - Run all security scans"
+	@echo "  make security-govulncheck   - Check for Go vulnerabilities"
+	@echo "  make security-gosec         - Run gosec security scanner"
+	@echo "  make security-trivy         - Run Trivy container scanner"
+	@echo "  make security-nancy         - Check dependencies with Nancy"
+	@echo "  make security-check-secrets - Search for hardcoded secrets"
+	@echo "  make security-report        - Generate comprehensive security report"
+	@echo "  make security-quick         - Quick security check (for CI)"
+	@echo ""
+	@echo "Reports are saved to the reports/ directory"
