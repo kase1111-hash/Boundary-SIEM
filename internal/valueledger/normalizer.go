@@ -44,7 +44,7 @@ func (n *Normalizer) NormalizeLedgerEntry(entry *LedgerEntry) (*schema.Event, er
 		EventID:       uuid.New(),
 		Timestamp:     entry.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -94,7 +94,7 @@ func (n *Normalizer) NormalizeSecurityEvent(secEvent *SecurityEvent) (*schema.Ev
 		EventID:       uuid.New(),
 		Timestamp:     secEvent.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -151,7 +151,7 @@ func (n *Normalizer) NormalizeMerkleProof(proof *MerkleProof, agentID string) (*
 		EventID:       uuid.New(),
 		Timestamp:     proof.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{

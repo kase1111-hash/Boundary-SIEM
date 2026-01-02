@@ -44,7 +44,7 @@ func (n *Normalizer) NormalizeAlignment(alignment *Alignment) (*schema.Event, er
 		EventID:       uuid.New(),
 		Timestamp:     alignment.ProposedAt,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -88,7 +88,7 @@ func (n *Normalizer) NormalizeNegotiation(negotiation *NegotiationSession) (*sch
 		EventID:       uuid.New(),
 		Timestamp:     negotiation.StartedAt,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -141,7 +141,7 @@ func (n *Normalizer) NormalizeSettlement(settlement *Settlement) (*schema.Event,
 		EventID:       uuid.New(),
 		Timestamp:     settlement.SettledAt,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -180,7 +180,7 @@ func (n *Normalizer) NormalizeMediatorEvent(medEvent *MediatorEvent) (*schema.Ev
 		EventID:       uuid.New(),
 		Timestamp:     medEvent.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -229,7 +229,7 @@ func (n *Normalizer) NormalizeReputationEvent(repEvent *ReputationEvent) (*schem
 		EventID:       uuid.New(),
 		Timestamp:     repEvent.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -272,7 +272,7 @@ func (n *Normalizer) NormalizeFlagEvent(flagEvent *FlagEvent) (*schema.Event, er
 		EventID:       uuid.New(),
 		Timestamp:     flagEvent.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{

@@ -149,11 +149,12 @@ type AbsenceConfig struct {
 
 // CorrelationConfig defines cross-event correlation settings.
 type CorrelationConfig struct {
-	Type      string   `yaml:"type,omitempty"`       // threshold, sequence, etc.
-	Window    string   `yaml:"window,omitempty"`     // Duration string like "30m"
-	Threshold int      `yaml:"threshold,omitempty"`  // Threshold count
-	GroupBy   []string `yaml:"group_by,omitempty"`
-	MinHits   int      `yaml:"min_hits,omitempty"`
+	Type             string     `yaml:"type,omitempty"`              // threshold, sequence, absence, etc.
+	Window           string     `yaml:"window,omitempty"`            // Duration string like "30m"
+	Threshold        int        `yaml:"threshold,omitempty"`         // Threshold count
+	GroupBy          []string   `yaml:"group_by,omitempty"`
+	MinHits          int        `yaml:"min_hits,omitempty"`
+	AbsenceCondition *Condition `yaml:"absence_condition,omitempty"` // Condition that should be absent
 }
 
 // ActionConfig defines actions to take when rule fires.
