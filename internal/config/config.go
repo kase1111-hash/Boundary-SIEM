@@ -2,25 +2,33 @@
 package config
 
 import (
+	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"time"
+
+	"boundary-siem/internal/encryption"
+	"boundary-siem/internal/secrets"
 
 	"gopkg.in/yaml.v3"
 )
 
 // Config holds the complete application configuration.
 type Config struct {
-	Server     ServerConfig     `yaml:"server"`
-	Ingest     IngestConfig     `yaml:"ingest"`
-	Queue      QueueConfig      `yaml:"queue"`
-	Validation ValidationConfig `yaml:"validation"`
-	Auth       AuthConfig       `yaml:"auth"`
-	CORS       CORSConfig       `yaml:"cors"`
-	RateLimit  RateLimitConfig  `yaml:"rate_limit"`
-	Logging    LoggingConfig    `yaml:"logging"`
-	Storage    StorageConfig    `yaml:"storage"`
-	Consumer   ConsumerConfig   `yaml:"consumer"`
+	Server          ServerConfig          `yaml:"server"`
+	Ingest          IngestConfig          `yaml:"ingest"`
+	Queue           QueueConfig           `yaml:"queue"`
+	Validation      ValidationConfig      `yaml:"validation"`
+	Auth            AuthConfig            `yaml:"auth"`
+	CORS            CORSConfig            `yaml:"cors"`
+	RateLimit       RateLimitConfig       `yaml:"rate_limit"`
+	Logging         LoggingConfig         `yaml:"logging"`
+	Storage         StorageConfig         `yaml:"storage"`
+	Consumer        ConsumerConfig        `yaml:"consumer"`
+	Secrets         SecretsConfig         `yaml:"secrets"`
+	Encryption      EncryptionConfig      `yaml:"encryption"`
+	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers"`
 }
 
 // RateLimitConfig holds rate limiting settings.
@@ -181,6 +189,107 @@ type LoggingConfig struct {
 	Format string `yaml:"format"`
 }
 
+// SecretsConfig holds secrets management settings.
+type SecretsConfig struct {
+	// Provider selection (vault, env, file)
+	EnableVault bool `yaml:"enable_vault"`
+	EnableEnv   bool `yaml:"enable_env"`
+	EnableFile  bool `yaml:"enable_file"`
+
+	// Vault configuration
+	VaultAddress string        `yaml:"vault_address"`
+	VaultToken   string        `yaml:"vault_token"`
+	VaultPath    string        `yaml:"vault_path"`
+	VaultTimeout time.Duration `yaml:"vault_timeout"`
+
+	// File provider configuration
+	FileSecretsDir string `yaml:"file_secrets_dir"`
+
+	// Cache configuration
+	CacheTTL time.Duration `yaml:"cache_ttl"`
+}
+
+// EncryptionConfig holds encryption at rest settings.
+type EncryptionConfig struct {
+	// Enabled indicates if encryption at rest is enabled.
+	Enabled bool `yaml:"enabled"`
+
+	// KeySource specifies where to get the encryption key.
+	// Options: "env" (environment variable), "secret" (secrets manager), "file" (key file)
+	KeySource string `yaml:"key_source"`
+
+	// KeyName is the name/path of the encryption key.
+	// For "env": environment variable name (default: BOUNDARY_ENCRYPTION_KEY)
+	// For "secret": secret key name (default: ENCRYPTION_KEY)
+	// For "file": path to key file (default: /etc/boundary-siem/encryption.key)
+	KeyName string `yaml:"key_name"`
+
+	// KeyVersion is the version of the encryption key (for key rotation).
+	KeyVersion int `yaml:"key_version"`
+
+	// EncryptSessionData enables encryption for session data.
+	EncryptSessionData bool `yaml:"encrypt_session_data"`
+
+	// EncryptUserData enables encryption for sensitive user data.
+	EncryptUserData bool `yaml:"encrypt_user_data"`
+
+	// EncryptAPIKeys enables encryption for API keys.
+	EncryptAPIKeys bool `yaml:"encrypt_api_keys"`
+}
+
+// SecurityHeadersConfig holds security headers settings.
+type SecurityHeadersConfig struct {
+	// Enabled indicates if security headers are enabled.
+	Enabled bool `yaml:"enabled"`
+
+	// HSTS (HTTP Strict Transport Security)
+	HSTSEnabled           bool `yaml:"hsts_enabled"`
+	HSTSMaxAge            int  `yaml:"hsts_max_age"`
+	HSTSIncludeSubdomains bool `yaml:"hsts_include_subdomains"`
+	HSTSPreload           bool `yaml:"hsts_preload"`
+
+	// CSP (Content Security Policy)
+	CSPEnabled        bool     `yaml:"csp_enabled"`
+	CSPDefaultSrc     []string `yaml:"csp_default_src"`
+	CSPScriptSrc      []string `yaml:"csp_script_src"`
+	CSPStyleSrc       []string `yaml:"csp_style_src"`
+	CSPImgSrc         []string `yaml:"csp_img_src"`
+	CSPFontSrc        []string `yaml:"csp_font_src"`
+	CSPConnectSrc     []string `yaml:"csp_connect_src"`
+	CSPFrameAncestors []string `yaml:"csp_frame_ancestors"`
+	CSPReportOnly     bool     `yaml:"csp_report_only"`
+
+	// Frame Options
+	FrameOptionsEnabled bool   `yaml:"frame_options_enabled"`
+	FrameOptionsValue   string `yaml:"frame_options_value"`
+
+	// Content Type Options
+	ContentTypeOptionsEnabled bool `yaml:"content_type_options_enabled"`
+
+	// XSS Protection
+	XSSProtectionEnabled bool   `yaml:"xss_protection_enabled"`
+	XSSProtectionValue   string `yaml:"xss_protection_value"`
+
+	// Referrer Policy
+	ReferrerPolicyEnabled bool   `yaml:"referrer_policy_enabled"`
+	ReferrerPolicyValue   string `yaml:"referrer_policy_value"`
+
+	// Permissions Policy
+	PermissionsPolicyEnabled bool   `yaml:"permissions_policy_enabled"`
+	PermissionsPolicyValue   string `yaml:"permissions_policy_value"`
+
+	// Cross-Origin Policies
+	CrossOriginOpenerPolicyEnabled   bool   `yaml:"cross_origin_opener_policy_enabled"`
+	CrossOriginOpenerPolicyValue     string `yaml:"cross_origin_opener_policy_value"`
+	CrossOriginEmbedderPolicyEnabled bool   `yaml:"cross_origin_embedder_policy_enabled"`
+	CrossOriginEmbedderPolicyValue   string `yaml:"cross_origin_embedder_policy_value"`
+	CrossOriginResourcePolicyEnabled bool   `yaml:"cross_origin_resource_policy_enabled"`
+	CrossOriginResourcePolicyValue   string `yaml:"cross_origin_resource_policy_value"`
+
+	// Custom headers
+	CustomHeaders map[string]string `yaml:"custom_headers"`
+}
+
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
@@ -299,6 +408,58 @@ func DefaultConfig() *Config {
 			PollInterval: 10 * time.Millisecond,
 			ShutdownWait: 30 * time.Second,
 		},
+		Secrets: SecretsConfig{
+			EnableVault:    false,            // Vault disabled by default
+			EnableEnv:      true,             // Environment variables enabled by default
+			EnableFile:     false,            // File secrets disabled by default
+			VaultAddress:   "",               // Must be configured if Vault is enabled
+			VaultToken:     "",               // Must be configured if Vault is enabled
+			VaultPath:      "secret/boundary-siem", // Default Vault path
+			VaultTimeout:   10 * time.Second, // Vault request timeout
+			FileSecretsDir: "/etc/secrets",   // Default directory for file-based secrets
+			CacheTTL:       5 * time.Minute,  // Cache secrets for 5 minutes
+		},
+		Encryption: EncryptionConfig{
+			Enabled:            false,           // Encryption disabled by default
+			KeySource:          "env",           // Get key from environment by default
+			KeyName:            "BOUNDARY_ENCRYPTION_KEY", // Default env var name
+			KeyVersion:         1,               // Initial key version
+			EncryptSessionData: true,            // Encrypt sessions when enabled
+			EncryptUserData:    true,            // Encrypt user data when enabled
+			EncryptAPIKeys:     true,            // Encrypt API keys when enabled
+		},
+		SecurityHeaders: SecurityHeadersConfig{
+			Enabled:                   true,                               // Security headers enabled by default
+			HSTSEnabled:               true,                               // HSTS enabled
+			HSTSMaxAge:                31536000,                           // 1 year
+			HSTSIncludeSubdomains:     true,                               // Include subdomains
+			HSTSPreload:               false,                              // Preload requires manual submission
+			CSPEnabled:                true,                               // CSP enabled
+			CSPDefaultSrc:             []string{"'self'"},                 // Default to same origin
+			CSPScriptSrc:              []string{"'self'"},                 // Scripts from same origin only
+			CSPStyleSrc:               []string{"'self'", "'unsafe-inline'"}, // Styles with inline support
+			CSPImgSrc:                 []string{"'self'", "data:", "https:"}, // Images from self, data URIs, HTTPS
+			CSPFontSrc:                []string{"'self'"},                 // Fonts from same origin
+			CSPConnectSrc:             []string{"'self'"},                 // Connect to same origin
+			CSPFrameAncestors:         []string{"'none'"},                 // Prevent framing
+			CSPReportOnly:             false,                              // Enforce CSP
+			FrameOptionsEnabled:       true,                               // X-Frame-Options enabled
+			FrameOptionsValue:         "DENY",                             // Deny all framing
+			ContentTypeOptionsEnabled: true,                               // X-Content-Type-Options enabled
+			XSSProtectionEnabled:      true,                               // X-XSS-Protection enabled
+			XSSProtectionValue:        "1; mode=block",                    // Block XSS
+			ReferrerPolicyEnabled:     true,                               // Referrer-Policy enabled
+			ReferrerPolicyValue:       "strict-origin-when-cross-origin",  // Strict referrer
+			PermissionsPolicyEnabled:  true,                               // Permissions-Policy enabled
+			PermissionsPolicyValue:    "geolocation=(), microphone=(), camera=(), payment=(), usb=()", // Restrict features
+			CrossOriginOpenerPolicyEnabled:   true,           // COOP enabled
+			CrossOriginOpenerPolicyValue:     "same-origin",  // Same origin only
+			CrossOriginEmbedderPolicyEnabled: false,          // COEP disabled (can break integrations)
+			CrossOriginEmbedderPolicyValue:   "require-corp", // Require CORP
+			CrossOriginResourcePolicyEnabled: true,           // CORP enabled
+			CrossOriginResourcePolicyValue:   "same-origin",  // Same origin only
+			CustomHeaders:                     make(map[string]string), // No custom headers by default
+		},
 	}
 }
 
@@ -389,6 +550,69 @@ func (c *Config) applyEnvOverrides() {
 	if burst := os.Getenv("SIEM_RATELIMIT_BURST"); burst != "" {
 		fmt.Sscanf(burst, "%d", &c.RateLimit.BurstSize)
 	}
+
+	// Secrets management settings
+	if enabled := os.Getenv("SIEM_SECRETS_VAULT_ENABLED"); enabled == "true" {
+		c.Secrets.EnableVault = true
+	}
+
+	if addr := os.Getenv("VAULT_ADDR"); addr != "" {
+		c.Secrets.VaultAddress = addr
+	}
+
+	if token := os.Getenv("VAULT_TOKEN"); token != "" {
+		c.Secrets.VaultToken = token
+	}
+
+	if path := os.Getenv("VAULT_PATH"); path != "" {
+		c.Secrets.VaultPath = path
+	}
+
+	if enabled := os.Getenv("SIEM_SECRETS_FILE_ENABLED"); enabled == "true" {
+		c.Secrets.EnableFile = true
+	}
+
+	if dir := os.Getenv("SIEM_SECRETS_DIR"); dir != "" {
+		c.Secrets.FileSecretsDir = dir
+	}
+
+	// Encryption settings
+	if enabled := os.Getenv("SIEM_ENCRYPTION_ENABLED"); enabled == "true" {
+		c.Encryption.Enabled = true
+	}
+
+	if keySource := os.Getenv("SIEM_ENCRYPTION_KEY_SOURCE"); keySource != "" {
+		c.Encryption.KeySource = keySource
+	}
+
+	if keyName := os.Getenv("SIEM_ENCRYPTION_KEY_NAME"); keyName != "" {
+		c.Encryption.KeyName = keyName
+	}
+
+	if version := os.Getenv("SIEM_ENCRYPTION_KEY_VERSION"); version != "" {
+		fmt.Sscanf(version, "%d", &c.Encryption.KeyVersion)
+	}
+
+	// Security headers settings
+	if enabled := os.Getenv("SIEM_SECURITY_HEADERS_ENABLED"); enabled == "false" {
+		c.SecurityHeaders.Enabled = false
+	}
+
+	if enabled := os.Getenv("SIEM_HSTS_ENABLED"); enabled == "false" {
+		c.SecurityHeaders.HSTSEnabled = false
+	}
+
+	if maxAge := os.Getenv("SIEM_HSTS_MAX_AGE"); maxAge != "" {
+		fmt.Sscanf(maxAge, "%d", &c.SecurityHeaders.HSTSMaxAge)
+	}
+
+	if enabled := os.Getenv("SIEM_CSP_ENABLED"); enabled == "false" {
+		c.SecurityHeaders.CSPEnabled = false
+	}
+
+	if frameOptions := os.Getenv("SIEM_FRAME_OPTIONS"); frameOptions != "" {
+		c.SecurityHeaders.FrameOptionsValue = frameOptions
+	}
 }
 
 // splitAndTrim splits a string by separator and trims whitespace from each part.
@@ -449,6 +673,28 @@ func (c *Config) LoadAuthFromEnv() {
 	if os.Getenv("BOUNDARY_REQUIRE_PASSWORD_CHANGE") == "true" {
 		c.Auth.RequirePasswordChange = true
 	}
+}
+
+// LoadAuthFromSecrets loads authentication configuration from the secrets manager.
+// This method should be called after LoadAuthFromEnv() to allow secrets manager
+// to override environment variables when configured.
+func (c *Config) LoadAuthFromSecrets(ctx context.Context, mgr *secrets.Manager) error {
+	// Try to get admin username from secrets
+	if username, err := mgr.Get(ctx, "ADMIN_USERNAME"); err == nil {
+		c.Auth.DefaultAdminUsername = username
+	}
+
+	// Try to get admin password from secrets
+	if password, err := mgr.Get(ctx, "ADMIN_PASSWORD"); err == nil {
+		c.Auth.DefaultAdminPassword = password
+	}
+
+	// Try to get admin email from secrets
+	if email, err := mgr.Get(ctx, "ADMIN_EMAIL"); err == nil {
+		c.Auth.DefaultAdminEmail = email
+	}
+
+	return nil
 }
 
 // Validate validates the configuration.
@@ -515,4 +761,134 @@ func ValidatePasswordStrength(password string) error {
 	}
 
 	return nil
+}
+
+// NewSecretsManager creates a secrets manager from the configuration.
+func (c *Config) NewSecretsManager() (*secrets.Manager, error) {
+	secretsCfg := &secrets.Config{
+		EnableVault:  c.Secrets.EnableVault,
+		EnableEnv:    c.Secrets.EnableEnv,
+		EnableFile:   c.Secrets.EnableFile,
+		VaultAddress: c.Secrets.VaultAddress,
+		VaultToken:   c.Secrets.VaultToken,
+		VaultPath:    c.Secrets.VaultPath,
+		CacheTTL:     c.Secrets.CacheTTL,
+	}
+
+	return secrets.NewManager(secretsCfg)
+}
+
+// GetSecret retrieves a secret using the secrets manager.
+// This is a convenience method that creates a temporary secrets manager.
+// For better performance, create a long-lived secrets manager instead.
+func (c *Config) GetSecret(ctx context.Context, key string) (string, error) {
+	mgr, err := c.NewSecretsManager()
+	if err != nil {
+		return "", fmt.Errorf("failed to create secrets manager: %w", err)
+	}
+	defer mgr.Close()
+
+	return mgr.Get(ctx, key)
+}
+
+// GetSecretWithDefault retrieves a secret or returns a default value.
+func (c *Config) GetSecretWithDefault(ctx context.Context, key, defaultValue string) string {
+	value, err := c.GetSecret(ctx, key)
+	if err != nil {
+		return defaultValue
+	}
+	return value
+}
+
+// NewEncryptionEngine creates an encryption engine from the configuration.
+func (c *Config) NewEncryptionEngine(ctx context.Context) (*encryption.Engine, error) {
+	if !c.Encryption.Enabled {
+		// Return disabled engine
+		return encryption.NewEngine(&encryption.Config{
+			Enabled: false,
+		})
+	}
+
+	// Get encryption key based on key source
+	var keyBytes []byte
+	var err error
+
+	switch c.Encryption.KeySource {
+	case "env":
+		// Get key from environment variable
+		keyName := c.Encryption.KeyName
+		if keyName == "" {
+			keyName = "BOUNDARY_ENCRYPTION_KEY"
+		}
+		keyStr := os.Getenv(keyName)
+		if keyStr == "" {
+			return nil, fmt.Errorf("encryption key not found in environment variable %s", keyName)
+		}
+		// Decode from base64
+		keyBytes, err = base64.StdEncoding.DecodeString(keyStr)
+		if err != nil {
+			// Try using as raw string
+			keyBytes = []byte(keyStr)
+		}
+
+	case "secret":
+		// Get key from secrets manager
+		mgr, err := c.NewSecretsManager()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create secrets manager: %w", err)
+		}
+		defer mgr.Close()
+
+		keyName := c.Encryption.KeyName
+		if keyName == "" {
+			keyName = "ENCRYPTION_KEY"
+		}
+
+		keyStr, err := mgr.Get(ctx, keyName)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get encryption key from secrets manager: %w", err)
+		}
+
+		// Decode from base64
+		keyBytes, err = base64.StdEncoding.DecodeString(keyStr)
+		if err != nil {
+			// Try using as raw string
+			keyBytes = []byte(keyStr)
+		}
+
+	case "file":
+		// Get key from file
+		keyPath := c.Encryption.KeyName
+		if keyPath == "" {
+			keyPath = "/etc/boundary-siem/encryption.key"
+		}
+
+		keyData, err := os.ReadFile(keyPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read encryption key file %s: %w", keyPath, err)
+		}
+
+		// Try to decode from base64
+		keyBytes, err = base64.StdEncoding.DecodeString(string(keyData))
+		if err != nil {
+			// Use raw bytes
+			keyBytes = keyData
+		}
+
+	default:
+		return nil, fmt.Errorf("invalid key source: %s (must be 'env', 'secret', or 'file')", c.Encryption.KeySource)
+	}
+
+	// Create encryption engine
+	return encryption.NewEngine(&encryption.Config{
+		Enabled:    true,
+		MasterKey:  keyBytes,
+		KeyVersion: c.Encryption.KeyVersion,
+	})
+}
+
+// GenerateEncryptionKey generates a new encryption key and returns it as base64.
+// This is a helper for initial setup and key rotation.
+func GenerateEncryptionKey() (string, error) {
+	return encryption.GenerateKeyBase64()
 }

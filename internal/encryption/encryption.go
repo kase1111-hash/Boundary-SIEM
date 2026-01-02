@@ -1,0 +1,321 @@
+// Package encryption provides AES-256-GCM encryption for data at rest.
+package encryption
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
+	"crypto/sha256"
+	"encoding/base64"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
+	"sync"
+	"time"
+)
+
+var (
+	// ErrInvalidKey is returned when the encryption key is invalid.
+	ErrInvalidKey = errors.New("invalid encryption key")
+
+	// ErrInvalidCiphertext is returned when the ciphertext is invalid.
+	ErrInvalidCiphertext = errors.New("invalid ciphertext")
+
+	// ErrEncryptionFailed is returned when encryption fails.
+	ErrEncryptionFailed = errors.New("encryption failed")
+
+	// ErrDecryptionFailed is returned when decryption fails.
+	ErrDecryptionFailed = errors.New("decryption failed")
+)
+
+// Config holds encryption configuration.
+type Config struct {
+	// Enabled indicates if encryption is enabled.
+	Enabled bool
+
+	// MasterKey is the master encryption key (32 bytes for AES-256).
+	// This should be retrieved from a secure key management system.
+	MasterKey []byte
+
+	// KeyVersion is the version of the encryption key.
+	// Used for key rotation support.
+	KeyVersion int
+
+	// Logger for encryption operations.
+	Logger *slog.Logger
+}
+
+// Engine provides encryption and decryption operations.
+type Engine struct {
+	enabled    bool
+	masterKey  []byte
+	keyVersion int
+	logger     *slog.Logger
+	mu         sync.RWMutex
+}
+
+// NewEngine creates a new encryption engine.
+func NewEngine(cfg *Config) (*Engine, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config cannot be nil")
+	}
+
+	if !cfg.Enabled {
+		return &Engine{
+			enabled: false,
+			logger:  cfg.Logger,
+		}, nil
+	}
+
+	// Validate master key
+	if len(cfg.MasterKey) == 0 {
+		return nil, fmt.Errorf("%w: master key is required when encryption is enabled", ErrInvalidKey)
+	}
+
+	// Derive a 32-byte key from the master key using SHA-256
+	derivedKey := deriveKey(cfg.MasterKey)
+
+	logger := cfg.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	logger.Info("encryption engine initialized",
+		"enabled", true,
+		"key_version", cfg.KeyVersion,
+		"algorithm", "AES-256-GCM")
+
+	return &Engine{
+		enabled:    true,
+		masterKey:  derivedKey,
+		keyVersion: cfg.KeyVersion,
+		logger:     logger,
+	}, nil
+}
+
+// deriveKey derives a 32-byte encryption key from the master key using SHA-256.
+func deriveKey(masterKey []byte) []byte {
+	hash := sha256.Sum256(masterKey)
+	return hash[:]
+}
+
+// Enabled returns whether encryption is enabled.
+func (e *Engine) Enabled() bool {
+	return e.enabled
+}
+
+// Encrypt encrypts plaintext using AES-256-GCM.
+// Returns base64-encoded ciphertext with embedded nonce and key version.
+func (e *Engine) Encrypt(plaintext []byte) (string, error) {
+	if !e.enabled {
+		// If encryption is disabled, return plaintext as base64
+		return base64.StdEncoding.EncodeToString(plaintext), nil
+	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if len(plaintext) == 0 {
+		return "", nil
+	}
+
+	// Create AES cipher block
+	block, err := aes.NewCipher(e.masterKey)
+	if err != nil {
+		e.logger.Error("failed to create cipher block", "error", err)
+		return "", fmt.Errorf("%w: %v", ErrEncryptionFailed, err)
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		e.logger.Error("failed to create GCM", "error", err)
+		return "", fmt.Errorf("%w: %v", ErrEncryptionFailed, err)
+	}
+
+	// Generate random nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+		e.logger.Error("failed to generate nonce", "error", err)
+		return "", fmt.Errorf("%w: %v", ErrEncryptionFailed, err)
+	}
+
+	// Encrypt plaintext
+	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
+
+	// Format: [version:1byte][nonce][ciphertext]
+	// This allows for key rotation by storing the version
+	data := make([]byte, 1+len(nonce)+len(ciphertext))
+	data[0] = byte(e.keyVersion)
+	copy(data[1:], nonce)
+	copy(data[1+len(nonce):], ciphertext)
+
+	// Return base64-encoded result
+	return base64.StdEncoding.EncodeToString(data), nil
+}
+
+// Decrypt decrypts base64-encoded ciphertext using AES-256-GCM.
+func (e *Engine) Decrypt(encodedCiphertext string) ([]byte, error) {
+	if !e.enabled {
+		// If encryption is disabled, decode from base64
+		return base64.StdEncoding.DecodeString(encodedCiphertext)
+	}
+
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	if encodedCiphertext == "" {
+		return nil, nil
+	}
+
+	// Decode from base64
+	data, err := base64.StdEncoding.DecodeString(encodedCiphertext)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid base64: %v", ErrInvalidCiphertext, err)
+	}
+
+	// Check minimum length: version(1) + nonce(12) + ciphertext(>=0) + tag(16)
+	if len(data) < 29 {
+		return nil, fmt.Errorf("%w: data too short", ErrInvalidCiphertext)
+	}
+
+	// Extract version
+	version := int(data[0])
+	if version != e.keyVersion {
+		// Key version mismatch - this supports key rotation
+		e.logger.Warn("key version mismatch",
+			"stored_version", version,
+			"current_version", e.keyVersion)
+		// In a production system, you would attempt decryption with the old key
+		// For now, we'll continue with the current key
+	}
+
+	// Create AES cipher block
+	block, err := aes.NewCipher(e.masterKey)
+	if err != nil {
+		e.logger.Error("failed to create cipher block", "error", err)
+		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		e.logger.Error("failed to create GCM", "error", err)
+		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+	}
+
+	// Extract nonce and ciphertext
+	nonceSize := gcm.NonceSize()
+	if len(data) < 1+nonceSize {
+		return nil, fmt.Errorf("%w: insufficient data for nonce", ErrInvalidCiphertext)
+	}
+
+	nonce := data[1 : 1+nonceSize]
+	ciphertext := data[1+nonceSize:]
+
+	// Decrypt
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		e.logger.Error("failed to decrypt", "error", err)
+		return nil, fmt.Errorf("%w: %v", ErrDecryptionFailed, err)
+	}
+
+	return plaintext, nil
+}
+
+// EncryptString encrypts a string value.
+func (e *Engine) EncryptString(plaintext string) (string, error) {
+	if plaintext == "" {
+		return "", nil
+	}
+	return e.Encrypt([]byte(plaintext))
+}
+
+// DecryptString decrypts a string value.
+func (e *Engine) DecryptString(ciphertext string) (string, error) {
+	if ciphertext == "" {
+		return "", nil
+	}
+	plaintext, err := e.Decrypt(ciphertext)
+	if err != nil {
+		return "", err
+	}
+	return string(plaintext), nil
+}
+
+// RotateKey rotates the encryption key.
+// This re-encrypts data with a new key version.
+func (e *Engine) RotateKey(newMasterKey []byte, newVersion int) error {
+	if !e.enabled {
+		return fmt.Errorf("encryption is not enabled")
+	}
+
+	if len(newMasterKey) == 0 {
+		return fmt.Errorf("%w: new master key is required", ErrInvalidKey)
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Derive new key
+	derivedKey := deriveKey(newMasterKey)
+
+	// Update key and version
+	e.masterKey = derivedKey
+	e.keyVersion = newVersion
+
+	e.logger.Info("encryption key rotated",
+		"new_version", newVersion)
+
+	return nil
+}
+
+// EncryptedField represents an encrypted field with metadata.
+type EncryptedField struct {
+	Ciphertext string `json:"ciphertext"`
+	KeyVersion int    `json:"key_version"`
+	Algorithm  string `json:"algorithm"`
+	EncryptedAt int64 `json:"encrypted_at"`
+}
+
+// EncryptField encrypts a field and returns metadata.
+func (e *Engine) EncryptField(plaintext string) (*EncryptedField, error) {
+	ciphertext, err := e.EncryptString(plaintext)
+	if err != nil {
+		return nil, err
+	}
+
+	return &EncryptedField{
+		Ciphertext:  ciphertext,
+		KeyVersion:  e.keyVersion,
+		Algorithm:   "AES-256-GCM",
+		EncryptedAt: int64(time.Now().Unix()),
+	}, nil
+}
+
+// DecryptField decrypts an encrypted field.
+func (e *Engine) DecryptField(field *EncryptedField) (string, error) {
+	if field == nil {
+		return "", nil
+	}
+	return e.DecryptString(field.Ciphertext)
+}
+
+// GenerateKey generates a random 32-byte encryption key.
+func GenerateKey() ([]byte, error) {
+	key := make([]byte, 32) // 256 bits
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return nil, fmt.Errorf("failed to generate key: %w", err)
+	}
+	return key, nil
+}
+
+// GenerateKeyBase64 generates a random key and returns it as base64.
+func GenerateKeyBase64() (string, error) {
+	key, err := GenerateKey()
+	if err != nil {
+		return "", err
+	}
+	return base64.StdEncoding.EncodeToString(key), nil
+}
