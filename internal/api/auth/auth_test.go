@@ -12,6 +12,44 @@ import (
 	"time"
 )
 
+// Test password constant for testing
+const testAdminPassword = "Admin@123!Test"
+
+// newTestAuthService creates an AuthService with a known password for testing.
+func newTestAuthService(logger *slog.Logger) *AuthService {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	}
+
+	storage := NewMemorySessionStorage()
+	svc := &AuthService{
+		users:          make(map[string]*User),
+		sessionStorage: storage,
+		csrf:           NewCSRFProtection(DefaultCSRFConfig()),
+		tenants:        make(map[string]*Tenant),
+		auditLog:       make([]*AuditLogEntry, 0),
+		oauthConfigs:   make(map[string]*OAuthConfig),
+		samlConfigs:    make(map[string]*SAMLConfig),
+		rolePerms:      initRolePermissions(),
+		logger:         logger,
+	}
+	svc.initDefaultTenant()
+
+	// Initialize with known test password
+	adminConfig := &AdminConfig{
+		Username:              "admin",
+		Password:              testAdminPassword,
+		Email:                 "admin@boundary-siem.local",
+		RequirePasswordChange: false,
+	}
+
+	if err := svc.initDefaultUsers(adminConfig); err != nil {
+		panic("failed to initialize test admin user: " + err.Error())
+	}
+
+	return svc
+}
+
 // TestNewAuthService tests the creation of a new auth service.
 func TestNewAuthService(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
@@ -49,10 +87,10 @@ func TestNewAuthService(t *testing.T) {
 // TestAuthenticate_Success tests successful authentication.
 func TestAuthenticate_Success(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	// Authenticate with default admin credentials
-	user, err := svc.Authenticate("admin", "Admin@123!", "default")
+	user, err := svc.Authenticate("admin", "Admin@123!Test", "default")
 	if err != nil {
 		t.Fatalf("expected successful authentication, got error: %v", err)
 	}
@@ -75,7 +113,7 @@ func TestAuthenticate_Success(t *testing.T) {
 // TestAuthenticate_InvalidPassword tests authentication with wrong password.
 func TestAuthenticate_InvalidPassword(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	user, err := svc.Authenticate("admin", "wrongpassword", "default")
 	if err == nil {
@@ -101,7 +139,7 @@ func TestAuthenticate_InvalidPassword(t *testing.T) {
 // TestAuthenticate_UserNotFound tests authentication with non-existent user.
 func TestAuthenticate_UserNotFound(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	user, err := svc.Authenticate("nonexistent", "password", "default")
 	if err == nil {
@@ -120,7 +158,7 @@ func TestAuthenticate_UserNotFound(t *testing.T) {
 // TestAuthenticate_EmptyCredentials tests authentication with empty credentials.
 func TestAuthenticate_EmptyCredentials(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	tests := []struct {
 		name     string
@@ -149,7 +187,7 @@ func TestAuthenticate_EmptyCredentials(t *testing.T) {
 // TestAuthenticate_AccountLockout tests account lockout after failed attempts.
 func TestAuthenticate_AccountLockout(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	// Make 5 failed login attempts
 	for i := 0; i < maxFailedAttempts; i++ {
@@ -160,7 +198,7 @@ func TestAuthenticate_AccountLockout(t *testing.T) {
 	}
 
 	// Verify account is now locked
-	user, err := svc.Authenticate("admin", "Admin@123!", "default")
+	user, err := svc.Authenticate("admin", "Admin@123!Test", "default")
 	if err != ErrAccountLocked {
 		t.Fatalf("expected ErrAccountLocked, got %v", err)
 	}
@@ -181,7 +219,7 @@ func TestAuthenticate_AccountLockout(t *testing.T) {
 // TestAuthenticate_AccountLockoutExpiry tests that lockout expires.
 func TestAuthenticate_AccountLockoutExpiry(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	// Lock the account
 	for i := 0; i < maxFailedAttempts; i++ {
@@ -194,7 +232,7 @@ func TestAuthenticate_AccountLockoutExpiry(t *testing.T) {
 	admin.LockedUntil = &pastTime
 
 	// Should now be able to authenticate
-	user, err := svc.Authenticate("admin", "Admin@123!", "default")
+	user, err := svc.Authenticate("admin", "Admin@123!Test", "default")
 	if err != nil {
 		t.Fatalf("expected successful authentication after lockout expiry, got error: %v", err)
 	}
@@ -214,13 +252,13 @@ func TestAuthenticate_AccountLockoutExpiry(t *testing.T) {
 // TestAuthenticate_DisabledUser tests authentication for disabled user.
 func TestAuthenticate_DisabledUser(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	// Disable the admin user
 	admin, _ := svc.GetUserByUsername("admin")
 	admin.Disabled = true
 
-	user, err := svc.Authenticate("admin", "Admin@123!", "default")
+	user, err := svc.Authenticate("admin", "Admin@123!Test", "default")
 	if err != ErrUserDisabled {
 		t.Errorf("expected ErrUserDisabled, got %v", err)
 	}
@@ -232,9 +270,9 @@ func TestAuthenticate_DisabledUser(t *testing.T) {
 // TestAuthenticate_TenantMismatch tests authentication with wrong tenant.
 func TestAuthenticate_TenantMismatch(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
-	user, err := svc.Authenticate("admin", "Admin@123!", "wrong-tenant")
+	user, err := svc.Authenticate("admin", "Admin@123!Test", "wrong-tenant")
 	if err != ErrTenantMismatch {
 		t.Errorf("expected ErrTenantMismatch, got %v", err)
 	}
@@ -246,7 +284,7 @@ func TestAuthenticate_TenantMismatch(t *testing.T) {
 // TestAuthenticate_TimingAttackResistance tests timing attack prevention.
 func TestAuthenticate_TimingAttackResistance(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	// Run multiple iterations to get average timing
 	const iterations = 5
@@ -297,7 +335,7 @@ func TestValidatePassword(t *testing.T) {
 		{"no lowercase", "TEST@123", true, "at least one lowercase letter"},
 		{"no digit", "Test@abc", true, "at least one digit"},
 		{"no special", "Test1234", true, "at least one special character"},
-		{"all requirements", "Admin@123!", false, ""},
+		{"all requirements", "Admin@123!Test", false, ""},
 	}
 
 	for _, tt := range tests {
@@ -357,9 +395,9 @@ func TestHashPassword(t *testing.T) {
 // TestCreateSession tests session creation.
 func TestCreateSession(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
-	user, _ := svc.Authenticate("admin", "Admin@123!", "default")
+	user, _ := svc.Authenticate("admin", "Admin@123!Test", "default")
 
 	req := httptest.NewRequest("POST", "/api/auth/login", nil)
 	req.RemoteAddr = "192.168.1.100:12345"
@@ -403,9 +441,9 @@ func TestCreateSession(t *testing.T) {
 // TestValidateSession tests session validation.
 func TestValidateSession(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
-	user, _ := svc.Authenticate("admin", "Admin@123!", "default")
+	user, _ := svc.Authenticate("admin", "Admin@123!Test", "default")
 	req := httptest.NewRequest("POST", "/api/auth/login", nil)
 	session, _ := svc.CreateSession(user, req)
 
@@ -438,7 +476,7 @@ func TestValidateSession(t *testing.T) {
 // TestHasPermission tests permission checking.
 func TestHasPermission(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	admin, _ := svc.GetUserByUsername("admin")
 
@@ -472,7 +510,7 @@ func TestHasPermission(t *testing.T) {
 // TestRolePermissions tests that roles have correct permissions.
 func TestRolePermissions(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	tests := []struct {
 		role       Role
@@ -524,7 +562,7 @@ func TestRolePermissions(t *testing.T) {
 // TestCreateUser tests user creation.
 func TestCreateUser(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	passwordHash, _ := HashPassword("Test@123")
 	newUser := &User{
@@ -575,7 +613,7 @@ func TestCreateUser(t *testing.T) {
 // TestCreateTenant tests tenant creation.
 func TestCreateTenant(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	tenant := &Tenant{
 		ID:          "tenant-123",
@@ -620,7 +658,7 @@ func TestCreateTenant(t *testing.T) {
 // TestHandleLogin tests the login HTTP handler.
 func TestHandleLogin(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	tests := []struct {
 		name       string
@@ -634,7 +672,7 @@ func TestHandleLogin(t *testing.T) {
 			method: "POST",
 			body: map[string]string{
 				"username": "admin",
-				"password": "Admin@123!",
+				"password": "Admin@123!Test",
 			},
 			wantStatus: http.StatusOK,
 			wantToken:  true,
@@ -703,10 +741,10 @@ func TestHandleLogin(t *testing.T) {
 // TestHandleLogout tests the logout HTTP handler.
 func TestHandleLogout(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	// Create a session
-	user, _ := svc.Authenticate("admin", "Admin@123!", "default")
+	user, _ := svc.Authenticate("admin", "Admin@123!Test", "default")
 	req := httptest.NewRequest("POST", "/api/auth/login", nil)
 	session, _ := svc.CreateSession(user, req)
 
@@ -757,7 +795,7 @@ func TestHandleLogout(t *testing.T) {
 // TestMiddleware tests the authentication middleware.
 func TestMiddleware(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	// Create a test handler
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -772,7 +810,7 @@ func TestMiddleware(t *testing.T) {
 	handler := svc.Middleware(testHandler)
 
 	// Create a session
-	user, _ := svc.Authenticate("admin", "Admin@123!", "default")
+	user, _ := svc.Authenticate("admin", "Admin@123!Test", "default")
 	loginReq := httptest.NewRequest("POST", "/api/test", nil)
 	session, _ := svc.CreateSession(user, loginReq)
 
@@ -812,7 +850,7 @@ func TestMiddleware(t *testing.T) {
 // TestRequirePermission tests the permission middleware.
 func TestRequirePermission(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	// Create a test handler
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -963,7 +1001,7 @@ func TestIsPublicEndpoint(t *testing.T) {
 // TestAuditLogging tests that audit events are logged.
 func TestAuditLogging(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	// Test failed login via HTTP handler (which logs audit events)
 	failedLoginBody, _ := json.Marshal(map[string]string{
@@ -978,7 +1016,7 @@ func TestAuditLogging(t *testing.T) {
 	// Test successful login via HTTP handler
 	successLoginBody, _ := json.Marshal(map[string]string{
 		"username": "admin",
-		"password": "Admin@123!",
+		"password": "Admin@123!Test",
 	})
 	req2 := httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(successLoginBody))
 	req2.Header.Set("Content-Type", "application/json")
@@ -1015,7 +1053,7 @@ func TestAuditLogging(t *testing.T) {
 // TestAuditLogRetention tests audit log size limit.
 func TestAuditLogRetention(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	req := httptest.NewRequest("POST", "/api/test", nil)
 
@@ -1036,7 +1074,7 @@ func TestAuditLogRetention(t *testing.T) {
 // TestMultiTenancyIsolation tests that users can't access other tenants.
 func TestMultiTenancyIsolation(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
-	svc := NewAuthService(logger)
+	svc := newTestAuthService(logger)
 
 	// Create second tenant
 	tenant2 := &Tenant{

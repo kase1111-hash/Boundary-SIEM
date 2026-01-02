@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -67,23 +68,24 @@ const (
 
 // User represents an authenticated user.
 type User struct {
-	ID           string            `json:"id"`
-	Username     string            `json:"username"`
-	Email        string            `json:"email"`
-	DisplayName  string            `json:"display_name"`
-	PasswordHash string            `json:"-"` // Never expose in JSON
-	Roles        []Role            `json:"roles"`
-	Permissions  []Permission      `json:"permissions"`
-	TenantID     string            `json:"tenant_id"`
-	Provider     AuthProvider      `json:"provider"`
-	ProviderID   string            `json:"provider_id,omitempty"`
-	Metadata     map[string]string `json:"metadata,omitempty"`
-	CreatedAt    time.Time         `json:"created_at"`
-	LastLoginAt  time.Time         `json:"last_login_at"`
-	Disabled     bool              `json:"disabled"`
-	MFAEnabled   bool              `json:"mfa_enabled"`
-	FailedLogins int               `json:"-"` // Track failed login attempts
-	LockedUntil  *time.Time        `json:"-"` // Account lockout time
+	ID                    string            `json:"id"`
+	Username              string            `json:"username"`
+	Email                 string            `json:"email"`
+	DisplayName           string            `json:"display_name"`
+	PasswordHash          string            `json:"-"` // Never expose in JSON
+	Roles                 []Role            `json:"roles"`
+	Permissions           []Permission      `json:"permissions"`
+	TenantID              string            `json:"tenant_id"`
+	Provider              AuthProvider      `json:"provider"`
+	ProviderID            string            `json:"provider_id,omitempty"`
+	Metadata              map[string]string `json:"metadata,omitempty"`
+	CreatedAt             time.Time         `json:"created_at"`
+	LastLoginAt           time.Time         `json:"last_login_at"`
+	Disabled              bool              `json:"disabled"`
+	MFAEnabled            bool              `json:"mfa_enabled"`
+	FailedLogins          int               `json:"-"` // Track failed login attempts
+	LockedUntil           *time.Time        `json:"-"` // Account lockout time
+	RequirePasswordChange bool              `json:"require_password_change"` // Force password change on next login
 }
 
 // Tenant represents an organization/tenant for multi-tenancy.
@@ -260,7 +262,13 @@ func NewAuthServiceWithStorage(logger *slog.Logger, sessionStorage SessionStorag
 		logger:         logger,
 	}
 	svc.initDefaultTenant()
-	svc.initDefaultUsers()
+
+	// Initialize default admin user with environment-based or random credentials
+	if err := svc.initDefaultUsers(nil); err != nil {
+		logger.Error("failed to initialize default admin user", "error", err)
+		// Continue initialization but log the error
+	}
+
 	return svc
 }
 
@@ -325,36 +333,133 @@ func (s *AuthService) initDefaultTenant() {
 	}
 }
 
-// initDefaultUsers creates default system users.
-// IMPORTANT: Change the default admin password immediately after first login!
-func (s *AuthService) initDefaultUsers() {
+// AdminConfig holds configuration for the default admin user.
+type AdminConfig struct {
+	Username              string
+	Password              string
+	Email                 string
+	RequirePasswordChange bool
+}
+
+// initDefaultUsers creates default system users using provided configuration.
+// Credentials should be provided via environment variables or configuration file.
+func (s *AuthService) initDefaultUsers(config *AdminConfig) error {
 	now := time.Now()
 
-	// Default admin password: "Admin@123!" - MUST be changed on first login
-	// Pre-computed bcrypt hash for "Admin@123!" with cost 12
-	defaultAdminHash, err := bcrypt.GenerateFromPassword([]byte("Admin@123!"), bcryptCost)
+	// Use provided config or fallback to environment variables
+	if config == nil {
+		config = &AdminConfig{}
+	}
+
+	// Set defaults if not provided
+	if config.Username == "" {
+		config.Username = "admin"
+	}
+	if config.Email == "" {
+		config.Email = "admin@boundary-siem.local"
+	}
+
+	// Handle password: prefer config, fallback to env var, or generate random
+	password := config.Password
+	if password == "" {
+		// Check environment variable
+		password = os.Getenv("BOUNDARY_ADMIN_PASSWORD")
+	}
+
+	var requirePasswordChange bool
+	if password == "" {
+		// No password provided - generate a secure random one
+		var err error
+		password, err = generateSecurePassword(24)
+		if err != nil {
+			return fmt.Errorf("failed to generate secure password: %w", err)
+		}
+		requirePasswordChange = true
+
+		// Log the generated password ONCE during initialization
+		s.logger.Warn("SECURITY: Generated random admin password - SAVE THIS PASSWORD",
+			"username", config.Username,
+			"password", password,
+			"action_required", "Change password immediately after first login")
+	} else {
+		// Validate provided password strength
+		if err := validatePasswordStrength(password); err != nil {
+			return fmt.Errorf("admin password validation failed: %w", err)
+		}
+		requirePasswordChange = config.RequirePasswordChange
+	}
+
+	// Hash the password
+	passwordHash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptCost)
 	if err != nil {
-		s.logger.Error("failed to hash default admin password", "error", err)
-		return
+		return fmt.Errorf("failed to hash admin password: %w", err)
 	}
 
-	s.users["admin"] = &User{
-		ID:           "admin",
-		Username:     "admin",
-		Email:        "admin@boundary-siem.local",
-		DisplayName:  "System Administrator",
-		PasswordHash: string(defaultAdminHash),
-		Roles:        []Role{RoleAdmin},
-		Permissions:  s.rolePerms[RoleAdmin],
-		TenantID:     "default",
-		Provider:     AuthProviderLocal,
-		CreatedAt:    now,
-		LastLoginAt:  now,
+	s.users[config.Username] = &User{
+		ID:                    config.Username,
+		Username:              config.Username,
+		Email:                 config.Email,
+		DisplayName:           "System Administrator",
+		PasswordHash:          string(passwordHash),
+		Roles:                 []Role{RoleAdmin},
+		Permissions:           s.rolePerms[RoleAdmin],
+		TenantID:              "default",
+		Provider:              AuthProviderLocal,
+		CreatedAt:             now,
+		LastLoginAt:           now,
+		RequirePasswordChange: requirePasswordChange,
 	}
 
-	s.logger.Warn("default admin user created with default password - CHANGE IMMEDIATELY",
-		"username", "admin",
-		"password_hint", "[REDACTED - see documentation for default credentials]")
+	if !requirePasswordChange && password != "" {
+		s.logger.Info("default admin user created",
+			"username", config.Username,
+			"email", config.Email,
+			"password_source", "configuration")
+	}
+
+	return nil
+}
+
+// validatePasswordStrength validates password meets security requirements.
+func validatePasswordStrength(password string) error {
+	if len(password) < 12 {
+		return fmt.Errorf("password must be at least 12 characters")
+	}
+
+	var (
+		hasUpper   bool
+		hasLower   bool
+		hasDigit   bool
+		hasSpecial bool
+	)
+
+	for _, char := range password {
+		switch {
+		case char >= 'A' && char <= 'Z':
+			hasUpper = true
+		case char >= 'a' && char <= 'z':
+			hasLower = true
+		case char >= '0' && char <= '9':
+			hasDigit = true
+		case char >= '!' && char <= '/' || char >= ':' && char <= '@' || char >= '[' && char <= '`' || char >= '{' && char <= '~':
+			hasSpecial = true
+		}
+	}
+
+	if !hasUpper {
+		return fmt.Errorf("password must contain at least one uppercase letter")
+	}
+	if !hasLower {
+		return fmt.Errorf("password must contain at least one lowercase letter")
+	}
+	if !hasDigit {
+		return fmt.Errorf("password must contain at least one digit")
+	}
+	if !hasSpecial {
+		return fmt.Errorf("password must contain at least one special character")
+	}
+
+	return nil
 }
 
 // RegisterRoutes registers auth API routes.
@@ -1095,6 +1200,65 @@ func generateToken() (string, error) {
 	}
 	hash := sha256.Sum256(b)
 	return base64.URLEncoding.EncodeToString(hash[:]), nil
+}
+
+// generateSecurePassword generates a cryptographically secure random password.
+// The password will contain uppercase, lowercase, digits, and special characters.
+func generateSecurePassword(length int) (string, error) {
+	if length < 12 {
+		length = 24 // Default to 24 characters for strong security
+	}
+
+	const (
+		upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		lowerChars   = "abcdefghijklmnopqrstuvwxyz"
+		digitChars   = "0123456789"
+		specialChars = "!@#$%^&*()-_=+[]{}|;:,.<>?"
+		allChars     = upperChars + lowerChars + digitChars + specialChars
+	)
+
+	// Ensure at least one character from each category
+	password := make([]byte, length)
+
+	// Add one of each required type
+	password[0] = upperChars[randInt(len(upperChars))]
+	password[1] = lowerChars[randInt(len(lowerChars))]
+	password[2] = digitChars[randInt(len(digitChars))]
+	password[3] = specialChars[randInt(len(specialChars))]
+
+	// Fill the rest with random characters from all categories
+	for i := 4; i < length; i++ {
+		password[i] = allChars[randInt(len(allChars))]
+	}
+
+	// Shuffle the password to avoid predictable patterns
+	for i := length - 1; i > 0; i-- {
+		j := randInt(i + 1)
+		password[i], password[j] = password[j], password[i]
+	}
+
+	return string(password), nil
+}
+
+// randInt returns a cryptographically secure random integer in [0, max).
+func randInt(max int) int {
+	if max <= 0 {
+		return 0
+	}
+
+	// Calculate how many bits we need
+	nBig := make([]byte, 4)
+	_, err := rand.Read(nBig)
+	if err != nil {
+		return 0
+	}
+
+	n := int(nBig[0]) | int(nBig[1])<<8 | int(nBig[2])<<16 | int(nBig[3])<<24
+	if n < 0 {
+		n = -n
+	}
+
+	return n % max
 }
 
 func getClientIP(r *http.Request) string {

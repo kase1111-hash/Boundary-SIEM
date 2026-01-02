@@ -144,7 +144,59 @@ retention:
 logging:
   level: info
   format: json
+
+auth:
+  # Admin credentials configuration
+  default_admin_username: "admin"
+  default_admin_password: ""  # REQUIRED: Set via env var or config
+  default_admin_email: "admin@boundary-siem.local"
+  require_password_change: true
 ```
+
+### Security Configuration
+
+**⚠️ IMPORTANT: Admin Credentials**
+
+For security, the default admin password is **no longer hardcoded**. You must configure it using one of these methods:
+
+#### Method 1: Environment Variables (Recommended)
+```bash
+export BOUNDARY_ADMIN_PASSWORD='YourSecureP@ssw0rd123!'
+export BOUNDARY_ADMIN_EMAIL='admin@yourdomain.com'
+export BOUNDARY_REQUIRE_PASSWORD_CHANGE='true'
+```
+
+#### Method 2: Configuration File
+```yaml
+auth:
+  default_admin_username: "admin"
+  default_admin_password: "YourSecureP@ssw0rd123!"
+  default_admin_email: "admin@yourdomain.com"
+  require_password_change: true
+```
+
+#### Method 3: Auto-Generated (Development Only)
+If no password is configured, the system will generate a secure random password and log it **once** during startup:
+
+```
+SECURITY: Generated random admin password - SAVE THIS PASSWORD
+username=admin password=<random-24-char-password>
+action_required="Change password immediately after first login"
+```
+
+**Password Requirements:**
+- Minimum 12 characters
+- At least one uppercase letter
+- At least one lowercase letter
+- At least one digit
+- At least one special character (!@#$%^&*()etc.)
+
+**Security Best Practices:**
+1. Never commit passwords to version control
+2. Use environment variables or secret management systems (Vault, AWS Secrets Manager)
+3. Enable `require_password_change` to force password change on first login
+4. Change auto-generated passwords immediately after first login
+5. Use strong, unique passwords for production deployments
 
 ### Sending Events
 
