@@ -11,6 +11,7 @@ Boundary SIEM implements defense-in-depth security controls across multiple laye
 3. **External Integration** - Secure syslog forwarding to external SIEM
 4. **Container Security** - Isolation and hardening for containerized deployments
 5. **Hardware Security** - TPM 2.0 integration for key storage
+6. **Automated Security Scanning** - CI/CD integration with gosec and govulncheck
 
 ---
 
@@ -343,6 +344,93 @@ When TPM is unavailable:
 
 ---
 
+## 6. Automated Security Scanning
+
+### Location
+`.github/workflows/security.yml` and `Makefile`
+
+### Tools
+
+| Tool | Purpose | Integration |
+|------|---------|-------------|
+| [gosec](https://github.com/securego/gosec) | Go source code security analyzer | CI + Local |
+| [govulncheck](https://pkg.go.dev/golang.org/x/vuln/cmd/govulncheck) | Go dependency vulnerability scanner | CI + Local |
+| [golangci-lint](https://golangci-lint.run/) | Go linters aggregator | CI + Local |
+
+### CI/CD Integration
+
+#### GitHub Actions Workflows
+
+**ci.yml** - Runs on every push and PR:
+- Linting with `go vet` and `golangci-lint`
+- Security scanning with `gosec`
+- Race-condition testing with `-race` flag
+- Coverage reporting
+
+**security.yml** - Enhanced security scanning:
+- Daily scheduled scans
+- SARIF output for GitHub Security tab
+- Dependency vulnerability checks with `govulncheck`
+- Dependency review for PRs
+
+### Local Security Scanning
+
+```bash
+# Run gosec security scanner
+make security
+
+# Generate detailed security reports (JSON + HTML)
+make security-report
+
+# Run all CI checks locally (lint, security, test)
+make ci
+```
+
+### Installing Security Tools
+
+```bash
+# Install gosec
+go install github.com/securego/gosec/v2/cmd/gosec@latest
+
+# Install govulncheck
+go install golang.org/x/vuln/cmd/govulncheck@latest
+
+# Install golangci-lint
+go install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
+```
+
+### Gosec Rules
+
+Gosec checks for common security issues:
+
+| Rule ID | Description |
+|---------|-------------|
+| G101 | Hardcoded credentials |
+| G102 | Bind to all interfaces |
+| G103 | Audit unsafe block usage |
+| G104 | Audit errors not checked |
+| G107 | URL provided to HTTP request as taint input |
+| G201 | SQL query construction using format string |
+| G202 | SQL query construction using string concatenation |
+| G203 | Use of unescaped data in HTML templates |
+| G301 | Poor file permissions on directory creation |
+| G304 | File path provided as taint input |
+| G401 | Detect use of DES, RC4, MD5, SHA1 |
+| G501 | Import blocklist: net/http/cgi |
+
+### Security Report Output
+
+```bash
+# Generate HTML report for review
+make security-report
+
+# Reports generated:
+# - security-report.json (machine-readable)
+# - security-report.html (human-readable)
+```
+
+---
+
 ## Security Best Practices
 
 ### Deployment Checklist
@@ -357,6 +445,9 @@ When TPM is unavailable:
 - [ ] Set up log rotation with appropriate retention
 - [ ] Regularly verify audit log chain integrity
 - [ ] Monitor for privilege escalation attempts
+- [ ] Run `make security` before deployments
+- [ ] Configure CI/CD security scanning workflows
+- [ ] Review security reports regularly
 
 ### Threat Model
 
@@ -431,3 +522,4 @@ curl localhost:8080/metrics | grep syslog_buffer
 | 1.0.0 | 2024-01 | Initial security features |
 | 1.1.0 | 2024-01 | Added TPM 2.0 support |
 | 1.2.0 | 2024-01 | Container isolation improvements |
+| 1.3.0 | 2026-01 | Added CI/CD security scanning (gosec, govulncheck) |
