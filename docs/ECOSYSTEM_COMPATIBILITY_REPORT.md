@@ -1,7 +1,7 @@
 # Ecosystem Compatibility Report
 
 **Date:** 2026-01-02
-**Version:** 3.0 (Extended with full 12-repo integration support)
+**Version:** 3.1 (Extended with full 13-repo integration support)
 **Branch:** `claude/test-repo-integration-LrmtS`
 
 ---
@@ -13,11 +13,11 @@ Analysis of all 16 repositories under [github.com/kase1111-hash](https://github.
 | Category | Count | Status |
 |----------|-------|--------|
 | **Fully Integrated (Agent-OS)** | 11 | Production-ready with detection rules |
-| **Fully Integrated (Extended)** | 4 | New game/blockchain integrations |
+| **Fully Integrated (Extended)** | 5 | New game/blockchain/resilience integrations |
 | **Compatible** | 1 | Uses standard API endpoints |
 
-**Total Detection Rules:** 270+ across all integrations
-**Total Integrated Repositories:** 15 (12 unique ecosystem systems + boundary-daemon + games)
+**Total Detection Rules:** 290+ across all integrations
+**Total Integrated Repositories:** 16 (13 unique ecosystem systems + boundary-daemon + games)
 
 ---
 
@@ -368,6 +368,32 @@ The following repositories have been fully integrated with dedicated client, nor
 
 ---
 
+### 4.5 Medic-Agent
+
+| Aspect | Details |
+|--------|---------|
+| **Status** | PRODUCTION-READY |
+| **Integration Type** | HTTP API polling |
+| **Package** | `internal/medicagent/` |
+| **Detection Rules** | 20 rules (MA-001 to MA-020) |
+
+**Event Categories:** Kill notifications, Risk assessments, Resurrection workflows, Anomaly detection, Threshold adjustments, Rollbacks, Approval workflows, Smith integration
+
+**Key Logged Events:**
+| Action | Description |
+|--------|-------------|
+| `ma.kill.*` | Kill notifications from Smith |
+| `ma.assessment.*` | Risk assessment and verdicts |
+| `ma.verdict.*` | Legitimacy verdicts (legitimate, suspicious, invalid) |
+| `ma.resurrection.*` | Resurrection workflow states |
+| `ma.anomaly.*` | Kill pattern, resurrection abuse detection |
+| `ma.threshold.*` | Dynamic threshold adjustments |
+| `ma.rollback.*` | Resurrection rollback events |
+| `ma.approval.*` | Approval workflow actions |
+| `ma.smith.*` | Smith event bus integration |
+
+---
+
 ## 5. Architecture Overview
 
 ```
@@ -465,6 +491,7 @@ valueledger:
 | **Midnight-pulse** | 9000 |
 | **Long-Home** | 9100 |
 | **Shredsquatch** | 9200 |
+| **Medic-Agent** | 9300 |
 
 ---
 
@@ -485,10 +512,11 @@ valueledger:
 | **Midnight-pulse** | MP- | 15 | Sessions, crashes, anti-cheat |
 | **Long-Home** | LH- | 15 | State, physics, save integrity |
 | **Shredsquatch** | SS- | 15 | Runs, tricks, leaderboard integrity |
+| **Medic-Agent** | MA- | 20 | Kill monitoring, resurrections, anomalies |
 | Ecosystem | ECO- | 26 | Cross-system correlation |
 | Blockchain | Various | 80+ | Validator, DeFi, infrastructure |
 
-**Grand Total: 270+ detection rules**
+**Grand Total: 290+ detection rules**
 
 ---
 
@@ -518,6 +546,8 @@ valueledger:
   - State transitions, fatal events, slides, ropes, physics anomalies
 - [x] **Shredsquatch**: Full client, normalizer, ingester, 15 rules
   - Runs, tricks, input anomalies, leaderboard, Sasquatch AI, collisions
+- [x] **Medic-Agent**: Full client, normalizer, ingester, 20 rules
+  - Kill notifications, risk assessments, resurrections, anomalies, rollbacks, approvals
 
 ### Cross-System Detection
 
@@ -537,4 +567,4 @@ All integrations are configured to log important information by default:
 
 ---
 
-*Report updated with 12-repo integration support (version 3.0).*
+*Report updated with 13-repo integration support (version 3.1).*
