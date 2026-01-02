@@ -16,18 +16,19 @@ import (
 
 // Config holds the complete application configuration.
 type Config struct {
-	Server     ServerConfig      `yaml:"server"`
-	Ingest     IngestConfig      `yaml:"ingest"`
-	Queue      QueueConfig       `yaml:"queue"`
-	Validation ValidationConfig  `yaml:"validation"`
-	Auth       AuthConfig        `yaml:"auth"`
-	CORS       CORSConfig        `yaml:"cors"`
-	RateLimit  RateLimitConfig   `yaml:"rate_limit"`
-	Logging    LoggingConfig     `yaml:"logging"`
-	Storage    StorageConfig     `yaml:"storage"`
-	Consumer   ConsumerConfig    `yaml:"consumer"`
-	Secrets    SecretsConfig     `yaml:"secrets"`
-	Encryption EncryptionConfig  `yaml:"encryption"`
+	Server          ServerConfig          `yaml:"server"`
+	Ingest          IngestConfig          `yaml:"ingest"`
+	Queue           QueueConfig           `yaml:"queue"`
+	Validation      ValidationConfig      `yaml:"validation"`
+	Auth            AuthConfig            `yaml:"auth"`
+	CORS            CORSConfig            `yaml:"cors"`
+	RateLimit       RateLimitConfig       `yaml:"rate_limit"`
+	Logging         LoggingConfig         `yaml:"logging"`
+	Storage         StorageConfig         `yaml:"storage"`
+	Consumer        ConsumerConfig        `yaml:"consumer"`
+	Secrets         SecretsConfig         `yaml:"secrets"`
+	Encryption      EncryptionConfig      `yaml:"encryption"`
+	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers"`
 }
 
 // RateLimitConfig holds rate limiting settings.
@@ -236,6 +237,59 @@ type EncryptionConfig struct {
 	EncryptAPIKeys bool `yaml:"encrypt_api_keys"`
 }
 
+// SecurityHeadersConfig holds security headers settings.
+type SecurityHeadersConfig struct {
+	// Enabled indicates if security headers are enabled.
+	Enabled bool `yaml:"enabled"`
+
+	// HSTS (HTTP Strict Transport Security)
+	HSTSEnabled           bool `yaml:"hsts_enabled"`
+	HSTSMaxAge            int  `yaml:"hsts_max_age"`
+	HSTSIncludeSubdomains bool `yaml:"hsts_include_subdomains"`
+	HSTSPreload           bool `yaml:"hsts_preload"`
+
+	// CSP (Content Security Policy)
+	CSPEnabled        bool     `yaml:"csp_enabled"`
+	CSPDefaultSrc     []string `yaml:"csp_default_src"`
+	CSPScriptSrc      []string `yaml:"csp_script_src"`
+	CSPStyleSrc       []string `yaml:"csp_style_src"`
+	CSPImgSrc         []string `yaml:"csp_img_src"`
+	CSPFontSrc        []string `yaml:"csp_font_src"`
+	CSPConnectSrc     []string `yaml:"csp_connect_src"`
+	CSPFrameAncestors []string `yaml:"csp_frame_ancestors"`
+	CSPReportOnly     bool     `yaml:"csp_report_only"`
+
+	// Frame Options
+	FrameOptionsEnabled bool   `yaml:"frame_options_enabled"`
+	FrameOptionsValue   string `yaml:"frame_options_value"`
+
+	// Content Type Options
+	ContentTypeOptionsEnabled bool `yaml:"content_type_options_enabled"`
+
+	// XSS Protection
+	XSSProtectionEnabled bool   `yaml:"xss_protection_enabled"`
+	XSSProtectionValue   string `yaml:"xss_protection_value"`
+
+	// Referrer Policy
+	ReferrerPolicyEnabled bool   `yaml:"referrer_policy_enabled"`
+	ReferrerPolicyValue   string `yaml:"referrer_policy_value"`
+
+	// Permissions Policy
+	PermissionsPolicyEnabled bool   `yaml:"permissions_policy_enabled"`
+	PermissionsPolicyValue   string `yaml:"permissions_policy_value"`
+
+	// Cross-Origin Policies
+	CrossOriginOpenerPolicyEnabled   bool   `yaml:"cross_origin_opener_policy_enabled"`
+	CrossOriginOpenerPolicyValue     string `yaml:"cross_origin_opener_policy_value"`
+	CrossOriginEmbedderPolicyEnabled bool   `yaml:"cross_origin_embedder_policy_enabled"`
+	CrossOriginEmbedderPolicyValue   string `yaml:"cross_origin_embedder_policy_value"`
+	CrossOriginResourcePolicyEnabled bool   `yaml:"cross_origin_resource_policy_enabled"`
+	CrossOriginResourcePolicyValue   string `yaml:"cross_origin_resource_policy_value"`
+
+	// Custom headers
+	CustomHeaders map[string]string `yaml:"custom_headers"`
+}
+
 // DefaultConfig returns the default configuration.
 func DefaultConfig() *Config {
 	return &Config{
@@ -374,6 +428,38 @@ func DefaultConfig() *Config {
 			EncryptUserData:    true,            // Encrypt user data when enabled
 			EncryptAPIKeys:     true,            // Encrypt API keys when enabled
 		},
+		SecurityHeaders: SecurityHeadersConfig{
+			Enabled:                   true,                               // Security headers enabled by default
+			HSTSEnabled:               true,                               // HSTS enabled
+			HSTSMaxAge:                31536000,                           // 1 year
+			HSTSIncludeSubdomains:     true,                               // Include subdomains
+			HSTSPreload:               false,                              // Preload requires manual submission
+			CSPEnabled:                true,                               // CSP enabled
+			CSPDefaultSrc:             []string{"'self'"},                 // Default to same origin
+			CSPScriptSrc:              []string{"'self'"},                 // Scripts from same origin only
+			CSPStyleSrc:               []string{"'self'", "'unsafe-inline'"}, // Styles with inline support
+			CSPImgSrc:                 []string{"'self'", "data:", "https:"}, // Images from self, data URIs, HTTPS
+			CSPFontSrc:                []string{"'self'"},                 // Fonts from same origin
+			CSPConnectSrc:             []string{"'self'"},                 // Connect to same origin
+			CSPFrameAncestors:         []string{"'none'"},                 // Prevent framing
+			CSPReportOnly:             false,                              // Enforce CSP
+			FrameOptionsEnabled:       true,                               // X-Frame-Options enabled
+			FrameOptionsValue:         "DENY",                             // Deny all framing
+			ContentTypeOptionsEnabled: true,                               // X-Content-Type-Options enabled
+			XSSProtectionEnabled:      true,                               // X-XSS-Protection enabled
+			XSSProtectionValue:        "1; mode=block",                    // Block XSS
+			ReferrerPolicyEnabled:     true,                               // Referrer-Policy enabled
+			ReferrerPolicyValue:       "strict-origin-when-cross-origin",  // Strict referrer
+			PermissionsPolicyEnabled:  true,                               // Permissions-Policy enabled
+			PermissionsPolicyValue:    "geolocation=(), microphone=(), camera=(), payment=(), usb=()", // Restrict features
+			CrossOriginOpenerPolicyEnabled:   true,           // COOP enabled
+			CrossOriginOpenerPolicyValue:     "same-origin",  // Same origin only
+			CrossOriginEmbedderPolicyEnabled: false,          // COEP disabled (can break integrations)
+			CrossOriginEmbedderPolicyValue:   "require-corp", // Require CORP
+			CrossOriginResourcePolicyEnabled: true,           // CORP enabled
+			CrossOriginResourcePolicyValue:   "same-origin",  // Same origin only
+			CustomHeaders:                     make(map[string]string), // No custom headers by default
+		},
 	}
 }
 
@@ -505,6 +591,27 @@ func (c *Config) applyEnvOverrides() {
 
 	if version := os.Getenv("SIEM_ENCRYPTION_KEY_VERSION"); version != "" {
 		fmt.Sscanf(version, "%d", &c.Encryption.KeyVersion)
+	}
+
+	// Security headers settings
+	if enabled := os.Getenv("SIEM_SECURITY_HEADERS_ENABLED"); enabled == "false" {
+		c.SecurityHeaders.Enabled = false
+	}
+
+	if enabled := os.Getenv("SIEM_HSTS_ENABLED"); enabled == "false" {
+		c.SecurityHeaders.HSTSEnabled = false
+	}
+
+	if maxAge := os.Getenv("SIEM_HSTS_MAX_AGE"); maxAge != "" {
+		fmt.Sscanf(maxAge, "%d", &c.SecurityHeaders.HSTSMaxAge)
+	}
+
+	if enabled := os.Getenv("SIEM_CSP_ENABLED"); enabled == "false" {
+		c.SecurityHeaders.CSPEnabled = false
+	}
+
+	if frameOptions := os.Getenv("SIEM_FRAME_OPTIONS"); frameOptions != "" {
+		c.SecurityHeaders.FrameOptionsValue = frameOptions
 	}
 }
 
