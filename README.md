@@ -605,6 +605,397 @@ vault kv list secret/boundary-siem
 vault token capabilities secret/boundary-siem/admin_password
 ```
 
+### Encryption at Rest
+
+**AES-256-GCM Encryption for Sensitive Data at Rest**
+
+The SIEM includes enterprise-grade encryption at rest to protect sensitive data stored in databases, session stores, and file systems.
+
+#### Features
+
+- ✅ **AES-256-GCM Encryption** - Industry-standard authenticated encryption
+- ✅ **Key Management** - Integrated with secrets manager (Vault, env, file)
+- ✅ **Selective Encryption** - Choose what data to encrypt (sessions, users, API keys)
+- ✅ **Key Rotation Support** - Version-tracked keys for seamless rotation
+- ✅ **Performance Optimized** - Minimal overhead with authenticated encryption
+- ✅ **Optional** - Disabled by default, enable only what you need
+
+#### Configuration
+
+```yaml
+encryption:
+  enabled: true                    # Enable/disable encryption at rest
+  key_source: "secret"             # Where to get encryption key: env, secret, file
+  key_name: "ENCRYPTION_KEY"       # Key name/path (depends on key_source)
+  key_version: 1                   # Key version (for rotation)
+
+  # What to encrypt
+  encrypt_session_data: true       # Encrypt session tokens and data
+  encrypt_user_data: true          # Encrypt sensitive user fields
+  encrypt_api_keys: true           # Encrypt API keys at rest
+```
+
+#### Quick Start
+
+**1. Generate an Encryption Key**
+
+```bash
+# Generate a secure random key
+go run -tags tools ./cmd/keygen
+
+# Or using OpenSSL
+openssl rand -base64 32
+
+# Example output:
+# kK8Vy8rG+0X2h7JYqT9nF1wP3mL5dN8vB4cZ6xA2sR0=
+```
+
+**2. Store the Key Securely**
+
+**Option A: Environment Variable (Quick Start)**
+```bash
+export BOUNDARY_ENCRYPTION_KEY='kK8Vy8rG+0X2h7JYqT9nF1wP3mL5dN8vB4cZ6xA2sR0='
+export SIEM_ENCRYPTION_ENABLED='true'
+```
+
+**Option B: Secrets Manager (Recommended)**
+```bash
+# Store in Vault
+vault kv put secret/boundary-siem/encryption_key value='kK8Vy8rG+0X2h7JYqT9nF1wP3mL5dN8vB4cZ6xA2sR0='
+
+# Configure to use Vault
+export SIEM_ENCRYPTION_ENABLED='true'
+export SIEM_ENCRYPTION_KEY_SOURCE='secret'
+export SIEM_ENCRYPTION_KEY_NAME='ENCRYPTION_KEY'
+```
+
+**Option C: File-Based (Docker/Kubernetes)**
+```bash
+# Save key to file
+echo 'kK8Vy8rG+0X2h7JYqT9nF1wP3mL5dN8vB4cZ6xA2sR0=' > /etc/boundary-siem/encryption.key
+chmod 600 /etc/boundary-siem/encryption.key
+
+# Configure to use file
+export SIEM_ENCRYPTION_ENABLED='true'
+export SIEM_ENCRYPTION_KEY_SOURCE='file'
+export SIEM_ENCRYPTION_KEY_NAME='/etc/boundary-siem/encryption.key'
+```
+
+**3. Start the SIEM**
+
+```bash
+# Verify encryption is enabled
+curl http://localhost:8080/health | jq '.encryption'
+# Output: {"enabled": true, "algorithm": "AES-256-GCM", "key_version": 1}
+```
+
+#### Key Sources
+
+##### Environment Variable (Default)
+
+Simple and portable for development:
+
+```yaml
+encryption:
+  enabled: true
+  key_source: "env"
+  key_name: "BOUNDARY_ENCRYPTION_KEY"
+```
+
+```bash
+export BOUNDARY_ENCRYPTION_KEY='<base64-encoded-32-byte-key>'
+```
+
+- **Pros**: Simple, no dependencies
+- **Cons**: Key visible in process environment
+- **Best for**: Development, testing, simple deployments
+
+##### Secrets Manager (Recommended)
+
+Enterprise-grade key management with Vault:
+
+```yaml
+encryption:
+  enabled: true
+  key_source: "secret"
+  key_name: "ENCRYPTION_KEY"
+```
+
+```bash
+# Store key in Vault
+vault kv put secret/boundary-siem/encryption_key value='<key>'
+
+# Configure secrets manager
+export VAULT_ADDR='https://vault.example.com:8200'
+export VAULT_TOKEN='s.your-token'
+```
+
+- **Pros**: Centralized management, audit logging, access control
+- **Cons**: Requires Vault infrastructure
+- **Best for**: Production, regulated environments
+
+##### File-Based
+
+Secure file with restricted permissions:
+
+```yaml
+encryption:
+  enabled: true
+  key_source: "file"
+  key_name: "/etc/boundary-siem/encryption.key"
+```
+
+```bash
+# Create key file
+echo '<key>' > /etc/boundary-siem/encryption.key
+chmod 600 /etc/boundary-siem/encryption.key
+chown siem:siem /etc/boundary-siem/encryption.key
+```
+
+- **Pros**: Simple, works with Docker secrets/K8s
+- **Cons**: File system access required
+- **Best for**: Container deployments
+
+#### What Gets Encrypted
+
+When encryption is enabled, the following data is encrypted at rest:
+
+**Session Data** (`encrypt_session_data: true`):
+- Session tokens
+- User session metadata
+- Authentication state
+
+**User Data** (`encrypt_user_data: true`):
+- Email addresses
+- User metadata
+- Personal identifiable information (PII)
+
+**API Keys** (`encrypt_api_keys: true`):
+- API key values
+- Integration credentials
+- OAuth tokens
+
+**Note**: Passwords are always hashed with bcrypt (not encrypted) as they are one-way hashed values.
+
+#### Key Rotation
+
+Rotate encryption keys periodically for enhanced security:
+
+**1. Generate New Key**
+```bash
+NEW_KEY=$(openssl rand -base64 32)
+echo "New key: $NEW_KEY"
+```
+
+**2. Store New Key**
+```bash
+# Update in Vault with new version
+vault kv put secret/boundary-siem/encryption_key_v2 value="$NEW_KEY"
+```
+
+**3. Update Configuration**
+```yaml
+encryption:
+  key_version: 2          # Increment version
+  key_name: "ENCRYPTION_KEY_V2"
+```
+
+**4. Re-encrypt Data**
+```bash
+# Run migration tool (future implementation)
+./boundary-siem migrate-encryption --from-version 1 --to-version 2
+```
+
+**Best Practices**:
+- Rotate keys annually or after suspected compromise
+- Keep old keys for data encrypted with previous versions
+- Test rotation in staging first
+- Monitor logs during rotation
+
+#### Environment Variables
+
+Override encryption configuration:
+
+```bash
+# Enable/disable
+export SIEM_ENCRYPTION_ENABLED='true'
+
+# Key source
+export SIEM_ENCRYPTION_KEY_SOURCE='secret'  # env, secret, or file
+
+# Key name/path
+export SIEM_ENCRYPTION_KEY_NAME='ENCRYPTION_KEY'
+
+# Key version
+export SIEM_ENCRYPTION_KEY_VERSION='1'
+```
+
+#### Docker Deployment
+
+**docker-compose.yml:**
+```yaml
+services:
+  boundary-siem:
+    image: boundary-siem:latest
+    environment:
+      - SIEM_ENCRYPTION_ENABLED=true
+      - SIEM_ENCRYPTION_KEY_SOURCE=file
+      - SIEM_ENCRYPTION_KEY_NAME=/run/secrets/encryption_key
+    secrets:
+      - encryption_key
+
+secrets:
+  encryption_key:
+    file: ./secrets/encryption.key
+```
+
+#### Kubernetes Deployment
+
+**Create Secret:**
+```bash
+# Generate key
+ENCRYPTION_KEY=$(openssl rand -base64 32)
+
+# Create K8s secret
+kubectl create secret generic boundary-siem-encryption \
+  --from-literal=encryption-key="$ENCRYPTION_KEY"
+```
+
+**Deployment:**
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: boundary-siem
+spec:
+  template:
+    spec:
+      containers:
+      - name: siem
+        image: boundary-siem:latest
+        env:
+        - name: SIEM_ENCRYPTION_ENABLED
+          value: "true"
+        - name: SIEM_ENCRYPTION_KEY_SOURCE
+          value: "file"
+        - name: SIEM_ENCRYPTION_KEY_NAME
+          value: "/etc/encryption/key"
+        volumeMounts:
+        - name: encryption-key
+          mountPath: "/etc/encryption"
+          readOnly: true
+      volumes:
+      - name: encryption-key
+        secret:
+          secretName: boundary-siem-encryption
+          items:
+          - key: encryption-key
+            path: key
+```
+
+#### Security Best Practices
+
+**1. Never Commit Keys to Version Control**
+```bash
+# Add to .gitignore
+*.key
+encryption.key
+secrets/
+```
+
+**2. Restrict Key File Permissions**
+```bash
+chmod 600 /etc/boundary-siem/encryption.key
+chown siem:siem /etc/boundary-siem/encryption.key
+```
+
+**3. Use Secrets Manager in Production**
+- Vault provides audit logging and access control
+- Supports dynamic key generation
+- Enables centralized key management
+
+**4. Rotate Keys Regularly**
+- Annual rotation minimum
+- Immediate rotation after suspected compromise
+- Maintain version history
+
+**5. Monitor Encryption Operations**
+- Enable audit logging
+- Alert on encryption failures
+- Track key rotation events
+
+**6. Backup Keys Securely**
+- Encrypted backups only
+- Separate backup encryption key
+- Test restore procedures
+
+**7. Test Disaster Recovery**
+- Document key recovery procedures
+- Regular DR drills
+- Multiple key custodians
+
+#### Troubleshooting
+
+**Encryption Not Enabled:**
+```bash
+# Check configuration
+curl http://localhost:8080/health | jq '.encryption'
+
+# Verify env var
+echo $SIEM_ENCRYPTION_ENABLED
+
+# Check logs
+journalctl -u boundary-siem | grep encryption
+```
+
+**Key Not Found:**
+```bash
+# Environment variable
+echo $BOUNDARY_ENCRYPTION_KEY
+
+# Secrets manager
+vault kv get secret/boundary-siem/encryption_key
+
+# File
+cat /etc/boundary-siem/encryption.key
+ls -la /etc/boundary-siem/encryption.key
+```
+
+**Decryption Failed:**
+```
+# Usually caused by:
+# 1. Wrong key (after key rotation without migration)
+# 2. Corrupted data
+# 3. Key version mismatch
+
+# Check key version
+curl http://localhost:8080/health | jq '.encryption.key_version'
+
+# Restore from backup if data corrupted
+```
+
+**Performance Impact:**
+```bash
+# Encryption adds minimal overhead (~1-2ms per operation)
+# Monitor with:
+curl http://localhost:8080/metrics | grep encryption_duration
+```
+
+#### Algorithm Details
+
+- **Algorithm**: AES-256-GCM (Galois/Counter Mode)
+- **Key Size**: 256 bits (32 bytes)
+- **Nonce**: 96 bits (12 bytes), randomly generated per operation
+- **Authentication**: Built-in AEAD (Authenticated Encryption with Associated Data)
+- **Encoding**: Base64 for storage/transport
+
+**Format**: `[version:1byte][nonce:12bytes][ciphertext:variable][tag:16bytes]`
+
+This format allows:
+- Key rotation (version tracking)
+- Authenticated encryption (integrity verification)
+- Unique IV per encryption (security)
+
 ### Sending Events
 
 ```bash
