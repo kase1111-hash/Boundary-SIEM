@@ -52,7 +52,7 @@ func (n *Normalizer) NormalizeAccessEvent(access *AccessEvent) (*schema.Event, e
 		EventID:       uuid.New(),
 		Timestamp:     access.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -108,7 +108,7 @@ func (n *Normalizer) NormalizeIntegrityEvent(integrity *IntegrityEvent) (*schema
 		EventID:       uuid.New(),
 		Timestamp:     integrity.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -159,7 +159,7 @@ func (n *Normalizer) NormalizeLockdownEvent(lockdown *LockdownEvent) (*schema.Ev
 		EventID:       uuid.New(),
 		Timestamp:     lockdown.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -210,7 +210,7 @@ func (n *Normalizer) NormalizeSuccessionEvent(succession *SuccessionEvent) (*sch
 		EventID:       uuid.New(),
 		Timestamp:     succession.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -267,7 +267,7 @@ func (n *Normalizer) NormalizeBackupEvent(backup *BackupEvent) (*schema.Event, e
 		EventID:       uuid.New(),
 		Timestamp:     backup.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{
@@ -324,7 +324,7 @@ func (n *Normalizer) NormalizePhysicalTokenEvent(token *PhysicalTokenEvent) (*sc
 		EventID:       uuid.New(),
 		Timestamp:     token.Timestamp,
 		ReceivedAt:    time.Now().UTC(),
-		SchemaVersion: "1.0.0",
+		SchemaVersion: schema.SchemaVersionCurrent,
 		TenantID:      n.config.DefaultTenantID,
 
 		Source: schema.Source{

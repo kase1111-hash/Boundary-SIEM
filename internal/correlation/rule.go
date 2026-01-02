@@ -22,6 +22,8 @@ const (
 	RuleTypeAggregate RuleType = "aggregate"
 	// RuleTypeAbsence fires when expected event is missing.
 	RuleTypeAbsence RuleType = "absence"
+	// RuleTypeCustom for custom rule logic.
+	RuleTypeCustom RuleType = "custom"
 )
 
 // Severity levels for rules.
@@ -36,23 +38,44 @@ const (
 
 // Rule represents a correlation rule definition.
 type Rule struct {
-	ID          string            `yaml:"id"`
-	Name        string            `yaml:"name"`
-	Description string            `yaml:"description"`
-	Type        RuleType          `yaml:"type"`
-	Enabled     bool              `yaml:"enabled"`
-	Severity    Severity          `yaml:"severity"`
-	Tags        []string          `yaml:"tags,omitempty"`
-	MITRE       *MITREMapping     `yaml:"mitre,omitempty"`
-	Conditions  []Condition       `yaml:"conditions"`
-	GroupBy     []string          `yaml:"group_by,omitempty"`
-	Window      time.Duration     `yaml:"window"`
-	Threshold   *ThresholdConfig  `yaml:"threshold,omitempty"`
-	Sequence    *SequenceConfig   `yaml:"sequence,omitempty"`
-	Aggregate   *AggregateConfig  `yaml:"aggregate,omitempty"`
-	Absence     *AbsenceConfig    `yaml:"absence,omitempty"`
-	Actions     []ActionConfig    `yaml:"actions,omitempty"`
-	Metadata    map[string]string `yaml:"metadata,omitempty"`
+	ID          string               `yaml:"id"`
+	Name        string               `yaml:"name"`
+	Description string               `yaml:"description"`
+	Type        RuleType             `yaml:"type"`
+	Enabled     bool                 `yaml:"enabled"`
+	Severity    int                  `yaml:"severity"`
+	Category    string               `yaml:"category,omitempty"`
+	Tags        []string             `yaml:"tags,omitempty"`
+	MITRE       *MITREMapping        `yaml:"mitre,omitempty"`
+	Conditions  Conditions           `yaml:"conditions"`
+	Condition   Condition             `yaml:"condition,omitempty"`   // Alternative single condition
+	GroupBy     []string             `yaml:"group_by,omitempty"`
+	Window      time.Duration        `yaml:"window"`
+	Threshold   *ThresholdConfig     `yaml:"threshold,omitempty"`
+	Sequence    *SequenceConfig      `yaml:"sequence,omitempty"`
+	Aggregate   *AggregateConfig     `yaml:"aggregate,omitempty"`
+	Absence     *AbsenceConfig       `yaml:"absence,omitempty"`
+	Correlation *CorrelationConfig   `yaml:"correlation,omitempty"` // For correlation rules
+	Actions     []Action             `yaml:"actions,omitempty"`
+	Metadata    map[string]any       `yaml:"metadata,omitempty"`
+}
+
+// Conditions holds match conditions for a rule.
+type Conditions struct {
+	Match []MatchCondition `yaml:"match,omitempty"`
+}
+
+// MatchCondition represents a field match condition.
+type MatchCondition struct {
+	Field    string `yaml:"field"`
+	Operator string `yaml:"operator"`
+	Value    any    `yaml:"value"`
+}
+
+// Action represents an action to take when a rule fires.
+type Action struct {
+	Type   string         `yaml:"type"`
+	Config map[string]any `yaml:"config,omitempty"`
 }
 
 // MITREMapping maps the rule to MITRE ATT&CK.
@@ -65,16 +88,20 @@ type MITREMapping struct {
 
 // Condition represents a filter condition for events.
 type Condition struct {
-	Field    string   `yaml:"field"`
-	Operator string   `yaml:"operator"` // eq, ne, gt, gte, lt, lte, contains, regex, in
-	Value    any      `yaml:"value"`
-	Values   []string `yaml:"values,omitempty"` // For "in" operator
+	Field    string      `yaml:"field"`
+	Operator string      `yaml:"operator"` // eq, ne, gt, gte, lt, lte, contains, regex, in
+	Value    any         `yaml:"value"`
+	Values   []string    `yaml:"values,omitempty"` // For "in" operator
+	And      []Condition `yaml:"and,omitempty"`    // AND combination of conditions
+	Or       []Condition `yaml:"or,omitempty"`     // OR combination of conditions
 }
 
 // ThresholdConfig defines threshold-based correlation settings.
 type ThresholdConfig struct {
-	Count    int    `yaml:"count"`
-	Operator string `yaml:"operator"` // gt, gte, lt, lte, eq
+	Count    int      `yaml:"count"`
+	Window   int      `yaml:"window,omitempty"`   // Window in seconds
+	GroupBy  []string `yaml:"group_by,omitempty"` // Fields to group by
+	Operator string   `yaml:"operator"`           // gt, gte, lt, lte, eq
 }
 
 // SequenceConfig defines sequence-based correlation settings.
@@ -82,6 +109,9 @@ type SequenceConfig struct {
 	Ordered  bool           `yaml:"ordered"`
 	MaxSpan  time.Duration  `yaml:"max_span"`
 	Steps    []SequenceStep `yaml:"steps"`
+	Events   []SequenceEvent `yaml:"events,omitempty"`  // Alternative to Steps
+	Window   int             `yaml:"window,omitempty"`   // Window in seconds
+	GroupBy  []string        `yaml:"group_by,omitempty"` // Fields to group by
 }
 
 // SequenceStep represents one step in a sequence.
@@ -91,12 +121,21 @@ type SequenceStep struct {
 	Required   bool        `yaml:"required"`
 }
 
+// SequenceEvent represents an event in a sequence (alternative to SequenceStep).
+type SequenceEvent struct {
+	ID         string           `yaml:"id"`
+	Conditions []MatchCondition `yaml:"conditions"`
+}
+
 // AggregateConfig defines aggregate-based correlation settings.
 type AggregateConfig struct {
-	Function string  `yaml:"function"` // sum, avg, min, max, count_distinct
-	Field    string  `yaml:"field"`
-	Operator string  `yaml:"operator"`
-	Value    float64 `yaml:"value"`
+	Function  string   `yaml:"function"` // sum, avg, min, max, count_distinct
+	Field     string   `yaml:"field"`
+	Operator  string   `yaml:"operator"`
+	Value     float64  `yaml:"value"`
+	Threshold float64  `yaml:"threshold,omitempty"`
+	Window    int      `yaml:"window,omitempty"`
+	GroupBy   []string `yaml:"group_by,omitempty"`
 }
 
 // AbsenceConfig defines absence-based correlation settings.
@@ -104,12 +143,24 @@ type AbsenceConfig struct {
 	ExpectedConditions []Condition   `yaml:"expected_conditions"`
 	AfterConditions    []Condition   `yaml:"after_conditions,omitempty"`
 	Timeout            time.Duration `yaml:"timeout"`
+	Window             int           `yaml:"window,omitempty"`
+	GroupBy            []string      `yaml:"group_by,omitempty"`
+}
+
+// CorrelationConfig defines cross-event correlation settings.
+type CorrelationConfig struct {
+	Type             string     `yaml:"type,omitempty"`              // threshold, sequence, absence, etc.
+	Window           string     `yaml:"window,omitempty"`            // Duration string like "30m"
+	Threshold        int        `yaml:"threshold,omitempty"`         // Threshold count
+	GroupBy          []string   `yaml:"group_by,omitempty"`
+	MinHits          int        `yaml:"min_hits,omitempty"`
+	AbsenceCondition *Condition `yaml:"absence_condition,omitempty"` // Condition that should be absent
 }
 
 // ActionConfig defines actions to take when rule fires.
 type ActionConfig struct {
-	Type   string            `yaml:"type"` // alert, webhook, log, suppress
-	Config map[string]string `yaml:"config,omitempty"`
+	Type   string         `yaml:"type"` // alert, webhook, log, suppress
+	Config map[string]any `yaml:"config,omitempty"`
 }
 
 // Validate validates the rule configuration.
@@ -122,9 +173,6 @@ func (r *Rule) Validate() error {
 	}
 	if r.Type == "" {
 		return fmt.Errorf("rule type is required")
-	}
-	if r.Window <= 0 {
-		return fmt.Errorf("window must be positive")
 	}
 
 	switch r.Type {
@@ -150,13 +198,19 @@ func (r *Rule) Validate() error {
 		if r.Absence == nil {
 			return fmt.Errorf("absence config required for absence rules")
 		}
+	case RuleTypeCustom:
+		// Custom rules have no specific requirements
 	default:
 		return fmt.Errorf("unknown rule type: %s", r.Type)
 	}
 
-	for i, cond := range r.Conditions {
-		if err := cond.Validate(); err != nil {
-			return fmt.Errorf("condition %d: %w", i, err)
+	// Validate match conditions
+	for i, cond := range r.Conditions.Match {
+		if cond.Field == "" {
+			return fmt.Errorf("match condition %d: field is required", i)
+		}
+		if cond.Operator == "" {
+			return fmt.Errorf("match condition %d: operator is required", i)
 		}
 	}
 

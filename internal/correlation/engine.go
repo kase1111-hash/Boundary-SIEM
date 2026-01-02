@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,19 +15,19 @@ import (
 
 // Alert represents a correlation alert.
 type Alert struct {
-	ID          uuid.UUID         `json:"id"`
-	RuleID      string            `json:"rule_id"`
-	RuleName    string            `json:"rule_name"`
-	Severity    Severity          `json:"severity"`
-	Title       string            `json:"title"`
-	Description string            `json:"description"`
-	Timestamp   time.Time         `json:"timestamp"`
-	Events      []EventRef        `json:"events"`
-	GroupKey    string            `json:"group_key,omitempty"`
-	Tags        []string          `json:"tags,omitempty"`
-	MITRE       *MITREMapping     `json:"mitre,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	Status      AlertStatus       `json:"status"`
+	ID          uuid.UUID      `json:"id"`
+	RuleID      string         `json:"rule_id"`
+	RuleName    string         `json:"rule_name"`
+	Severity    int            `json:"severity"`
+	Title       string         `json:"title"`
+	Description string         `json:"description"`
+	Timestamp   time.Time      `json:"timestamp"`
+	Events      []EventRef     `json:"events"`
+	GroupKey    string         `json:"group_key,omitempty"`
+	Tags        []string       `json:"tags,omitempty"`
+	MITRE       *MITREMapping  `json:"mitre,omitempty"`
+	Metadata    map[string]any `json:"metadata,omitempty"`
+	Status      AlertStatus    `json:"status"`
 }
 
 // EventRef references an event that contributed to the alert.
@@ -205,10 +206,69 @@ func (e *Engine) processEvent(ctx context.Context, event *schema.Event) {
 	e.mu.RUnlock()
 
 	for _, rule := range rules {
-		if e.matchesConditions(event, rule.Conditions) {
+		if e.matchesRuleConditions(event, rule.Conditions) {
 			e.evaluateRule(ctx, rule, event)
 		}
 	}
+}
+
+// matchesRuleConditions checks if event matches rule's Conditions struct.
+func (e *Engine) matchesRuleConditions(event *schema.Event, conditions Conditions) bool {
+	for _, cond := range conditions.Match {
+		value := e.getEventField(event, cond.Field)
+		if !matchValue(value, cond.Operator, cond.Value) {
+			return false
+		}
+	}
+	return true
+}
+
+// matchValue checks if a value matches an operator and expected value.
+func matchValue(eventValue any, operator string, expected any) bool {
+	switch operator {
+	case "eq":
+		return fmt.Sprintf("%v", eventValue) == fmt.Sprintf("%v", expected)
+	case "ne":
+		return fmt.Sprintf("%v", eventValue) != fmt.Sprintf("%v", expected)
+	case "prefix":
+		return strings.HasPrefix(fmt.Sprintf("%v", eventValue), fmt.Sprintf("%v", expected))
+	case "contains":
+		return strings.Contains(fmt.Sprintf("%v", eventValue), fmt.Sprintf("%v", expected))
+	case "gt", "gte", "lt", "lte":
+		ev, ok1 := toFloat64(eventValue)
+		exp, ok2 := toFloat64(expected)
+		if !ok1 || !ok2 {
+			return false
+		}
+		switch operator {
+		case "gt":
+			return ev > exp
+		case "gte":
+			return ev >= exp
+		case "lt":
+			return ev < exp
+		case "lte":
+			return ev <= exp
+		}
+	case "in":
+		eventStr := fmt.Sprintf("%v", eventValue)
+		if vals, ok := expected.([]string); ok {
+			for _, v := range vals {
+				if eventStr == v {
+					return true
+				}
+			}
+		}
+		if vals, ok := expected.([]any); ok {
+			for _, v := range vals {
+				if eventStr == fmt.Sprintf("%v", v) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return false
 }
 
 func (e *Engine) matchesConditions(event *schema.Event, conditions []Condition) bool {

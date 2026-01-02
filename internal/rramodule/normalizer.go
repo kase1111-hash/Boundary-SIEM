@@ -1,26 +1,52 @@
 package rramodule
 
 import (
-	"boundary-siem/internal/core/schema"
+	"boundary-siem/internal/schema"
 	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
 
+// NormalizerConfig holds configuration for the normalizer.
+type NormalizerConfig struct {
+	SourceProduct string
+	SourceHost    string
+	TenantID      string
+}
+
 // Normalizer converts RRA-Module events to canonical SIEM events.
-type Normalizer struct{}
+type Normalizer struct {
+	sourceProduct   string
+	sourceHost      string
+	defaultTenantID string
+}
 
 // NewNormalizer creates a new RRA-Module normalizer.
-func NewNormalizer() *Normalizer {
-	return &Normalizer{}
+func NewNormalizer(cfg NormalizerConfig) *Normalizer {
+	product := cfg.SourceProduct
+	if product == "" {
+		product = "rramodule"
+	}
+	return &Normalizer{
+		sourceProduct:   product,
+		sourceHost:      cfg.SourceHost,
+		defaultTenantID: cfg.TenantID,
+	}
+}
+
+// outcomeFromBool converts a success boolean to schema.Outcome.
+func rraOutcomeFromBool(success bool) schema.Outcome {
+	if success {
+		return schema.OutcomeSuccess
+	}
+	return schema.OutcomeFailure
 }
 
 // NormalizeIngestionEvent converts an ingestion event to a canonical event.
-func (n *Normalizer) NormalizeIngestionEvent(event IngestionEvent) schema.CanonicalEvent {
-	outcome := "success"
-	if !event.Success {
-		outcome = "failure"
+func (n *Normalizer) NormalizeIngestionEvent(event *IngestionEvent) (*schema.Event, error) {
+	if event == nil {
+		return nil, fmt.Errorf("ingestion event is nil")
 	}
 
 	severity := 3
@@ -28,14 +54,26 @@ func (n *Normalizer) NormalizeIngestionEvent(event IngestionEvent) schema.Canoni
 		severity = 6
 	}
 
-	return schema.CanonicalEvent{
-		ID:        uuid.New().String(),
-		Timestamp: event.Timestamp,
-		Actor:     event.AgentID,
-		Action:    fmt.Sprintf("rra.ingestion.%s", event.EventType),
-		Target:    event.AgentID,
-		Outcome:   outcome,
-		Severity:  severity,
+	return &schema.Event{
+		EventID:       uuid.New(),
+		Timestamp:     event.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: event.ID,
+		},
+		Action:   fmt.Sprintf("rra.ingestion.%s", event.EventType),
+		Target:   fmt.Sprintf("agent:%s", event.AgentID),
+		Outcome:  rraOutcomeFromBool(event.Success),
+		Severity: severity,
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
+			ID:   event.AgentID,
+			Name: "rra-agent",
+		},
 		Metadata: map[string]any{
 			"rra_event_id":      event.ID,
 			"rra_agent_id":      event.AgentID,
@@ -44,28 +82,41 @@ func (n *Normalizer) NormalizeIngestionEvent(event IngestionEvent) schema.Canoni
 			"rra_tokens_used":   event.TokensUsed,
 			"rra_success":       event.Success,
 			"rra_error":         event.ErrorMessage,
-			"source":            "rramodule",
 		},
-		Source:    "rramodule",
-		CreatedAt: time.Now().UTC(),
-	}
+	}, nil
 }
 
 // NormalizeNegotiationEvent converts a negotiation event to a canonical event.
-func (n *Normalizer) NormalizeNegotiationEvent(event NegotiationEvent) schema.CanonicalEvent {
+func (n *Normalizer) NormalizeNegotiationEvent(event *NegotiationEvent) (*schema.Event, error) {
+	if event == nil {
+		return nil, fmt.Errorf("negotiation event is nil")
+	}
+
 	severity := 3
 	if event.EventType == "rejected" {
 		severity = 5
 	}
 
-	return schema.CanonicalEvent{
-		ID:        uuid.New().String(),
-		Timestamp: event.Timestamp,
-		Actor:     event.AgentID,
-		Action:    fmt.Sprintf("rra.negotiation.%s", event.EventType),
-		Target:    event.CounterpartyID,
-		Outcome:   "success",
-		Severity:  severity,
+	return &schema.Event{
+		EventID:       uuid.New(),
+		Timestamp:     event.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: event.ID,
+		},
+		Action:   fmt.Sprintf("rra.negotiation.%s", event.EventType),
+		Target:   fmt.Sprintf("counterparty:%s", event.CounterpartyID),
+		Outcome:  schema.OutcomeSuccess,
+		Severity: severity,
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
+			ID:   event.AgentID,
+			Name: "rra-agent",
+		},
 		Metadata: map[string]any{
 			"rra_event_id":       event.ID,
 			"rra_agent_id":       event.AgentID,
@@ -74,18 +125,14 @@ func (n *Normalizer) NormalizeNegotiationEvent(event NegotiationEvent) schema.Ca
 			"rra_offer_amount":   event.OfferAmount,
 			"rra_license_terms":  event.LicenseTerms,
 			"rra_llm_model":      event.LLMModel,
-			"source":             "rramodule",
 		},
-		Source:    "rramodule",
-		CreatedAt: time.Now().UTC(),
-	}
+	}, nil
 }
 
 // NormalizeContractEvent converts a contract event to a canonical event.
-func (n *Normalizer) NormalizeContractEvent(event ContractEvent) schema.CanonicalEvent {
-	outcome := "success"
-	if !event.Success {
-		outcome = "failure"
+func (n *Normalizer) NormalizeContractEvent(event *ContractEvent) (*schema.Event, error) {
+	if event == nil {
+		return nil, fmt.Errorf("contract event is nil")
 	}
 
 	severity := 4
@@ -96,46 +143,71 @@ func (n *Normalizer) NormalizeContractEvent(event ContractEvent) schema.Canonica
 		severity = max(severity, 6)
 	}
 
-	return schema.CanonicalEvent{
-		ID:        uuid.New().String(),
-		Timestamp: event.Timestamp,
-		Actor:     event.AgentID,
-		Action:    fmt.Sprintf("rra.contract.%s", event.EventType),
-		Target:    event.ContractAddress,
-		Outcome:   outcome,
-		Severity:  severity,
-		Metadata: map[string]any{
-			"rra_event_id":        event.ID,
-			"rra_agent_id":        event.AgentID,
-			"rra_chain_id":        event.ChainID,
-			"rra_contract_address": event.ContractAddress,
-			"rra_event_type":      event.EventType,
-			"rra_tx_hash":         event.TxHash,
-			"rra_gas_used":        event.GasUsed,
-			"rra_value":           event.Value,
-			"rra_success":         event.Success,
-			"source":              "rramodule",
+	return &schema.Event{
+		EventID:       uuid.New(),
+		Timestamp:     event.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: event.ID,
 		},
-		Source:    "rramodule",
-		CreatedAt: time.Now().UTC(),
-	}
+		Action:   fmt.Sprintf("rra.contract.%s", event.EventType),
+		Target:   fmt.Sprintf("contract:%s", event.ContractAddress),
+		Outcome:  rraOutcomeFromBool(event.Success),
+		Severity: severity,
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
+			ID:   event.AgentID,
+			Name: "rra-agent",
+		},
+		Metadata: map[string]any{
+			"rra_event_id":         event.ID,
+			"rra_agent_id":         event.AgentID,
+			"rra_chain_id":         event.ChainID,
+			"rra_contract_address": event.ContractAddress,
+			"rra_event_type":       event.EventType,
+			"rra_tx_hash":          event.TxHash,
+			"rra_gas_used":         event.GasUsed,
+			"rra_value":            event.Value,
+			"rra_success":          event.Success,
+		},
+	}, nil
 }
 
 // NormalizeRevenueEvent converts a revenue event to a canonical event.
-func (n *Normalizer) NormalizeRevenueEvent(event RevenueEvent) schema.CanonicalEvent {
+func (n *Normalizer) NormalizeRevenueEvent(event *RevenueEvent) (*schema.Event, error) {
+	if event == nil {
+		return nil, fmt.Errorf("revenue event is nil")
+	}
+
 	severity := 3
 	if event.Amount >= 50000 {
 		severity = 4
 	}
 
-	return schema.CanonicalEvent{
-		ID:        uuid.New().String(),
-		Timestamp: event.Timestamp,
-		Actor:     event.Source,
-		Action:    fmt.Sprintf("rra.revenue.%s", event.EventType),
-		Target:    event.Recipient,
-		Outcome:   "success",
-		Severity:  severity,
+	return &schema.Event{
+		EventID:       uuid.New(),
+		Timestamp:     event.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: event.ID,
+		},
+		Action:   fmt.Sprintf("rra.revenue.%s", event.EventType),
+		Target:   fmt.Sprintf("recipient:%s", event.Recipient),
+		Outcome:  schema.OutcomeSuccess,
+		Severity: severity,
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
+			ID:   event.Source,
+			Name: "rra-revenue-source",
+		},
 		Metadata: map[string]any{
 			"rra_event_id":   event.ID,
 			"rra_agent_id":   event.AgentID,
@@ -145,18 +217,19 @@ func (n *Normalizer) NormalizeRevenueEvent(event RevenueEvent) schema.CanonicalE
 			"rra_source":     event.Source,
 			"rra_recipient":  event.Recipient,
 			"rra_tx_hash":    event.TxHash,
-			"source":         "rramodule",
 		},
-		Source:    "rramodule",
-		CreatedAt: time.Now().UTC(),
-	}
+	}, nil
 }
 
 // NormalizeSecurityEvent converts a security event to a canonical event.
-func (n *Normalizer) NormalizeSecurityEvent(event SecurityEvent) schema.CanonicalEvent {
-	outcome := "success"
+func (n *Normalizer) NormalizeSecurityEvent(event *SecurityEvent) (*schema.Event, error) {
+	if event == nil {
+		return nil, fmt.Errorf("security event is nil")
+	}
+
+	outcome := schema.OutcomeSuccess
 	if event.Blocked {
-		outcome = "blocked"
+		outcome = schema.OutcomeUnknown
 	}
 
 	severity := 5
@@ -171,14 +244,27 @@ func (n *Normalizer) NormalizeSecurityEvent(event SecurityEvent) schema.Canonica
 		severity = 3
 	}
 
-	return schema.CanonicalEvent{
-		ID:        uuid.New().String(),
-		Timestamp: event.Timestamp,
-		Actor:     event.SourceIP,
-		Action:    fmt.Sprintf("rra.security.%s", event.EventType),
-		Target:    event.AgentID,
-		Outcome:   outcome,
-		Severity:  severity,
+	return &schema.Event{
+		EventID:       uuid.New(),
+		Timestamp:     event.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: event.ID,
+		},
+		Action:   fmt.Sprintf("rra.security.%s", event.EventType),
+		Target:   fmt.Sprintf("agent:%s", event.AgentID),
+		Outcome:  outcome,
+		Severity: severity,
+		Actor: &schema.Actor{
+			Type:      schema.ActorUnknown,
+			ID:        event.SourceIP,
+			Name:      "external-actor",
+			IPAddress: event.SourceIP,
+		},
 		Metadata: map[string]any{
 			"rra_event_id":    event.ID,
 			"rra_agent_id":    event.AgentID,
@@ -187,33 +273,48 @@ func (n *Normalizer) NormalizeSecurityEvent(event SecurityEvent) schema.Canonica
 			"rra_description": event.Description,
 			"rra_source_ip":   event.SourceIP,
 			"rra_blocked":     event.Blocked,
-			"source":          "rramodule",
 		},
-		Source:    "rramodule",
-		CreatedAt: time.Now().UTC(),
-	}
+	}, nil
 }
 
 // NormalizeGovernanceEvent converts a governance event to a canonical event.
-func (n *Normalizer) NormalizeGovernanceEvent(event GovernanceEvent) schema.CanonicalEvent {
+func (n *Normalizer) NormalizeGovernanceEvent(event *GovernanceEvent) (*schema.Event, error) {
+	if event == nil {
+		return nil, fmt.Errorf("governance event is nil")
+	}
+
 	severity := 4
 	if event.EventType == "proposal_executed" {
 		severity = 5
 	}
 
-	actor := event.AgentID
+	actorID := event.AgentID
+	actorName := "rra-agent"
 	if event.VoterID != "" {
-		actor = event.VoterID
+		actorID = event.VoterID
+		actorName = "dao-voter"
 	}
 
-	return schema.CanonicalEvent{
-		ID:        uuid.New().String(),
-		Timestamp: event.Timestamp,
-		Actor:     actor,
-		Action:    fmt.Sprintf("rra.governance.%s", event.EventType),
-		Target:    event.ProposalID,
-		Outcome:   "success",
-		Severity:  severity,
+	return &schema.Event{
+		EventID:       uuid.New(),
+		Timestamp:     event.Timestamp,
+		ReceivedAt:    time.Now().UTC(),
+		SchemaVersion: schema.SchemaVersionCurrent,
+		TenantID:      n.defaultTenantID,
+		Source: schema.Source{
+			Product:    n.sourceProduct,
+			Host:       n.sourceHost,
+			InstanceID: event.ID,
+		},
+		Action:   fmt.Sprintf("rra.governance.%s", event.EventType),
+		Target:   fmt.Sprintf("proposal:%s", event.ProposalID),
+		Outcome:  schema.OutcomeSuccess,
+		Severity: severity,
+		Actor: &schema.Actor{
+			Type: schema.ActorService,
+			ID:   actorID,
+			Name: actorName,
+		},
 		Metadata: map[string]any{
 			"rra_event_id":    event.ID,
 			"rra_agent_id":    event.AgentID,
@@ -222,9 +323,6 @@ func (n *Normalizer) NormalizeGovernanceEvent(event GovernanceEvent) schema.Cano
 			"rra_voter_id":    event.VoterID,
 			"rra_vote_weight": event.VoteWeight,
 			"rra_outcome":     event.Outcome,
-			"source":          "rramodule",
 		},
-		Source:    "rramodule",
-		CreatedAt: time.Now().UTC(),
-	}
+	}, nil
 }

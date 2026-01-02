@@ -259,7 +259,7 @@ func (i *Ingester) pollRevocations(ctx context.Context) {
 
 // enqueueEvent adds an event to the queue.
 func (i *Ingester) enqueueEvent(event *schema.Event) {
-	if err := i.queue.Enqueue(event); err != nil {
+	if err := i.queue.Push(event); err != nil {
 		slog.Warn("failed to enqueue value-ledger event",
 			"event_id", event.EventID,
 			"error", err,

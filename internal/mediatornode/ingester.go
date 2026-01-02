@@ -1,9 +1,9 @@
 package mediatornode
 
 import (
-	"boundary-siem/internal/core/schema"
+	"boundary-siem/internal/schema"
 	"context"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -13,36 +13,45 @@ type Ingester struct {
 	client       *Client
 	normalizer   *Normalizer
 	pollInterval time.Duration
-	eventChan    chan schema.CanonicalEvent
+	batchSize    int
+	eventChan    chan *schema.Event
 	lastPoll     time.Time
 	mu           sync.Mutex
 	running      bool
 	stopChan     chan struct{}
+	logger       *slog.Logger
 }
 
 // IngesterConfig holds configuration for the ingester.
 type IngesterConfig struct {
-	PollInterval time.Duration `yaml:"poll_interval"`
-	BatchSize    int           `yaml:"batch_size"`
+	PollInterval     time.Duration    `yaml:"poll_interval"`
+	BatchSize        int              `yaml:"batch_size"`
+	NormalizerConfig NormalizerConfig `yaml:"normalizer"`
 }
 
 // DefaultIngesterConfig returns the default ingester configuration.
 func DefaultIngesterConfig() IngesterConfig {
 	return IngesterConfig{
-		PollInterval: 30 * time.Second,
-		BatchSize:    100,
+		PollInterval:     30 * time.Second,
+		BatchSize:        100,
+		NormalizerConfig: DefaultNormalizerConfig(),
 	}
 }
 
 // NewIngester creates a new Mediator Node ingester.
-func NewIngester(client *Client, cfg IngesterConfig) *Ingester {
+func NewIngester(client *Client, cfg IngesterConfig, logger *slog.Logger) *Ingester {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Ingester{
 		client:       client,
-		normalizer:   NewNormalizer(),
+		normalizer:   NewNormalizer(cfg.NormalizerConfig),
 		pollInterval: cfg.PollInterval,
-		eventChan:    make(chan schema.CanonicalEvent, 1000),
+		batchSize:    cfg.BatchSize,
+		eventChan:    make(chan *schema.Event, 1000),
 		lastPoll:     time.Now().Add(-cfg.PollInterval),
 		stopChan:     make(chan struct{}),
+		logger:       logger,
 	}
 }
 
@@ -56,6 +65,7 @@ func (i *Ingester) Start(ctx context.Context) error {
 	i.running = true
 	i.mu.Unlock()
 
+	i.logger.Info("starting mediatornode ingester", "poll_interval", i.pollInterval)
 	go i.pollLoop(ctx)
 	return nil
 }
@@ -67,11 +77,12 @@ func (i *Ingester) Stop() {
 	if i.running {
 		close(i.stopChan)
 		i.running = false
+		i.logger.Info("mediatornode ingester stopped")
 	}
 }
 
 // Events returns the channel of normalized events.
-func (i *Ingester) Events() <-chan schema.CanonicalEvent {
+func (i *Ingester) Events() <-chan *schema.Event {
 	return i.eventChan
 }
 
@@ -100,78 +111,109 @@ func (i *Ingester) poll(ctx context.Context) {
 	i.lastPoll = time.Now()
 	i.mu.Unlock()
 
+	var eventCount int
+
 	// Poll alignment events
-	alignments, err := i.client.GetAlignments(ctx, since, 100)
+	alignments, err := i.client.GetAlignments(ctx, since, i.batchSize)
 	if err != nil {
-		log.Printf("mediatornode: failed to get alignments: %v", err)
+		i.logger.Error("failed to get alignments", "error", err)
 	} else {
 		for _, alignment := range alignments {
-			event := i.normalizer.NormalizeAlignment(alignment)
-			select {
-			case i.eventChan <- event:
-			default:
-				log.Printf("mediatornode: event channel full, dropping event")
+			alignmentCopy := alignment
+			event, err := i.normalizer.NormalizeAlignment(&alignmentCopy)
+			if err != nil {
+				i.logger.Error("failed to normalize alignment", "error", err)
+				continue
+			}
+			if i.sendEvent(event) {
+				eventCount++
 			}
 		}
 	}
 
 	// Poll negotiation sessions
-	negotiations, err := i.client.GetNegotiations(ctx, since, 100)
+	negotiations, err := i.client.GetNegotiations(ctx, since, i.batchSize)
 	if err != nil {
-		log.Printf("mediatornode: failed to get negotiations: %v", err)
+		i.logger.Error("failed to get negotiations", "error", err)
 	} else {
 		for _, negotiation := range negotiations {
-			event := i.normalizer.NormalizeNegotiation(negotiation)
-			select {
-			case i.eventChan <- event:
-			default:
-				log.Printf("mediatornode: event channel full, dropping event")
+			negotiationCopy := negotiation
+			event, err := i.normalizer.NormalizeNegotiation(&negotiationCopy)
+			if err != nil {
+				i.logger.Error("failed to normalize negotiation", "error", err)
+				continue
+			}
+			if i.sendEvent(event) {
+				eventCount++
 			}
 		}
 	}
 
 	// Poll settlements
-	settlements, err := i.client.GetSettlements(ctx, since, 100)
+	settlements, err := i.client.GetSettlements(ctx, since, i.batchSize)
 	if err != nil {
-		log.Printf("mediatornode: failed to get settlements: %v", err)
+		i.logger.Error("failed to get settlements", "error", err)
 	} else {
 		for _, settlement := range settlements {
-			event := i.normalizer.NormalizeSettlement(settlement)
-			select {
-			case i.eventChan <- event:
-			default:
-				log.Printf("mediatornode: event channel full, dropping event")
+			settlementCopy := settlement
+			event, err := i.normalizer.NormalizeSettlement(&settlementCopy)
+			if err != nil {
+				i.logger.Error("failed to normalize settlement", "error", err)
+				continue
+			}
+			if i.sendEvent(event) {
+				eventCount++
 			}
 		}
 	}
 
 	// Poll flag events
-	flags, err := i.client.GetFlagEvents(ctx, since, 100)
+	flags, err := i.client.GetFlagEvents(ctx, since, i.batchSize)
 	if err != nil {
-		log.Printf("mediatornode: failed to get flag events: %v", err)
+		i.logger.Error("failed to get flag events", "error", err)
 	} else {
 		for _, flag := range flags {
-			event := i.normalizer.NormalizeFlagEvent(flag)
-			select {
-			case i.eventChan <- event:
-			default:
-				log.Printf("mediatornode: event channel full, dropping event")
+			flagCopy := flag
+			event, err := i.normalizer.NormalizeFlagEvent(&flagCopy)
+			if err != nil {
+				i.logger.Error("failed to normalize flag event", "error", err)
+				continue
+			}
+			if i.sendEvent(event) {
+				eventCount++
 			}
 		}
 	}
 
 	// Poll reputation events
-	reputations, err := i.client.GetReputationEvents(ctx, since, 100)
+	reputations, err := i.client.GetReputationEvents(ctx, since, i.batchSize)
 	if err != nil {
-		log.Printf("mediatornode: failed to get reputation events: %v", err)
+		i.logger.Error("failed to get reputation events", "error", err)
 	} else {
 		for _, reputation := range reputations {
-			event := i.normalizer.NormalizeReputationEvent(reputation)
-			select {
-			case i.eventChan <- event:
-			default:
-				log.Printf("mediatornode: event channel full, dropping event")
+			reputationCopy := reputation
+			event, err := i.normalizer.NormalizeReputationEvent(&reputationCopy)
+			if err != nil {
+				i.logger.Error("failed to normalize reputation event", "error", err)
+				continue
+			}
+			if i.sendEvent(event) {
+				eventCount++
 			}
 		}
+	}
+
+	if eventCount > 0 {
+		i.logger.Info("poll completed", "events_ingested", eventCount)
+	}
+}
+
+func (i *Ingester) sendEvent(event *schema.Event) bool {
+	select {
+	case i.eventChan <- event:
+		return true
+	default:
+		i.logger.Warn("event channel full, dropping event", "event_id", event.EventID)
+		return false
 	}
 }
