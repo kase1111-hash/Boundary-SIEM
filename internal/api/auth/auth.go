@@ -376,11 +376,16 @@ func (s *AuthService) initDefaultUsers(config *AdminConfig) error {
 		}
 		requirePasswordChange = true
 
-		// Log the generated password ONCE during initialization
-		s.logger.Warn("SECURITY: Generated random admin password - SAVE THIS PASSWORD",
-			"username", config.Username,
-			"password", password,
-			"action_required", "Change password immediately after first login")
+		// Write password to secure file instead of logging
+		if err := writePasswordToSecureFile(config.Username, password); err != nil {
+			s.logger.Error("failed to write admin password to secure file", "error", err)
+			// Continue - password is still valid, just not persisted to file
+		} else {
+			s.logger.Warn("SECURITY: Generated random admin password - SAVED TO SECURE FILE",
+				"username", config.Username,
+				"password_file", "/var/lib/boundary-siem/admin-password.txt",
+				"action_required", "Retrieve password from secure file and change it immediately after first login")
+		}
 	} else {
 		// Validate provided password strength
 		if err := validatePasswordStrength(password); err != nil {
@@ -1270,6 +1275,43 @@ func getClientIP(r *http.Request) string {
 		return xri
 	}
 	return strings.Split(r.RemoteAddr, ":")[0]
+}
+
+// writePasswordToSecureFile writes a generated password to a secure file with restricted permissions.
+// The file is created with 0600 permissions (read/write for owner only) to prevent unauthorized access.
+func writePasswordToSecureFile(username, password string) error {
+	// Create secure directory if it doesn't exist
+	secureDir := "/var/lib/boundary-siem"
+	if err := os.MkdirAll(secureDir, 0700); err != nil {
+		// Fallback to current directory if /var/lib is not writable
+		secureDir = "."
+	}
+
+	passwordFile := fmt.Sprintf("%s/admin-password.txt", secureDir)
+
+	// Create file with restricted permissions (0600 = owner read/write only)
+	content := fmt.Sprintf("Boundary-SIEM Generated Admin Credentials\n"+
+		"Generated: %s\n"+
+		"Username: %s\n"+
+		"Password: %s\n\n"+
+		"SECURITY NOTICE:\n"+
+		"1. Change this password immediately after first login\n"+
+		"2. Delete this file after retrieving the password\n"+
+		"3. This file contains sensitive credentials - protect it carefully\n",
+		time.Now().Format(time.RFC3339),
+		username,
+		password)
+
+	if err := os.WriteFile(passwordFile, []byte(content), 0600); err != nil {
+		return fmt.Errorf("failed to write password file: %w", err)
+	}
+
+	// Double-check file permissions were set correctly
+	if err := os.Chmod(passwordFile, 0600); err != nil {
+		return fmt.Errorf("failed to set password file permissions: %w", err)
+	}
+
+	return nil
 }
 
 // GetUserByUsername returns a user by username.
