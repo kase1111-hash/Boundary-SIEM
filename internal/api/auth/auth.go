@@ -540,7 +540,13 @@ func (s *AuthService) handleUsers(w http.ResponseWriter, r *http.Request) {
 		user.Permissions = s.getPermissionsForRoles(user.Roles)
 
 		s.mu.Lock()
-		s.users[user.ID] = &user
+		// Check if username already exists
+		if _, exists := s.users[user.Username]; exists {
+			s.mu.Unlock()
+			http.Error(w, "Username already exists", http.StatusConflict)
+			return
+		}
+		s.users[user.Username] = &user // Use username as key for Authenticate() compatibility
 		s.mu.Unlock()
 
 		s.logAudit(AuditActionUserCreated, "", "", user.TenantID, "user", user.ID, r, true, "")
@@ -659,7 +665,8 @@ func (s *AuthService) Authenticate(username, password, tenantID string) (*User, 
 	if !exists {
 		// Use constant-time comparison to prevent timing attacks
 		// Hash a dummy password to maintain consistent timing
-		_ = bcrypt.CompareHashAndPassword([]byte("$2a$12$dummy.hash.for.timing.attack.prevention"), []byte(password))
+		// This is a valid bcrypt hash (cost 12) for the string "dummy"
+		_ = bcrypt.CompareHashAndPassword([]byte("$2a$12$R9h/cIPz0gi.URNNX3kh2OPST9/PgBkqquzi.Ss7KIUgO2t0jWMUW"), []byte(password))
 		return nil, ErrUserNotFound
 	}
 
@@ -819,16 +826,17 @@ func (s *AuthService) ValidateSession(token string) (*Session, error) {
 // HasPermission checks if a user has a specific permission.
 func (s *AuthService) HasPermission(userID string, permission Permission) bool {
 	s.mu.RLock()
-	user, exists := s.users[userID]
-	s.mu.RUnlock()
+	defer s.mu.RUnlock()
 
-	if !exists {
-		return false
-	}
-
-	for _, p := range user.Permissions {
-		if p == permission || p == PermissionAdmin {
-			return true
+	// Iterate through users to find by ID (map is keyed by username)
+	for _, user := range s.users {
+		if user.ID == userID {
+			for _, p := range user.Permissions {
+				if p == permission || p == PermissionAdmin {
+					return true
+				}
+			}
+			return false
 		}
 	}
 
@@ -890,8 +898,13 @@ func (s *AuthService) logAudit(action AuditAction, userID, username, tenantID, r
 func (s *AuthService) GetUser(id string) (*User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	u, ok := s.users[id]
-	return u, ok
+	// Iterate through users to find by ID (map is keyed by username)
+	for _, u := range s.users {
+		if u.ID == id {
+			return u, true
+		}
+	}
+	return nil, false
 }
 
 // GetTenant returns a tenant by ID.
@@ -1051,13 +1064,14 @@ func (s *AuthService) CreateUser(user *User) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if _, exists := s.users[user.ID]; exists {
+	// Check if username already exists (users map is keyed by username for auth)
+	if _, exists := s.users[user.Username]; exists {
 		return fmt.Errorf("user already exists")
 	}
 
 	user.CreatedAt = time.Now()
 	user.Permissions = s.getPermissionsForRoles(user.Roles)
-	s.users[user.ID] = user
+	s.users[user.Username] = user // Use username as key for Authenticate() compatibility
 	return nil
 }
 
