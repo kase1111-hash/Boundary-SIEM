@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"boundary-siem/internal/boundarydaemon"
 	"boundary-siem/internal/config"
 	"boundary-siem/internal/consumer"
 	"boundary-siem/internal/ingest"
@@ -221,6 +222,56 @@ func main() {
 		}
 	}
 
+	// Start Boundary Daemon ingester if enabled
+	var bdIngester *boundarydaemon.Ingester
+	if cfg.BoundaryDaemon.Enabled {
+		slog.Info("initializing boundary-daemon integration",
+			"base_url", cfg.BoundaryDaemon.Client.BaseURL,
+			"poll_interval", cfg.BoundaryDaemon.Ingester.PollInterval,
+		)
+
+		// Create boundary-daemon client
+		bdClient := boundarydaemon.NewClient(boundarydaemon.ClientConfig{
+			BaseURL:      cfg.BoundaryDaemon.Client.BaseURL,
+			APIKey:       cfg.BoundaryDaemon.Client.APIKey,
+			Timeout:      cfg.BoundaryDaemon.Client.Timeout,
+			MaxRetries:   cfg.BoundaryDaemon.Client.MaxRetries,
+			RetryBackoff: cfg.BoundaryDaemon.Client.RetryBackoff,
+		})
+
+		// Create boundary-daemon normalizer
+		bdNormalizer := boundarydaemon.NewNormalizer(boundarydaemon.NormalizerConfig{
+			DefaultTenantID: cfg.BoundaryDaemon.Normalizer.DefaultTenantID,
+			SourceHost:      cfg.BoundaryDaemon.Normalizer.SourceHost,
+			SourceVersion:   cfg.BoundaryDaemon.Normalizer.SourceVersion,
+		})
+
+		// Create and start boundary-daemon ingester
+		bdIngester = boundarydaemon.NewIngester(bdClient, bdNormalizer, eventQueue, boundarydaemon.IngesterConfig{
+			PollInterval:      cfg.BoundaryDaemon.Ingester.PollInterval,
+			SessionBatchSize:  cfg.BoundaryDaemon.Ingester.SessionBatchSize,
+			AuthBatchSize:     cfg.BoundaryDaemon.Ingester.AuthBatchSize,
+			AccessBatchSize:   cfg.BoundaryDaemon.Ingester.AccessBatchSize,
+			ThreatBatchSize:   cfg.BoundaryDaemon.Ingester.ThreatBatchSize,
+			PolicyBatchSize:   cfg.BoundaryDaemon.Ingester.PolicyBatchSize,
+			AuditBatchSize:    cfg.BoundaryDaemon.Ingester.AuditBatchSize,
+			IngestSessions:    cfg.BoundaryDaemon.Ingester.IngestSessions,
+			IngestAuth:        cfg.BoundaryDaemon.Ingester.IngestAuth,
+			IngestAccess:      cfg.BoundaryDaemon.Ingester.IngestAccess,
+			IngestThreats:     cfg.BoundaryDaemon.Ingester.IngestThreats,
+			IngestPolicies:    cfg.BoundaryDaemon.Ingester.IngestPolicies,
+			IngestAuditLogs:   cfg.BoundaryDaemon.Ingester.IngestAuditLogs,
+			VerifyAuditLogs:   cfg.BoundaryDaemon.Ingester.VerifyAuditLogs,
+			MinThreatSeverity: cfg.BoundaryDaemon.Ingester.MinThreatSeverity,
+		})
+
+		go func() {
+			if err := bdIngester.Start(ctx); err != nil && err != context.Canceled {
+				slog.Error("boundary-daemon ingester error", "error", err)
+			}
+		}()
+	}
+
 	// Start HTTP server
 	go func() {
 		slog.Info("starting ingest server", "address", server.Addr)
@@ -252,6 +303,12 @@ func main() {
 	}
 	if tcpServer != nil {
 		tcpServer.Stop()
+	}
+
+	// Stop Boundary Daemon ingester
+	if bdIngester != nil {
+		bdIngester.Stop()
+		slog.Info("boundary-daemon ingester stopped")
 	}
 
 	// Stop queue consumer
