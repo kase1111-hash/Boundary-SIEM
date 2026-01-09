@@ -17,8 +17,11 @@ import (
 	"boundary-siem/internal/ingest/cef"
 	"boundary-siem/internal/queue"
 	"boundary-siem/internal/schema"
+	"boundary-siem/internal/startup"
 	"boundary-siem/internal/storage"
 )
+
+var version = "dev"
 
 func main() {
 	// Setup structured logging
@@ -32,6 +35,15 @@ func main() {
 	}))
 	slog.SetDefault(logger)
 
+	// Print startup banner
+	startup.PrintBanner(version)
+
+	// Ensure required directories exist
+	if err := startup.EnsureDirectories(); err != nil {
+		slog.Error("failed to create required directories", "error", err)
+		os.Exit(1)
+	}
+
 	// Load configuration
 	cfg, err := config.Load()
 	if err != nil {
@@ -39,9 +51,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := cfg.Validate(); err != nil {
-		slog.Error("invalid config", "error", err)
-		os.Exit(1)
+	// Run startup diagnostics
+	ctx := context.Background()
+	diagnostics := startup.NewDiagnostics(cfg, logger)
+	diagnostics.RunAll(ctx)
+
+	// Check for critical errors
+	if diagnostics.HasErrors() {
+		if os.Getenv("SIEM_IGNORE_ERRORS") != "true" {
+			slog.Error("startup diagnostics failed - set SIEM_IGNORE_ERRORS=true to override")
+			os.Exit(1)
+		}
+		slog.Warn("ignoring startup errors due to SIEM_IGNORE_ERRORS=true")
 	}
 
 	slog.Info("configuration loaded",
