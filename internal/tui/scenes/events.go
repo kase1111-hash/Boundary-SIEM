@@ -129,8 +129,15 @@ func (e *EventsScene) View() string {
 		b.WriteString("\n\n")
 	}
 
+	// Demo mode notice
+	b.WriteString(styles.StatusWarning.Render("  ⚠ DEMO MODE"))
+	b.WriteString(styles.Muted.Render(" - Showing simulated events"))
+	b.WriteString("\n")
+	b.WriteString(styles.Muted.Render("  Enable storage in config.yaml to persist and query real events"))
+	b.WriteString("\n\n")
+
 	// Event count
-	b.WriteString(styles.Subtitle.Render(fmt.Sprintf("  Showing %d events", len(e.events))))
+	b.WriteString(styles.Subtitle.Render(fmt.Sprintf("  Showing %d simulated events", len(e.events))))
 	b.WriteString("\n\n")
 
 	// Table header

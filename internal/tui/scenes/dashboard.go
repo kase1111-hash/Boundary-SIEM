@@ -113,14 +113,22 @@ func (d *DashboardScene) View() string {
 		b.WriteString("\n")
 	}
 
-	// Status indicator
+	// Status indicator with explanation
 	var statusText string
 	if d.stats.Healthy {
 		statusText = styles.StatusOK.Render("● HEALTHY")
+	} else if d.stats.HealthStatus == "degraded" {
+		statusText = styles.StatusWarning.Render("● DEGRADED")
 	} else {
 		statusText = styles.StatusError.Render("● UNHEALTHY")
 	}
-	b.WriteString(fmt.Sprintf("  Status: %s\n\n", statusText))
+	b.WriteString(fmt.Sprintf("  Status: %s", statusText))
+
+	// Show reason
+	if d.stats.StatusReason != "" {
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("  (%s)", d.stats.StatusReason)))
+	}
+	b.WriteString("\n\n")
 
 	// Metrics cards in a row
 	cards := []string{
@@ -165,21 +173,37 @@ func (d *DashboardScene) renderMetricCard(label, value string) string {
 }
 
 func (d *DashboardScene) renderServiceStatus() string {
+	// Services with their actual status based on typical secure defaults
 	services := []struct {
-		name   string
-		status string
-		port   string
+		name    string
+		enabled bool
+		port    string
 	}{
-		{"HTTP API", "running", "8080"},
-		{"CEF UDP", "running", "5514"},
-		{"CEF TCP", "running", "5515"},
-		{"Queue Consumer", "running", "-"},
+		{"HTTP API", true, "8080"},
+		{"CEF TCP", true, "5515"},
+		{"CEF UDP", false, "5514"},  // Disabled by default (insecure)
+		{"CEF DTLS", false, "5516"}, // Disabled until certs configured
+		{"Queue Consumer", true, "-"},
+		{"Storage", false, "-"}, // Placeholder mode
 	}
 
 	var rows []string
 	for _, svc := range services {
-		status := styles.StatusOK.Render("●")
-		row := fmt.Sprintf("  %s %-16s Port: %s", status, svc.name, svc.port)
+		var statusIcon, statusText string
+		if svc.enabled {
+			statusIcon = styles.StatusOK.Render("●")
+			statusText = ""
+		} else {
+			statusIcon = styles.Muted.Render("○")
+			statusText = styles.Muted.Render(" (disabled)")
+		}
+
+		portText := svc.port
+		if svc.port == "-" {
+			portText = "-"
+		}
+
+		row := fmt.Sprintf("  %s %-16s Port: %-6s%s", statusIcon, svc.name, portText, statusText)
 		rows = append(rows, row)
 	}
 
