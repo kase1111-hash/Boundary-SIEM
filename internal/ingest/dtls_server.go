@@ -23,7 +23,7 @@ import (
 
 // Common errors for DTLS server.
 var (
-	ErrDTLSCertRequired    = errors.New("DTLS requires certificate and key")
+	ErrDTLSCertRequired       = errors.New("DTLS requires certificate and key")
 	ErrDTLSClientCertRequired = errors.New("mutual TLS requires CA certificate")
 )
 

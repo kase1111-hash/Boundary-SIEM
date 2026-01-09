@@ -463,12 +463,12 @@ func TestNormalizeToEvent(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "processing-slow-blocks",
-		Severity: "high",
-		Title:    "Slow Block Processing",
+		ID:          uuid.New(),
+		Type:        "processing-slow-blocks",
+		Severity:    "high",
+		Title:       "Slow Block Processing",
 		Description: "Block processing is slow",
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
 		Metadata: map[string]interface{}{
 			"p95_ms": int64(5000),
 		},
@@ -543,10 +543,10 @@ func TestAlertDeduplication(t *testing.T) {
 	})
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "test-alert",
-		Severity: "high",
-		Title:    "Test Alert",
+		ID:        uuid.New(),
+		Type:      "test-alert",
+		Severity:  "high",
+		Title:     "Test Alert",
 		Timestamp: time.Now(),
 	}
 

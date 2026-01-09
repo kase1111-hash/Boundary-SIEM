@@ -315,9 +315,9 @@ func TestAuthService(t *testing.T) {
 			Name:        "Test Organization",
 			Description: "Test tenant",
 			Settings: &auth.TenantSettings{
-				MaxUsers:     10,
-				RequireMFA:   true,
-				Features:     map[string]bool{"blockchain_monitoring": true},
+				MaxUsers:   10,
+				RequireMFA: true,
+				Features:   map[string]bool{"blockchain_monitoring": true},
 			},
 		}
 		err := svc.CreateTenant(newTenant)

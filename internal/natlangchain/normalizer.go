@@ -12,34 +12,34 @@ import (
 // ActionMappings maps NatLangChain event types to canonical action names.
 var ActionMappings = map[string]string{
 	// Entry events
-	"entry.created":    "nlc.entry.created",
-	"entry.validated":  "nlc.entry.validated",
-	"entry.rejected":   "nlc.entry.rejected",
-	"entry.modified":   "nlc.entry.modified",
+	"entry.created":   "nlc.entry.created",
+	"entry.validated": "nlc.entry.validated",
+	"entry.rejected":  "nlc.entry.rejected",
+	"entry.modified":  "nlc.entry.modified",
 
 	// Block events
-	"block.mined":      "nlc.block.mined",
-	"block.validated":  "nlc.block.validated",
-	"block.rejected":   "nlc.block.rejected",
+	"block.mined":     "nlc.block.mined",
+	"block.validated": "nlc.block.validated",
+	"block.rejected":  "nlc.block.rejected",
 
 	// Dispute events
-	"dispute.filed":    "nlc.dispute.filed",
-	"dispute.resolved": "nlc.dispute.resolved",
+	"dispute.filed":     "nlc.dispute.filed",
+	"dispute.resolved":  "nlc.dispute.resolved",
 	"dispute.escalated": "nlc.dispute.escalated",
 	"dispute.dismissed": "nlc.dispute.dismissed",
 
 	// Contract events
-	"contract.created": "nlc.contract.created",
-	"contract.matched": "nlc.contract.matched",
+	"contract.created":   "nlc.contract.created",
+	"contract.matched":   "nlc.contract.matched",
 	"contract.completed": "nlc.contract.completed",
 	"contract.cancelled": "nlc.contract.cancelled",
 
 	// Negotiation events
-	"negotiation.started": "nlc.negotiation.started",
-	"negotiation.round":   "nlc.negotiation.round",
+	"negotiation.started":   "nlc.negotiation.started",
+	"negotiation.round":     "nlc.negotiation.round",
 	"negotiation.completed": "nlc.negotiation.completed",
-	"negotiation.failed":  "nlc.negotiation.failed",
-	"negotiation.timeout": "nlc.negotiation.timeout",
+	"negotiation.failed":    "nlc.negotiation.failed",
+	"negotiation.timeout":   "nlc.negotiation.timeout",
 
 	// Validation/Consensus events
 	"validation.paraphrase": "nlc.validation.paraphrase",
@@ -52,9 +52,9 @@ var ActionMappings = map[string]string{
 	"semantic.drift.critical": "nlc.semantic.drift.critical",
 
 	// Security events
-	"security.adversarial":    "nlc.security.adversarial",
-	"security.manipulation":   "nlc.security.manipulation",
-	"security.impersonation":  "nlc.security.impersonation",
+	"security.adversarial":   "nlc.security.adversarial",
+	"security.manipulation":  "nlc.security.manipulation",
+	"security.impersonation": "nlc.security.impersonation",
 }
 
 // Normalizer converts NatLangChain events to canonical SIEM schema.
@@ -168,11 +168,11 @@ func (n *Normalizer) NormalizeBlock(block *Block, eventType string) (*schema.Eve
 		},
 
 		Metadata: map[string]any{
-			"nlc_block_number":   block.Number,
-			"nlc_block_hash":     block.Hash,
-			"nlc_previous_hash":  block.PreviousHash,
-			"nlc_entry_count":    len(block.Entries),
-			"nlc_validator_id":   block.ValidatorID,
+			"nlc_block_number":  block.Number,
+			"nlc_block_hash":    block.Hash,
+			"nlc_previous_hash": block.PreviousHash,
+			"nlc_entry_count":   len(block.Entries),
+			"nlc_validator_id":  block.ValidatorID,
 		},
 	}
 
@@ -402,14 +402,14 @@ func (n *Normalizer) NormalizeValidationEvent(ve *ValidationEvent) (*schema.Even
 		},
 
 		Metadata: map[string]any{
-			"nlc_validation_id":   ve.ID,
-			"nlc_entry_id":        ve.EntryID,
-			"nlc_validator_id":    ve.ValidatorID,
-			"nlc_event_type":      ve.EventType,
-			"nlc_confidence":      ve.Confidence,
-			"nlc_paraphrase":      ve.Paraphrase,
-			"nlc_debate_role":     ve.DebateRole,
-			"nlc_debate_message":  ve.DebateMessage,
+			"nlc_validation_id":  ve.ID,
+			"nlc_entry_id":       ve.EntryID,
+			"nlc_validator_id":   ve.ValidatorID,
+			"nlc_event_type":     ve.EventType,
+			"nlc_confidence":     ve.Confidence,
+			"nlc_paraphrase":     ve.Paraphrase,
+			"nlc_debate_role":    ve.DebateRole,
+			"nlc_debate_message": ve.DebateMessage,
 		},
 	}
 

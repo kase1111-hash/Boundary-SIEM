@@ -109,15 +109,15 @@ type SocialEvent struct {
 
 // ToolUsageEvent represents a tool usage event.
 type ToolUsageEvent struct {
-	ID         string                 `json:"id"`
-	Timestamp  time.Time              `json:"timestamp"`
-	AgentID    string                 `json:"agent_id"`
-	ToolName   string                 `json:"tool_name"`
-	Operation  string                 `json:"operation"`
-	Success    bool                   `json:"success"`
-	Duration   time.Duration          `json:"duration"`
-	Sandboxed  bool                   `json:"sandboxed"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+	ID        string                 `json:"id"`
+	Timestamp time.Time              `json:"timestamp"`
+	AgentID   string                 `json:"agent_id"`
+	ToolName  string                 `json:"tool_name"`
+	Operation string                 `json:"operation"`
+	Success   bool                   `json:"success"`
+	Duration  time.Duration          `json:"duration"`
+	Sandboxed bool                   `json:"sandboxed"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // SafetyEvent represents a safety/guardrail event.

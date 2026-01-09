@@ -18,10 +18,10 @@ var ActionMappings = map[string]string{
 	"session.abandoned": "ss.session.abandoned",
 
 	// Run events
-	"run.start":              "ss.run.start",
-	"run.end":                "ss.run.end",
+	"run.start":               "ss.run.start",
+	"run.end":                 "ss.run.end",
 	"run.caught_by_sasquatch": "ss.run.caught",
-	"run.crash":              "ss.run.crash",
+	"run.crash":               "ss.run.crash",
 
 	// Trick events
 	"trick.spin":       "ss.trick.spin",
@@ -137,11 +137,11 @@ func (n *Normalizer) NormalizeSession(session *GameSession, eventType string) (*
 		},
 
 		Metadata: map[string]any{
-			"ss_session_id":    session.ID,
-			"ss_player_id":     session.PlayerID,
-			"ss_platform":      session.Platform,
-			"ss_game_version":  session.GameVersion,
-			"ss_terrain_seed":  session.Seed,
+			"ss_session_id":     session.ID,
+			"ss_player_id":      session.PlayerID,
+			"ss_platform":       session.Platform,
+			"ss_game_version":   session.GameVersion,
+			"ss_terrain_seed":   session.Seed,
 			"ss_session_status": session.Status,
 		},
 	}
@@ -439,14 +439,14 @@ func (n *Normalizer) NormalizeAsset(asset *AssetEvent) (*schema.Event, error) {
 		Severity: severity,
 
 		Metadata: map[string]any{
-			"ss_asset_id":    asset.ID,
-			"ss_session_id":  asset.SessionID,
-			"ss_event_type":  asset.EventType,
-			"ss_asset_type":  asset.AssetType,
-			"ss_asset_name":  asset.AssetName,
-			"ss_load_time":   asset.LoadTime,
-			"ss_success":     asset.Success,
-			"ss_error":       asset.ErrorMessage,
+			"ss_asset_id":   asset.ID,
+			"ss_session_id": asset.SessionID,
+			"ss_event_type": asset.EventType,
+			"ss_asset_type": asset.AssetType,
+			"ss_asset_name": asset.AssetName,
+			"ss_load_time":  asset.LoadTime,
+			"ss_success":    asset.Success,
+			"ss_error":      asset.ErrorMessage,
 		},
 	}
 

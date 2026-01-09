@@ -39,18 +39,18 @@ const (
 
 // RPCRequest represents a parsed RPC request.
 type RPCRequest struct {
-	ID          string                 `json:"id"`
-	Type        RPCType                `json:"type"`
-	Method      string                 `json:"method"`
-	Params      interface{}            `json:"params,omitempty"`
-	Timestamp   time.Time              `json:"timestamp"`
-	SourceIP    string                 `json:"source_ip"`
-	UserAgent   string                 `json:"user_agent,omitempty"`
-	Duration    time.Duration          `json:"duration,omitempty"`
-	StatusCode  int                    `json:"status_code,omitempty"`
-	Error       string                 `json:"error,omitempty"`
-	ResponseSize int64                 `json:"response_size,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	ID           string                 `json:"id"`
+	Type         RPCType                `json:"type"`
+	Method       string                 `json:"method"`
+	Params       interface{}            `json:"params,omitempty"`
+	Timestamp    time.Time              `json:"timestamp"`
+	SourceIP     string                 `json:"source_ip"`
+	UserAgent    string                 `json:"user_agent,omitempty"`
+	Duration     time.Duration          `json:"duration,omitempty"`
+	StatusCode   int                    `json:"status_code,omitempty"`
+	Error        string                 `json:"error,omitempty"`
+	ResponseSize int64                  `json:"response_size,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // MethodPolicy defines access policy for an RPC method.
@@ -58,9 +58,9 @@ type MethodPolicy struct {
 	Method      string    `json:"method"`
 	RiskLevel   RiskLevel `json:"risk_level"`
 	Blocked     bool      `json:"blocked"`
-	RateLimit   int       `json:"rate_limit"`  // requests per minute
+	RateLimit   int       `json:"rate_limit"` // requests per minute
 	RequireAuth bool      `json:"require_auth"`
-	LogLevel    string    `json:"log_level"`   // debug, info, warn, error
+	LogLevel    string    `json:"log_level"` // debug, info, warn, error
 }
 
 // Alert represents an RPC security alert.
@@ -81,15 +81,15 @@ type AlertHandler func(context.Context, *Alert) error
 
 // MonitorConfig configures the RPC monitor.
 type MonitorConfig struct {
-	EnableRateLimiting    bool
-	EnableEnumDetection   bool
-	EnableMethodBlocking  bool
-	DefaultRateLimit      int           // requests per minute per IP
-	EnumThreshold         int           // number of distinct methods to trigger alert
-	EnumWindow            time.Duration
-	BlockedMethods        []string
-	SensitiveMethods      []string
-	MethodPolicies        map[string]*MethodPolicy
+	EnableRateLimiting   bool
+	EnableEnumDetection  bool
+	EnableMethodBlocking bool
+	DefaultRateLimit     int // requests per minute per IP
+	EnumThreshold        int // number of distinct methods to trigger alert
+	EnumWindow           time.Duration
+	BlockedMethods       []string
+	SensitiveMethods     []string
+	MethodPolicies       map[string]*MethodPolicy
 }
 
 // DefaultMonitorConfig returns default configuration.
@@ -133,10 +133,10 @@ type Monitor struct {
 	methodCalls map[string]map[string]time.Time // IP -> method -> last call
 
 	// Statistics
-	totalRequests    int64
-	blockedRequests  int64
-	rateLimitedReqs  int64
-	suspiciousReqs   int64
+	totalRequests   int64
+	blockedRequests int64
+	rateLimitedReqs int64
+	suspiciousReqs  int64
 }
 
 type rateLimitState struct {
@@ -456,13 +456,13 @@ func (m *Monitor) GetStats() map[string]interface{} {
 	defer m.mu.RUnlock()
 
 	return map[string]interface{}{
-		"total_requests":     m.totalRequests,
-		"blocked_requests":   m.blockedRequests,
-		"rate_limited":       m.rateLimitedReqs,
-		"suspicious":         m.suspiciousReqs,
-		"tracked_ips":        len(m.rateLimits),
-		"blocked_methods":    len(m.config.BlockedMethods),
-		"sensitive_methods":  len(m.config.SensitiveMethods),
+		"total_requests":    m.totalRequests,
+		"blocked_requests":  m.blockedRequests,
+		"rate_limited":      m.rateLimitedReqs,
+		"suspicious":        m.suspiciousReqs,
+		"tracked_ips":       len(m.rateLimits),
+		"blocked_methods":   len(m.config.BlockedMethods),
+		"sensitive_methods": len(m.config.SensitiveMethods),
 	}
 }
 
@@ -490,10 +490,10 @@ func (m *Monitor) NormalizeToEvent(req *RPCRequest, result *ProcessResult, tenan
 	}
 
 	metadata := map[string]interface{}{
-		"rpc_type":    string(req.Type),
-		"method":      req.Method,
-		"allowed":     result.Allowed,
-		"user_agent":  req.UserAgent,
+		"rpc_type":   string(req.Type),
+		"method":     req.Method,
+		"allowed":    result.Allowed,
+		"user_agent": req.UserAgent,
 	}
 
 	if req.Duration > 0 {

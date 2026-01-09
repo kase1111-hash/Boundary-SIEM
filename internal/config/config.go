@@ -174,13 +174,13 @@ type ValidationConfig struct {
 
 // AuthConfig holds authentication settings.
 type AuthConfig struct {
-	APIKeyHeader         string   `yaml:"api_key_header"`
-	APIKeys              []string `yaml:"api_keys"`
-	Enabled              bool     `yaml:"enabled"`
-	DefaultAdminUsername string   `yaml:"default_admin_username"`
-	DefaultAdminPassword string   `yaml:"default_admin_password"`
-	DefaultAdminEmail    string   `yaml:"default_admin_email"`
-	RequirePasswordChange bool    `yaml:"require_password_change"` // Force password change on first login
+	APIKeyHeader          string   `yaml:"api_key_header"`
+	APIKeys               []string `yaml:"api_keys"`
+	Enabled               bool     `yaml:"enabled"`
+	DefaultAdminUsername  string   `yaml:"default_admin_username"`
+	DefaultAdminPassword  string   `yaml:"default_admin_password"`
+	DefaultAdminEmail     string   `yaml:"default_admin_email"`
+	RequirePasswordChange bool     `yaml:"require_password_change"` // Force password change on first login
 }
 
 // LoggingConfig holds logging settings.
@@ -371,13 +371,13 @@ func DefaultConfig() *Config {
 			MaxAge:           86400, // 24 hours preflight cache
 		},
 		RateLimit: RateLimitConfig{
-			Enabled:       true,              // Rate limiting enabled by default
-			RequestsPerIP: 1000,              // 1000 requests per IP per window
-			WindowSize:    time.Minute,       // 1 minute window
-			BurstSize:     50,                // Allow 50 extra requests burst
-			CleanupPeriod: 5 * time.Minute,   // Clean old entries every 5 minutes
+			Enabled:       true,                            // Rate limiting enabled by default
+			RequestsPerIP: 1000,                            // 1000 requests per IP per window
+			WindowSize:    time.Minute,                     // 1 minute window
+			BurstSize:     50,                              // Allow 50 extra requests burst
+			CleanupPeriod: 5 * time.Minute,                 // Clean old entries every 5 minutes
 			ExemptPaths:   []string{"/health", "/metrics"}, // Health/metrics exempt
-			TrustProxy:    false,             // Don't trust X-Forwarded-For by default
+			TrustProxy:    false,                           // Don't trust X-Forwarded-For by default
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -409,56 +409,56 @@ func DefaultConfig() *Config {
 			ShutdownWait: 30 * time.Second,
 		},
 		Secrets: SecretsConfig{
-			EnableVault:    false,            // Vault disabled by default
-			EnableEnv:      true,             // Environment variables enabled by default
-			EnableFile:     false,            // File secrets disabled by default
-			VaultAddress:   "",               // Must be configured if Vault is enabled
-			VaultToken:     "",               // Must be configured if Vault is enabled
+			EnableVault:    false,                  // Vault disabled by default
+			EnableEnv:      true,                   // Environment variables enabled by default
+			EnableFile:     false,                  // File secrets disabled by default
+			VaultAddress:   "",                     // Must be configured if Vault is enabled
+			VaultToken:     "",                     // Must be configured if Vault is enabled
 			VaultPath:      "secret/boundary-siem", // Default Vault path
-			VaultTimeout:   10 * time.Second, // Vault request timeout
-			FileSecretsDir: "/etc/secrets",   // Default directory for file-based secrets
-			CacheTTL:       5 * time.Minute,  // Cache secrets for 5 minutes
+			VaultTimeout:   10 * time.Second,       // Vault request timeout
+			FileSecretsDir: "/etc/secrets",         // Default directory for file-based secrets
+			CacheTTL:       5 * time.Minute,        // Cache secrets for 5 minutes
 		},
 		Encryption: EncryptionConfig{
-			Enabled:            false,           // Encryption disabled by default
-			KeySource:          "env",           // Get key from environment by default
+			Enabled:            false,                     // Encryption disabled by default
+			KeySource:          "env",                     // Get key from environment by default
 			KeyName:            "BOUNDARY_ENCRYPTION_KEY", // Default env var name
-			KeyVersion:         1,               // Initial key version
-			EncryptSessionData: true,            // Encrypt sessions when enabled
-			EncryptUserData:    true,            // Encrypt user data when enabled
-			EncryptAPIKeys:     true,            // Encrypt API keys when enabled
+			KeyVersion:         1,                         // Initial key version
+			EncryptSessionData: true,                      // Encrypt sessions when enabled
+			EncryptUserData:    true,                      // Encrypt user data when enabled
+			EncryptAPIKeys:     true,                      // Encrypt API keys when enabled
 		},
 		SecurityHeaders: SecurityHeadersConfig{
-			Enabled:                   true,                               // Security headers enabled by default
-			HSTSEnabled:               true,                               // HSTS enabled
-			HSTSMaxAge:                31536000,                           // 1 year
-			HSTSIncludeSubdomains:     true,                               // Include subdomains
-			HSTSPreload:               false,                              // Preload requires manual submission
-			CSPEnabled:                true,                               // CSP enabled
-			CSPDefaultSrc:             []string{"'self'"},                 // Default to same origin
-			CSPScriptSrc:              []string{"'self'"},                 // Scripts from same origin only
-			CSPStyleSrc:               []string{"'self'", "'unsafe-inline'"}, // Styles with inline support
-			CSPImgSrc:                 []string{"'self'", "data:", "https:"}, // Images from self, data URIs, HTTPS
-			CSPFontSrc:                []string{"'self'"},                 // Fonts from same origin
-			CSPConnectSrc:             []string{"'self'"},                 // Connect to same origin
-			CSPFrameAncestors:         []string{"'none'"},                 // Prevent framing
-			CSPReportOnly:             false,                              // Enforce CSP
-			FrameOptionsEnabled:       true,                               // X-Frame-Options enabled
-			FrameOptionsValue:         "DENY",                             // Deny all framing
-			ContentTypeOptionsEnabled: true,                               // X-Content-Type-Options enabled
-			XSSProtectionEnabled:      true,                               // X-XSS-Protection enabled
-			XSSProtectionValue:        "1; mode=block",                    // Block XSS
-			ReferrerPolicyEnabled:     true,                               // Referrer-Policy enabled
-			ReferrerPolicyValue:       "strict-origin-when-cross-origin",  // Strict referrer
-			PermissionsPolicyEnabled:  true,                               // Permissions-Policy enabled
-			PermissionsPolicyValue:    "geolocation=(), microphone=(), camera=(), payment=(), usb=()", // Restrict features
-			CrossOriginOpenerPolicyEnabled:   true,           // COOP enabled
-			CrossOriginOpenerPolicyValue:     "same-origin",  // Same origin only
-			CrossOriginEmbedderPolicyEnabled: false,          // COEP disabled (can break integrations)
-			CrossOriginEmbedderPolicyValue:   "require-corp", // Require CORP
-			CrossOriginResourcePolicyEnabled: true,           // CORP enabled
-			CrossOriginResourcePolicyValue:   "same-origin",  // Same origin only
-			CustomHeaders:                     make(map[string]string), // No custom headers by default
+			Enabled:                          true,                                                           // Security headers enabled by default
+			HSTSEnabled:                      true,                                                           // HSTS enabled
+			HSTSMaxAge:                       31536000,                                                       // 1 year
+			HSTSIncludeSubdomains:            true,                                                           // Include subdomains
+			HSTSPreload:                      false,                                                          // Preload requires manual submission
+			CSPEnabled:                       true,                                                           // CSP enabled
+			CSPDefaultSrc:                    []string{"'self'"},                                             // Default to same origin
+			CSPScriptSrc:                     []string{"'self'"},                                             // Scripts from same origin only
+			CSPStyleSrc:                      []string{"'self'", "'unsafe-inline'"},                          // Styles with inline support
+			CSPImgSrc:                        []string{"'self'", "data:", "https:"},                          // Images from self, data URIs, HTTPS
+			CSPFontSrc:                       []string{"'self'"},                                             // Fonts from same origin
+			CSPConnectSrc:                    []string{"'self'"},                                             // Connect to same origin
+			CSPFrameAncestors:                []string{"'none'"},                                             // Prevent framing
+			CSPReportOnly:                    false,                                                          // Enforce CSP
+			FrameOptionsEnabled:              true,                                                           // X-Frame-Options enabled
+			FrameOptionsValue:                "DENY",                                                         // Deny all framing
+			ContentTypeOptionsEnabled:        true,                                                           // X-Content-Type-Options enabled
+			XSSProtectionEnabled:             true,                                                           // X-XSS-Protection enabled
+			XSSProtectionValue:               "1; mode=block",                                                // Block XSS
+			ReferrerPolicyEnabled:            true,                                                           // Referrer-Policy enabled
+			ReferrerPolicyValue:              "strict-origin-when-cross-origin",                              // Strict referrer
+			PermissionsPolicyEnabled:         true,                                                           // Permissions-Policy enabled
+			PermissionsPolicyValue:           "geolocation=(), microphone=(), camera=(), payment=(), usb=()", // Restrict features
+			CrossOriginOpenerPolicyEnabled:   true,                                                           // COOP enabled
+			CrossOriginOpenerPolicyValue:     "same-origin",                                                  // Same origin only
+			CrossOriginEmbedderPolicyEnabled: false,                                                          // COEP disabled (can break integrations)
+			CrossOriginEmbedderPolicyValue:   "require-corp",                                                 // Require CORP
+			CrossOriginResourcePolicyEnabled: true,                                                           // CORP enabled
+			CrossOriginResourcePolicyValue:   "same-origin",                                                  // Same origin only
+			CustomHeaders:                    make(map[string]string),                                        // No custom headers by default
 		},
 	}
 }

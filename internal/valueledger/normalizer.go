@@ -66,15 +66,15 @@ func (n *Normalizer) NormalizeLedgerEntry(entry *LedgerEntry) (*schema.Event, er
 		Severity: severity,
 
 		Metadata: map[string]any{
-			"vl_entry_id":     entry.ID,
-			"vl_entry_type":   entry.EntryType,
-			"vl_session_id":   entry.SessionID,
-			"vl_total_value":  entry.TotalValue,
-			"vl_content_hash": entry.ContentHash,
-			"vl_value_time":   entry.Value.Time,
-			"vl_value_effort": entry.Value.Effort,
+			"vl_entry_id":      entry.ID,
+			"vl_entry_type":    entry.EntryType,
+			"vl_session_id":    entry.SessionID,
+			"vl_total_value":   entry.TotalValue,
+			"vl_content_hash":  entry.ContentHash,
+			"vl_value_time":    entry.Value.Time,
+			"vl_value_effort":  entry.Value.Effort,
 			"vl_value_novelty": entry.Value.Novelty,
-			"vl_revoked":      entry.Revoked,
+			"vl_revoked":       entry.Revoked,
 		},
 	}
 
@@ -172,9 +172,9 @@ func (n *Normalizer) NormalizeMerkleProof(proof *MerkleProof, agentID string) (*
 		Severity: severity,
 
 		Metadata: map[string]any{
-			"vl_entry_id":   proof.EntryID,
+			"vl_entry_id":    proof.EntryID,
 			"vl_merkle_root": proof.Root,
-			"vl_verified":   proof.Verified,
+			"vl_verified":    proof.Verified,
 			"vl_path_length": len(proof.Path),
 		},
 	}

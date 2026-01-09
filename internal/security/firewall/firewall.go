@@ -90,16 +90,16 @@ type Status struct {
 
 // Config holds firewall configuration.
 type Config struct {
-	Backend           Backend       `json:"backend"`
-	NftablesPath      string        `json:"nftables_path"`
-	IptablesPath      string        `json:"iptables_path"`
-	RulesFile         string        `json:"rules_file"`
-	BlocklistTimeout  time.Duration `json:"blocklist_timeout"`
-	EnableLogging     bool          `json:"enable_logging"`
-	LogPrefix         string        `json:"log_prefix"`
-	TrustedNetworks   []string      `json:"trusted_networks"`
-	PublicPorts       []int         `json:"public_ports"`
-	ManagementPorts   []int         `json:"management_ports"`
+	Backend          Backend       `json:"backend"`
+	NftablesPath     string        `json:"nftables_path"`
+	IptablesPath     string        `json:"iptables_path"`
+	RulesFile        string        `json:"rules_file"`
+	BlocklistTimeout time.Duration `json:"blocklist_timeout"`
+	EnableLogging    bool          `json:"enable_logging"`
+	LogPrefix        string        `json:"log_prefix"`
+	TrustedNetworks  []string      `json:"trusted_networks"`
+	PublicPorts      []int         `json:"public_ports"`
+	ManagementPorts  []int         `json:"management_ports"`
 }
 
 // DefaultConfig returns default firewall configuration.
@@ -125,12 +125,12 @@ func DefaultConfig() *Config {
 // Manager manages firewall rules.
 type Manager struct {
 	mu             sync.RWMutex
-	backendMu      sync.RWMutex   // Protects backend field
-	detectMu       sync.Mutex     // Ensures only one detection runs at a time
+	backendMu      sync.RWMutex // Protects backend field
+	detectMu       sync.Mutex   // Ensures only one detection runs at a time
 	config         *Config
 	backend        Backend
-	backendChecked bool           // Whether backend has been detected
-	detecting      bool           // Whether detection is in progress
+	backendChecked bool // Whether backend has been detected
+	detecting      bool // Whether detection is in progress
 	logger         *slog.Logger
 	blockedIPs     map[string]*BlockedIP
 	rules          []*Rule

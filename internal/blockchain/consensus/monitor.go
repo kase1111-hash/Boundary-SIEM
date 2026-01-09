@@ -36,10 +36,10 @@ type ValidatorMetrics struct {
 	Timestamp time.Time
 
 	// Duty tracking
-	TotalDuties        int
-	ExecutedDuties     int
-	MissedDuties       int
-	ParticipationRate  float64
+	TotalDuties       int
+	ExecutedDuties    int
+	MissedDuties      int
+	ParticipationRate float64
 
 	// Attestation performance
 	AttestationDuties  int
@@ -47,17 +47,17 @@ type ValidatorMetrics struct {
 	AttestationRate    float64
 
 	// Block proposal performance
-	ProposalDuties     int
-	MissedProposals    int
-	ProposalRate       float64
+	ProposalDuties  int
+	MissedProposals int
+	ProposalRate    float64
 
 	// Slashing
-	SlashingEvents     int
-	TotalSlashingLoss  uint64
+	SlashingEvents    int
+	TotalSlashingLoss uint64
 
 	// Performance scoring
-	PerformanceScore   float64 // 0.0 to 100.0
-	Effectiveness      float64 // Attestations/Expected
+	PerformanceScore float64 // 0.0 to 100.0
+	Effectiveness    float64 // Attestations/Expected
 }
 
 // MonitorConfig contains configuration for the consensus monitor.
@@ -72,8 +72,8 @@ type MonitorConfig struct {
 	SlashingAlertEnabled       bool
 
 	// Performance scoring
-	PerformanceWindow    time.Duration
-	MinPerformanceScore  float64
+	PerformanceWindow   time.Duration
+	MinPerformanceScore float64
 
 	// Monitoring
 	CheckInterval    time.Duration
@@ -83,9 +83,9 @@ type MonitorConfig struct {
 // DefaultMonitorConfig returns default configuration.
 func DefaultMonitorConfig() MonitorConfig {
 	return MonitorConfig{
-		MinParticipationRate:       95.0,  // 95% minimum
-		MinAttestationRate:         98.0,  // 98% minimum
-		MinProposalRate:            90.0,  // 90% minimum
+		MinParticipationRate:       95.0, // 95% minimum
+		MinAttestationRate:         98.0, // 98% minimum
+		MinProposalRate:            90.0, // 90% minimum
 		ConsecutiveMissesThreshold: 3,
 		SlashingAlertEnabled:       true,
 		PerformanceWindow:          24 * time.Hour,
@@ -115,15 +115,15 @@ type Monitor struct {
 	config MonitorConfig
 	logger *slog.Logger
 
-	mu                   sync.RWMutex
-	duties               []ValidatorDuty
-	slashingEvents       []SlashingEvent
-	metricsHistory       []ValidatorMetrics
-	lastMetrics          *ValidatorMetrics
-	handlers             []AlertHandler
-	recentAlerts         map[string]time.Time
-	consecutiveMisses    int
-	validatorIndices     map[uint64]bool
+	mu                sync.RWMutex
+	duties            []ValidatorDuty
+	slashingEvents    []SlashingEvent
+	metricsHistory    []ValidatorMetrics
+	lastMetrics       *ValidatorMetrics
+	handlers          []AlertHandler
+	recentAlerts      map[string]time.Time
+	consecutiveMisses int
+	validatorIndices  map[uint64]bool
 
 	running bool
 	stopCh  chan struct{}

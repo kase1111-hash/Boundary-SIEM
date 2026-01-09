@@ -230,9 +230,9 @@ func TestCSRFProtection_TokensMatch(t *testing.T) {
 	token2, _ := csrf.GenerateToken()
 
 	tests := []struct {
-		name      string
-		token1    string
-		token2    string
+		name        string
+		token1      string
+		token2      string
 		shouldMatch bool
 	}{
 		{"identical tokens", token1, token1, true},

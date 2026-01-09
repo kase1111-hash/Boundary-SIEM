@@ -17,29 +17,29 @@ import (
 
 // PeerInfo represents information about a connected peer.
 type PeerInfo struct {
-	ID              string    `json:"id"`
-	IPAddress       string    `json:"ip_address"`
-	Port            int       `json:"port"`
-	Country         string    `json:"country,omitempty"`
-	ASN             int       `json:"asn,omitempty"`
-	ASNOrg          string    `json:"asn_org,omitempty"`
-	UserAgent       string    `json:"user_agent,omitempty"`
-	ProtocolVersion string    `json:"protocol_version,omitempty"`
+	ID              string `json:"id"`
+	IPAddress       string `json:"ip_address"`
+	Port            int    `json:"port"`
+	Country         string `json:"country,omitempty"`
+	ASN             int    `json:"asn,omitempty"`
+	ASNOrg          string `json:"asn_org,omitempty"`
+	UserAgent       string `json:"user_agent,omitempty"`
+	ProtocolVersion string `json:"protocol_version,omitempty"`
 
 	// Connection info
-	Direction       string    `json:"direction"` // "inbound" or "outbound"
-	ConnectedAt     time.Time `json:"connected_at"`
-	LastSeenAt      time.Time `json:"last_seen_at"`
+	Direction   string    `json:"direction"` // "inbound" or "outbound"
+	ConnectedAt time.Time `json:"connected_at"`
+	LastSeenAt  time.Time `json:"last_seen_at"`
 
 	// Quality metrics
-	QualityScore    float64   `json:"quality_score"` // 0.0 to 1.0
-	Latency         int       `json:"latency_ms"`
-	FailedRequests  int       `json:"failed_requests"`
-	SuccessRequests int       `json:"success_requests"`
+	QualityScore    float64 `json:"quality_score"` // 0.0 to 1.0
+	Latency         int     `json:"latency_ms"`
+	FailedRequests  int     `json:"failed_requests"`
+	SuccessRequests int     `json:"success_requests"`
 
 	// Bandwidth
-	BytesSent       uint64    `json:"bytes_sent"`
-	BytesReceived   uint64    `json:"bytes_received"`
+	BytesSent     uint64 `json:"bytes_sent"`
+	BytesReceived uint64 `json:"bytes_received"`
 }
 
 // NetworkMetrics contains current network health metrics.
@@ -47,24 +47,24 @@ type NetworkMetrics struct {
 	Timestamp time.Time `json:"timestamp"`
 
 	// Peer counts
-	TotalPeers       int `json:"total_peers"`
-	InboundPeers     int `json:"inbound_peers"`
-	OutboundPeers    int `json:"outbound_peers"`
-	InboundPercent   float64 `json:"inbound_percent"`
+	TotalPeers     int     `json:"total_peers"`
+	InboundPeers   int     `json:"inbound_peers"`
+	OutboundPeers  int     `json:"outbound_peers"`
+	InboundPercent float64 `json:"inbound_percent"`
 
 	// Geographic diversity
-	PeersByCountry   map[string]int `json:"peers_by_country"`
-	PeersByASN       map[int]int    `json:"peers_by_asn"`
-	TopCountry       string         `json:"top_country"`
-	TopCountryCount  int            `json:"top_country_count"`
-	TopCountryPercent float64       `json:"top_country_percent"`
-	TopASN           int            `json:"top_asn"`
-	TopASNCount      int            `json:"top_asn_count"`
-	TopASNPercent    float64        `json:"top_asn_percent"`
+	PeersByCountry    map[string]int `json:"peers_by_country"`
+	PeersByASN        map[int]int    `json:"peers_by_asn"`
+	TopCountry        string         `json:"top_country"`
+	TopCountryCount   int            `json:"top_country_count"`
+	TopCountryPercent float64        `json:"top_country_percent"`
+	TopASN            int            `json:"top_asn"`
+	TopASNCount       int            `json:"top_asn_count"`
+	TopASNPercent     float64        `json:"top_asn_percent"`
 
 	// Peer quality
-	AvgQualityScore  float64 `json:"avg_quality_score"`
-	LowQualityCount  int     `json:"low_quality_count"`
+	AvgQualityScore   float64 `json:"avg_quality_score"`
+	LowQualityCount   int     `json:"low_quality_count"`
 	LowQualityPercent float64 `json:"low_quality_percent"`
 
 	// Bandwidth
@@ -75,8 +75,8 @@ type NetworkMetrics struct {
 	BandwidthPercent   float64 `json:"bandwidth_percent"`
 
 	// Connection churn
-	PeerChurnRate    float64 `json:"peer_churn_rate"` // Percentage turnover
-	ConnectionFailures int   `json:"connection_failures"`
+	PeerChurnRate      float64 `json:"peer_churn_rate"` // Percentage turnover
+	ConnectionFailures int     `json:"connection_failures"`
 }
 
 // Alert represents a network health alert.
@@ -97,69 +97,69 @@ type AlertHandler func(context.Context, *Alert) error
 // MonitorConfig configures the network monitor.
 type MonitorConfig struct {
 	// Peer count thresholds
-	MinPeerCount         int     // Minimum peers (default: 50 for Ethereum)
-	OptimalPeerCount     int     // Optimal peers (default: 100)
-	MaxPeerCount         int     // Maximum peers (default: 150)
-	LowPeerCritical      int     // Critical low peer count (default: 20)
+	MinPeerCount     int // Minimum peers (default: 50 for Ethereum)
+	OptimalPeerCount int // Optimal peers (default: 100)
+	MaxPeerCount     int // Maximum peers (default: 150)
+	LowPeerCritical  int // Critical low peer count (default: 20)
 
 	// Peer ratio
-	MinInboundPercent    float64 // Min inbound peers % (default: 20%)
-	MaxInboundPercent    float64 // Max inbound peers % (default: 80%)
+	MinInboundPercent float64 // Min inbound peers % (default: 20%)
+	MaxInboundPercent float64 // Max inbound peers % (default: 80%)
 
 	// Geographic diversity (eclipse attack detection)
-	MaxCountryPercent    float64 // Max peers from single country (default: 50%)
-	MaxASNPercent        float64 // Max peers from single ASN (default: 50%)
-	EclipseASNThreshold  float64 // ASN concentration = eclipse risk (default: 70%)
+	MaxCountryPercent   float64 // Max peers from single country (default: 50%)
+	MaxASNPercent       float64 // Max peers from single ASN (default: 50%)
+	EclipseASNThreshold float64 // ASN concentration = eclipse risk (default: 70%)
 
 	// Peer quality
 	LowQualityThreshold  float64 // Quality score threshold (default: 0.5)
 	MaxLowQualityPercent float64 // Max % low quality peers (default: 30%)
 
 	// Bandwidth
-	BandwidthLimit       uint64  // Bandwidth limit in bps (default: 10 Gbps)
-	BandwidthWarning     float64 // % for warning (default: 80%)
-	BandwidthCritical    float64 // % for critical (default: 90%)
+	BandwidthLimit    uint64  // Bandwidth limit in bps (default: 10 Gbps)
+	BandwidthWarning  float64 // % for warning (default: 80%)
+	BandwidthCritical float64 // % for critical (default: 90%)
 
 	// Connection churn
-	ChurnRateThreshold   float64       // % turnover to alert (default: 50%)
-	ChurnCheckWindow     time.Duration // Window for churn calculation (default: 10 min)
-	MaxConnectionFailures int          // Max failures per minute (default: 10)
+	ChurnRateThreshold    float64       // % turnover to alert (default: 50%)
+	ChurnCheckWindow      time.Duration // Window for churn calculation (default: 10 min)
+	MaxConnectionFailures int           // Max failures per minute (default: 10)
 
 	// Monitoring intervals
-	CheckInterval        time.Duration // How often to check (default: 30s)
-	MetricsRetention     int           // Historical metrics to keep (default: 2880 = 24h)
-	CleanupInterval      time.Duration // Cleanup old data (default: 5 min)
+	CheckInterval    time.Duration // How often to check (default: 30s)
+	MetricsRetention int           // Historical metrics to keep (default: 2880 = 24h)
+	CleanupInterval  time.Duration // Cleanup old data (default: 5 min)
 }
 
 // DefaultMonitorConfig returns default configuration.
 func DefaultMonitorConfig() MonitorConfig {
 	return MonitorConfig{
-		MinPeerCount:         50,
-		OptimalPeerCount:     100,
-		MaxPeerCount:         150,
-		LowPeerCritical:      20,
+		MinPeerCount:     50,
+		OptimalPeerCount: 100,
+		MaxPeerCount:     150,
+		LowPeerCritical:  20,
 
-		MinInboundPercent:    20.0,
-		MaxInboundPercent:    80.0,
+		MinInboundPercent: 20.0,
+		MaxInboundPercent: 80.0,
 
-		MaxCountryPercent:    50.0,
-		MaxASNPercent:        50.0,
-		EclipseASNThreshold:  70.0,
+		MaxCountryPercent:   50.0,
+		MaxASNPercent:       50.0,
+		EclipseASNThreshold: 70.0,
 
 		LowQualityThreshold:  0.5,
 		MaxLowQualityPercent: 30.0,
 
-		BandwidthLimit:       10 * 1000 * 1000 * 1000, // 10 Gbps
-		BandwidthWarning:     80.0,
-		BandwidthCritical:    90.0,
+		BandwidthLimit:    10 * 1000 * 1000 * 1000, // 10 Gbps
+		BandwidthWarning:  80.0,
+		BandwidthCritical: 90.0,
 
-		ChurnRateThreshold:   50.0,
-		ChurnCheckWindow:     10 * time.Minute,
+		ChurnRateThreshold:    50.0,
+		ChurnCheckWindow:      10 * time.Minute,
 		MaxConnectionFailures: 10,
 
-		CheckInterval:        30 * time.Second,
-		MetricsRetention:     2880,
-		CleanupInterval:      5 * time.Minute,
+		CheckInterval:    30 * time.Second,
+		MetricsRetention: 2880,
+		CleanupInterval:  5 * time.Minute,
 	}
 }
 
@@ -170,22 +170,22 @@ type Monitor struct {
 	mu       sync.RWMutex
 
 	// Peer tracking
-	peers            map[string]*PeerInfo
-	metricsHistory   []NetworkMetrics
-	lastMetrics      *NetworkMetrics
+	peers          map[string]*PeerInfo
+	metricsHistory []NetworkMetrics
+	lastMetrics    *NetworkMetrics
 
 	// Churn tracking
-	peerSnapshot     map[string]bool // Snapshot for churn calculation
-	snapshotTime     time.Time
-	connectionFails  []time.Time
+	peerSnapshot    map[string]bool // Snapshot for churn calculation
+	snapshotTime    time.Time
+	connectionFails []time.Time
 
 	// Alert deduplication
-	recentAlerts     map[string]time.Time
+	recentAlerts map[string]time.Time
 
 	// Lifecycle
-	stopCh           chan struct{}
-	wg               sync.WaitGroup
-	logger           *slog.Logger
+	stopCh chan struct{}
+	wg     sync.WaitGroup
+	logger *slog.Logger
 }
 
 // NewMonitor creates a new network monitor.
@@ -527,9 +527,9 @@ func (m *Monitor) checkGeographicDiversity(ctx context.Context, metrics *Network
 			Timestamp: metrics.Timestamp,
 			Metrics:   metrics,
 			Metadata: map[string]interface{}{
-				"top_asn":         metrics.TopASN,
-				"asn_percent":     metrics.TopASNPercent,
-				"peers_from_asn":  metrics.TopASNCount,
+				"top_asn":        metrics.TopASN,
+				"asn_percent":    metrics.TopASNPercent,
+				"peers_from_asn": metrics.TopASNCount,
 			},
 		})
 	} else if metrics.TopASNPercent >= m.config.MaxASNPercent {
@@ -543,8 +543,8 @@ func (m *Monitor) checkGeographicDiversity(ctx context.Context, metrics *Network
 			Timestamp: metrics.Timestamp,
 			Metrics:   metrics,
 			Metadata: map[string]interface{}{
-				"top_asn":      metrics.TopASN,
-				"asn_percent":  metrics.TopASNPercent,
+				"top_asn":     metrics.TopASN,
+				"asn_percent": metrics.TopASNPercent,
 			},
 		})
 	}
@@ -561,8 +561,8 @@ func (m *Monitor) checkGeographicDiversity(ctx context.Context, metrics *Network
 			Timestamp: metrics.Timestamp,
 			Metrics:   metrics,
 			Metadata: map[string]interface{}{
-				"top_country":      metrics.TopCountry,
-				"country_percent":  metrics.TopCountryPercent,
+				"top_country":     metrics.TopCountry,
+				"country_percent": metrics.TopCountryPercent,
 			},
 		})
 	}
@@ -587,8 +587,8 @@ func (m *Monitor) checkPeerQuality(ctx context.Context, metrics *NetworkMetrics)
 			Timestamp: metrics.Timestamp,
 			Metrics:   metrics,
 			Metadata: map[string]interface{}{
-				"low_quality_count":   metrics.LowQualityCount,
-				"avg_quality_score":   metrics.AvgQualityScore,
+				"low_quality_count": metrics.LowQualityCount,
+				"avg_quality_score": metrics.AvgQualityScore,
 			},
 		})
 	}
@@ -690,9 +690,9 @@ func (m *Monitor) checkChurn(ctx context.Context) {
 				threshold),
 			Timestamp: time.Now(),
 			Metadata: map[string]interface{}{
-				"churn_rate":    churnRate,
-				"peers_left":    left,
-				"peers_joined":  joined,
+				"churn_rate":   churnRate,
+				"peers_left":   left,
+				"peers_joined": joined,
 			},
 		})
 	}
@@ -823,9 +823,9 @@ func (m *Monitor) GetStats() map[string]interface{} {
 	defer m.mu.RUnlock()
 
 	stats := map[string]interface{}{
-		"total_peers":      len(m.peers),
-		"metrics_count":    len(m.metricsHistory),
-		"check_interval":   m.config.CheckInterval.String(),
+		"total_peers":    len(m.peers),
+		"metrics_count":  len(m.metricsHistory),
+		"check_interval": m.config.CheckInterval.String(),
 	}
 
 	if m.lastMetrics != nil {

@@ -19,15 +19,15 @@ import (
 type TransactionType string
 
 const (
-	TxTypeTransfer    TransactionType = "transfer"
-	TxTypeSwap        TransactionType = "swap"
-	TxTypeFlashLoan   TransactionType = "flash_loan"
-	TxTypeLiquidity   TransactionType = "liquidity"
-	TxTypeArbitrage   TransactionType = "arbitrage"
-	TxTypeSandwich    TransactionType = "sandwich"
-	TxTypeMEV         TransactionType = "mev"
-	TxTypeContract    TransactionType = "contract"
-	TxTypeUnknown     TransactionType = "unknown"
+	TxTypeTransfer  TransactionType = "transfer"
+	TxTypeSwap      TransactionType = "swap"
+	TxTypeFlashLoan TransactionType = "flash_loan"
+	TxTypeLiquidity TransactionType = "liquidity"
+	TxTypeArbitrage TransactionType = "arbitrage"
+	TxTypeSandwich  TransactionType = "sandwich"
+	TxTypeMEV       TransactionType = "mev"
+	TxTypeContract  TransactionType = "contract"
+	TxTypeUnknown   TransactionType = "unknown"
 )
 
 // Transaction represents a blockchain transaction.
@@ -48,16 +48,16 @@ type Transaction struct {
 	Type        TransactionType `json:"type"`
 	Network     string          `json:"network"`
 	// Decoded fields
-	MethodID    string   `json:"method_id,omitempty"`
-	MethodName  string   `json:"method_name,omitempty"`
-	TokenIn     string   `json:"token_in,omitempty"`
-	TokenOut    string   `json:"token_out,omitempty"`
-	AmountIn    *big.Int `json:"amount_in,omitempty"`
-	AmountOut   *big.Int `json:"amount_out,omitempty"`
+	MethodID   string   `json:"method_id,omitempty"`
+	MethodName string   `json:"method_name,omitempty"`
+	TokenIn    string   `json:"token_in,omitempty"`
+	TokenOut   string   `json:"token_out,omitempty"`
+	AmountIn   *big.Int `json:"amount_in,omitempty"`
+	AmountOut  *big.Int `json:"amount_out,omitempty"`
 	// MEV-related
-	IsMEV           bool    `json:"is_mev"`
-	MEVProfit       *big.Int `json:"mev_profit,omitempty"`
-	SandwichVictim  string  `json:"sandwich_victim,omitempty"`
+	IsMEV          bool     `json:"is_mev"`
+	MEVProfit      *big.Int `json:"mev_profit,omitempty"`
+	SandwichVictim string   `json:"sandwich_victim,omitempty"`
 }
 
 // PendingTx represents a transaction in the mempool.
@@ -72,13 +72,13 @@ type PendingTx struct {
 
 // MonitorConfig configures the mempool monitor.
 type MonitorConfig struct {
-	MEVDetection         bool
-	SandwichDetection    bool
-	FlashLoanDetection   bool
+	MEVDetection           bool
+	SandwichDetection      bool
+	FlashLoanDetection     bool
 	LargeTransferThreshold *big.Int
-	GasPriceThreshold    *big.Int
-	WindowDuration       time.Duration
-	MaxPendingTxs        int
+	GasPriceThreshold      *big.Int
+	WindowDuration         time.Duration
+	MaxPendingTxs          int
 }
 
 // DefaultMonitorConfig returns default configuration.
@@ -102,13 +102,13 @@ func DefaultMonitorConfig() MonitorConfig {
 
 // Alert represents a mempool security alert.
 type Alert struct {
-	ID          uuid.UUID         `json:"id"`
-	Type        string            `json:"type"`
-	Severity    string            `json:"severity"`
-	Title       string            `json:"title"`
-	Description string            `json:"description"`
-	Timestamp   time.Time         `json:"timestamp"`
-	TxHashes    []string          `json:"tx_hashes"`
+	ID          uuid.UUID              `json:"id"`
+	Type        string                 `json:"type"`
+	Severity    string                 `json:"severity"`
+	Title       string                 `json:"title"`
+	Description string                 `json:"description"`
+	Timestamp   time.Time              `json:"timestamp"`
+	TxHashes    []string               `json:"tx_hashes"`
 	Metadata    map[string]interface{} `json:"metadata"`
 }
 
@@ -117,21 +117,21 @@ type AlertHandler func(context.Context, *Alert) error
 
 // Monitor monitors the mempool for suspicious activity.
 type Monitor struct {
-	config      MonitorConfig
-	pending     map[string]*PendingTx
-	txByBlock   map[uint64][]*Transaction
-	handlers    []AlertHandler
-	mu          sync.RWMutex
+	config    MonitorConfig
+	pending   map[string]*PendingTx
+	txByBlock map[uint64][]*Transaction
+	handlers  []AlertHandler
+	mu        sync.RWMutex
 
 	// Detection state
-	swapsByPair   map[string][]*Transaction // DEX pair -> recent swaps
-	flashLoans    map[string]time.Time      // Recent flash loan sources
-	mevBots       map[string]int            // Known MEV bot addresses -> count
+	swapsByPair map[string][]*Transaction // DEX pair -> recent swaps
+	flashLoans  map[string]time.Time      // Recent flash loan sources
+	mevBots     map[string]int            // Known MEV bot addresses -> count
 
 	// Known addresses
-	knownDEXRouters  map[string]string // address -> name
-	knownFlashLoan   map[string]string // address -> protocol
-	knownMEVBots     map[string]bool
+	knownDEXRouters map[string]string // address -> name
+	knownFlashLoan  map[string]string // address -> protocol
+	knownMEVBots    map[string]bool
 }
 
 // NewMonitor creates a new mempool monitor.
@@ -315,9 +315,9 @@ func (m *Monitor) detectThreats(tx *Transaction) {
 				Timestamp: time.Now(),
 				TxHashes:  []string{tx.Hash},
 				Metadata: map[string]interface{}{
-					"from":   tx.From,
-					"to":     tx.To,
-					"value":  tx.Value.String(),
+					"from":    tx.From,
+					"to":      tx.To,
+					"value":   tx.Value.String(),
 					"network": tx.Network,
 				},
 			})
@@ -401,11 +401,11 @@ func (m *Monitor) detectSandwichAttack(ctx context.Context, tx *Transaction) {
 
 		// Check if sandwich pattern
 		if frontrun.From == backrun.From &&
-		   frontrun.From != victim.From &&
-		   frontrun.Type == TxTypeSwap &&
-		   victim.Type == TxTypeSwap &&
-		   backrun.Type == TxTypeSwap &&
-		   frontrun.To == victim.To && victim.To == backrun.To {
+			frontrun.From != victim.From &&
+			frontrun.Type == TxTypeSwap &&
+			victim.Type == TxTypeSwap &&
+			backrun.Type == TxTypeSwap &&
+			frontrun.To == victim.To && victim.To == backrun.To {
 
 			// Mark as sandwich attack
 			frontrun.IsMEV = true
@@ -424,14 +424,14 @@ func (m *Monitor) detectSandwichAttack(ctx context.Context, tx *Transaction) {
 				Timestamp: time.Now(),
 				TxHashes:  []string{frontrun.Hash, victim.Hash, backrun.Hash},
 				Metadata: map[string]interface{}{
-					"attacker":     frontrun.From,
-					"victim":       victim.From,
-					"block":        tx.BlockNumber,
-					"dex":          frontrun.To,
-					"frontrun_tx":  frontrun.Hash,
-					"victim_tx":    victim.Hash,
-					"backrun_tx":   backrun.Hash,
-					"network":      tx.Network,
+					"attacker":    frontrun.From,
+					"victim":      victim.From,
+					"block":       tx.BlockNumber,
+					"dex":         frontrun.To,
+					"frontrun_tx": frontrun.Hash,
+					"victim_tx":   victim.Hash,
+					"backrun_tx":  backrun.Hash,
+					"network":     tx.Network,
 				},
 			})
 		}
@@ -460,14 +460,14 @@ func (m *Monitor) detectMEV(ctx context.Context, tx *Transaction) {
 			tx.Type = TxTypeArbitrage
 
 			m.emitAlert(ctx, &Alert{
-				ID:          uuid.New(),
-				Type:        "arbitrage",
-				Severity:    "low",
-				Title:       "Potential Arbitrage Detected",
+				ID:       uuid.New(),
+				Type:     "arbitrage",
+				Severity: "low",
+				Title:    "Potential Arbitrage Detected",
 				Description: fmt.Sprintf("Address %s executed %d swaps in block %d",
 					tx.From, sameAddressTxs, tx.BlockNumber),
-				Timestamp:   time.Now(),
-				TxHashes:    []string{tx.Hash},
+				Timestamp: time.Now(),
+				TxHashes:  []string{tx.Hash},
 				Metadata: map[string]interface{}{
 					"address":    tx.From,
 					"swap_count": sameAddressTxs,
@@ -507,11 +507,11 @@ func (m *Monitor) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"pending_count":    len(m.pending),
-		"blocks_tracked":   len(m.txByBlock),
-		"known_mev_bots":   len(m.knownMEVBots),
-		"active_pairs":     len(m.swapsByPair),
-		"tx_by_type":       typeCount,
+		"pending_count":  len(m.pending),
+		"blocks_tracked": len(m.txByBlock),
+		"known_mev_bots": len(m.knownMEVBots),
+		"active_pairs":   len(m.swapsByPair),
+		"tx_by_type":     typeCount,
 	}
 }
 
@@ -535,14 +535,14 @@ func (m *Monitor) NormalizeToEvent(tx *Transaction, tenantID string) *schema.Eve
 	}
 
 	metadata := map[string]interface{}{
-		"tx_hash":      tx.Hash,
-		"from":         tx.From,
-		"to":           tx.To,
-		"gas_price":    tx.GasPrice.String(),
-		"gas_limit":    tx.GasLimit,
-		"nonce":        tx.Nonce,
-		"network":      tx.Network,
-		"tx_type":      string(tx.Type),
+		"tx_hash":   tx.Hash,
+		"from":      tx.From,
+		"to":        tx.To,
+		"gas_price": tx.GasPrice.String(),
+		"gas_limit": tx.GasLimit,
+		"nonce":     tx.Nonce,
+		"network":   tx.Network,
+		"tx_type":   string(tx.Type),
 	}
 
 	if tx.Value != nil {
@@ -566,9 +566,9 @@ func (m *Monitor) NormalizeToEvent(tx *Transaction, tenantID string) *schema.Eve
 		Timestamp: tx.Timestamp,
 		TenantID:  tenantID,
 		Source: schema.Source{
-			Product:  "mempool-monitor",
-			Host:     tx.Network,
-			Version:  "1.0",
+			Product: "mempool-monitor",
+			Host:    tx.Network,
+			Version: "1.0",
 		},
 		Action:   action,
 		Outcome:  outcome,

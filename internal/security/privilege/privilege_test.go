@@ -316,7 +316,7 @@ func TestVerifier_GetFailures(t *testing.T) {
 
 	ctx := context.Background()
 	v.Verify(ctx, "test_success") // No requirement - should succeed
-	v.Verify(ctx, "fail_op")       // Root required - should fail
+	v.Verify(ctx, "fail_op")      // Root required - should fail
 
 	failures := v.GetFailures()
 	if len(failures) == 0 {

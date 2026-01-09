@@ -22,29 +22,29 @@ import (
 
 // Common errors for TPM operations.
 var (
-	ErrTPMNotAvailable    = errors.New("TPM device not available")
-	ErrTPMNotInitialized  = errors.New("TPM not initialized")
-	ErrTPMKeyNotFound     = errors.New("TPM key not found")
-	ErrTPMSealFailed      = errors.New("TPM seal operation failed")
-	ErrTPMUnsealFailed    = errors.New("TPM unseal operation failed")
-	ErrTPMPCRMismatch     = errors.New("TPM PCR values do not match expected state")
-	ErrTPMAuthFailed      = errors.New("TPM authorization failed")
-	ErrTPMToolsNotFound   = errors.New("tpm2-tools not installed")
-	ErrKeyAlreadyExists   = errors.New("key already exists in TPM")
+	ErrTPMNotAvailable   = errors.New("TPM device not available")
+	ErrTPMNotInitialized = errors.New("TPM not initialized")
+	ErrTPMKeyNotFound    = errors.New("TPM key not found")
+	ErrTPMSealFailed     = errors.New("TPM seal operation failed")
+	ErrTPMUnsealFailed   = errors.New("TPM unseal operation failed")
+	ErrTPMPCRMismatch    = errors.New("TPM PCR values do not match expected state")
+	ErrTPMAuthFailed     = errors.New("TPM authorization failed")
+	ErrTPMToolsNotFound  = errors.New("tpm2-tools not installed")
+	ErrKeyAlreadyExists  = errors.New("key already exists in TPM")
 )
 
 // TPMDevice represents the TPM device path.
 const (
-	DefaultTPMDevice  = "/dev/tpmrm0"  // TPM 2.0 resource manager
-	FallbackTPMDevice = "/dev/tpm0"    // Direct TPM access
+	DefaultTPMDevice  = "/dev/tpmrm0" // TPM 2.0 resource manager
+	FallbackTPMDevice = "/dev/tpm0"   // Direct TPM access
 )
 
 // PCR indices used for sealing
 const (
-	PCRFirmware    = 0  // BIOS/UEFI
-	PCRBootloader  = 4  // Bootloader
-	PCRKernel      = 8  // Kernel command line
-	PCRSecureBoot  = 7  // Secure Boot state
+	PCRFirmware   = 0 // BIOS/UEFI
+	PCRBootloader = 4 // Bootloader
+	PCRKernel     = 8 // Kernel command line
+	PCRSecureBoot = 7 // Secure Boot state
 )
 
 // TPMConfig configures the TPM key storage.
@@ -233,9 +233,9 @@ func (t *TPMKeyStore) initializePrimaryKey() error {
 	t.logger.Info("creating TPM primary key")
 
 	cmd := exec.CommandContext(ctx, "tpm2_createprimary",
-		"-C", "o",           // Owner hierarchy
-		"-g", "sha256",      // Hash algorithm
-		"-G", "aes256cfb",   // Symmetric algorithm for sealing
+		"-C", "o", // Owner hierarchy
+		"-g", "sha256", // Hash algorithm
+		"-G", "aes256cfb", // Symmetric algorithm for sealing
 		"-c", primaryCtx,
 	)
 	cmd.Env = t.tpmEnv()

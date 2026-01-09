@@ -16,17 +16,17 @@ import (
 
 // BlockInfo contains information about a processed block.
 type BlockInfo struct {
-	Slot          uint64
-	Hash          string
-	ParentHash    string
-	StartTime     time.Time
-	EndTime       time.Time
-	ProcessingMS  int64
-	Attestations  int
-	Transactions  int
-	StateRootMS   int64
-	Success       bool
-	ErrorMessage  string
+	Slot         uint64
+	Hash         string
+	ParentHash   string
+	StartTime    time.Time
+	EndTime      time.Time
+	ProcessingMS int64
+	Attestations int
+	Transactions int
+	StateRootMS  int64
+	Success      bool
+	ErrorMessage string
 }
 
 // ProcessingMetrics contains aggregated block processing metrics.
@@ -41,15 +41,15 @@ type ProcessingMetrics struct {
 	MaxBlockProcessingMS int64
 
 	// Stuck block detection
-	StuckBlock     bool
-	StuckSlot      uint64
-	StuckDuration  time.Duration
+	StuckBlock    bool
+	StuckSlot     uint64
+	StuckDuration time.Duration
 
 	// Throughput
-	BlocksProcessed1m   int
-	BlocksProcessed5m   int
-	BlocksProcessed15m  int
-	AvgThroughputBPS    float64 // Blocks per second
+	BlocksProcessed1m  int
+	BlocksProcessed5m  int
+	BlocksProcessed15m int
+	AvgThroughputBPS   float64 // Blocks per second
 
 	// Attestation performance
 	AvgAttestationsPerBlock int
@@ -60,8 +60,8 @@ type ProcessingMetrics struct {
 	P95StateRootMS int64
 
 	// Error tracking
-	FailedBlocks1m  int
-	FailureRate     float64
+	FailedBlocks1m int
+	FailureRate    float64
 }
 
 // MonitorConfig contains configuration for the processing monitor.
@@ -85,12 +85,12 @@ type MonitorConfig struct {
 // DefaultMonitorConfig returns default configuration.
 func DefaultMonitorConfig() MonitorConfig {
 	return MonitorConfig{
-		SlowBlockThresholdMS:    5000,              // 5 seconds
-		StuckBlockTimeout:       10 * time.Minute,  // 10 minutes
-		LowThroughputThreshold:  0.05,              // Less than 1 block per 20 seconds
-		HighFailureRate:         5.0,               // 5% failure rate
-		TargetBlockProcessingMS: 1000,              // 1 second target
-		TargetStateRootMS:       500,               // 500ms target
+		SlowBlockThresholdMS:    5000,             // 5 seconds
+		StuckBlockTimeout:       10 * time.Minute, // 10 minutes
+		LowThroughputThreshold:  0.05,             // Less than 1 block per 20 seconds
+		HighFailureRate:         5.0,              // 5% failure rate
+		TargetBlockProcessingMS: 1000,             // 1 second target
+		TargetStateRootMS:       500,              // 500ms target
 		CheckInterval:           30 * time.Second,
 		MetricsRetention:        24 * time.Hour,
 		SampleSize:              1000,
@@ -117,19 +117,19 @@ type Monitor struct {
 	config MonitorConfig
 	logger *slog.Logger
 
-	mu                sync.RWMutex
-	recentBlocks      []BlockInfo
-	currentBlock      *BlockInfo
-	lastBlockTime     time.Time
-	metricsHistory    []ProcessingMetrics
-	lastMetrics       *ProcessingMetrics
-	handlers          []AlertHandler
-	recentAlerts      map[string]time.Time
+	mu             sync.RWMutex
+	recentBlocks   []BlockInfo
+	currentBlock   *BlockInfo
+	lastBlockTime  time.Time
+	metricsHistory []ProcessingMetrics
+	lastMetrics    *ProcessingMetrics
+	handlers       []AlertHandler
+	recentAlerts   map[string]time.Time
 
 	// Throughput tracking
-	blocks1m          []time.Time
-	blocks5m          []time.Time
-	blocks15m         []time.Time
+	blocks1m  []time.Time
+	blocks5m  []time.Time
+	blocks15m []time.Time
 
 	running bool
 	stopCh  chan struct{}
@@ -440,11 +440,11 @@ func (m *Monitor) checkSlowBlockAlerts(ctx context.Context, metrics *ProcessingM
 				metrics.P95BlockProcessingMS, m.config.SlowBlockThresholdMS),
 			Timestamp: time.Now(),
 			Metadata: map[string]interface{}{
-				"p95_ms":        metrics.P95BlockProcessingMS,
-				"p99_ms":        metrics.P99BlockProcessingMS,
-				"max_ms":        metrics.MaxBlockProcessingMS,
-				"avg_ms":        metrics.AvgBlockProcessingMS,
-				"threshold_ms":  m.config.SlowBlockThresholdMS,
+				"p95_ms":       metrics.P95BlockProcessingMS,
+				"p99_ms":       metrics.P99BlockProcessingMS,
+				"max_ms":       metrics.MaxBlockProcessingMS,
+				"avg_ms":       metrics.AvgBlockProcessingMS,
+				"threshold_ms": m.config.SlowBlockThresholdMS,
 			},
 			Metrics: metrics,
 		})
@@ -508,9 +508,9 @@ func (m *Monitor) checkFailureRateAlerts(ctx context.Context, metrics *Processin
 				metrics.FailureRate, m.config.HighFailureRate, metrics.FailedBlocks1m),
 			Timestamp: time.Now(),
 			Metadata: map[string]interface{}{
-				"failure_rate":    metrics.FailureRate,
-				"failed_blocks":   metrics.FailedBlocks1m,
-				"threshold":       m.config.HighFailureRate,
+				"failure_rate":  metrics.FailureRate,
+				"failed_blocks": metrics.FailedBlocks1m,
+				"threshold":     m.config.HighFailureRate,
 			},
 			Metrics: metrics,
 		})

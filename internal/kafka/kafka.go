@@ -55,11 +55,11 @@ type Config struct {
 	SASLPassword string `json:"sasl_password,omitempty" yaml:"sasl_password,omitempty"`
 
 	// TLS configuration
-	TLSEnabled       bool   `json:"tls_enabled" yaml:"tls_enabled"`
-	TLSCertFile      string `json:"tls_cert_file,omitempty" yaml:"tls_cert_file,omitempty"`
-	TLSKeyFile       string `json:"tls_key_file,omitempty" yaml:"tls_key_file,omitempty"`
-	TLSCAFile        string `json:"tls_ca_file,omitempty" yaml:"tls_ca_file,omitempty"`
-	TLSSkipVerify    bool   `json:"tls_skip_verify,omitempty" yaml:"tls_skip_verify,omitempty"`
+	TLSEnabled    bool   `json:"tls_enabled" yaml:"tls_enabled"`
+	TLSCertFile   string `json:"tls_cert_file,omitempty" yaml:"tls_cert_file,omitempty"`
+	TLSKeyFile    string `json:"tls_key_file,omitempty" yaml:"tls_key_file,omitempty"`
+	TLSCAFile     string `json:"tls_ca_file,omitempty" yaml:"tls_ca_file,omitempty"`
+	TLSSkipVerify bool   `json:"tls_skip_verify,omitempty" yaml:"tls_skip_verify,omitempty"`
 
 	// Producer settings
 	ProducerBatchSize    int           `json:"producer_batch_size" yaml:"producer_batch_size"`
@@ -69,14 +69,14 @@ type Config struct {
 	RequiredAcks         int           `json:"required_acks" yaml:"required_acks"` // -1=all, 0=none, 1=leader
 
 	// Consumer settings
-	ConsumerMinBytes     int           `json:"consumer_min_bytes" yaml:"consumer_min_bytes"`
-	ConsumerMaxBytes     int           `json:"consumer_max_bytes" yaml:"consumer_max_bytes"`
-	ConsumerMaxWait      time.Duration `json:"consumer_max_wait" yaml:"consumer_max_wait"`
-	CommitInterval       time.Duration `json:"commit_interval" yaml:"commit_interval"`
-	StartOffset          int64         `json:"start_offset" yaml:"start_offset"` // -1=latest, -2=earliest
-	HeartbeatInterval    time.Duration `json:"heartbeat_interval" yaml:"heartbeat_interval"`
-	SessionTimeout       time.Duration `json:"session_timeout" yaml:"session_timeout"`
-	RebalanceTimeout     time.Duration `json:"rebalance_timeout" yaml:"rebalance_timeout"`
+	ConsumerMinBytes  int           `json:"consumer_min_bytes" yaml:"consumer_min_bytes"`
+	ConsumerMaxBytes  int           `json:"consumer_max_bytes" yaml:"consumer_max_bytes"`
+	ConsumerMaxWait   time.Duration `json:"consumer_max_wait" yaml:"consumer_max_wait"`
+	CommitInterval    time.Duration `json:"commit_interval" yaml:"commit_interval"`
+	StartOffset       int64         `json:"start_offset" yaml:"start_offset"` // -1=latest, -2=earliest
+	HeartbeatInterval time.Duration `json:"heartbeat_interval" yaml:"heartbeat_interval"`
+	SessionTimeout    time.Duration `json:"session_timeout" yaml:"session_timeout"`
+	RebalanceTimeout  time.Duration `json:"rebalance_timeout" yaml:"rebalance_timeout"`
 
 	// Connection settings
 	DialTimeout  time.Duration `json:"dial_timeout" yaml:"dial_timeout"`
@@ -93,7 +93,7 @@ func DefaultConfig() *Config {
 		Partitions:           12,
 		ReplicationFactor:    3,
 		RetentionMs:          7 * 24 * 60 * 60 * 1000, // 7 days
-		MaxMessageBytes:      1048576,                  // 1MB
+		MaxMessageBytes:      1048576,                 // 1MB
 		CompressionType:      "lz4",
 		SecurityProtocol:     "PLAINTEXT",
 		ProducerBatchSize:    100,
@@ -269,10 +269,10 @@ type Metrics struct {
 
 // HealthStatus represents the health of a Kafka component.
 type HealthStatus struct {
-	Healthy     bool      `json:"healthy"`
-	Connected   bool      `json:"connected"`
-	LastCheck   time.Time `json:"last_check"`
+	Healthy     bool          `json:"healthy"`
+	Connected   bool          `json:"connected"`
+	LastCheck   time.Time     `json:"last_check"`
 	Latency     time.Duration `json:"latency"`
-	Error       string    `json:"error,omitempty"`
-	BrokerCount int       `json:"broker_count"`
+	Error       string        `json:"error,omitempty"`
+	BrokerCount int           `json:"broker_count"`
 }

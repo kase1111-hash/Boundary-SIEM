@@ -21,10 +21,10 @@ import (
 type EnforcementType string
 
 const (
-	EnforcementSELinux   EnforcementType = "selinux"
-	EnforcementAppArmor  EnforcementType = "apparmor"
-	EnforcementNone      EnforcementType = "none"
-	EnforcementUnknown   EnforcementType = "unknown"
+	EnforcementSELinux  EnforcementType = "selinux"
+	EnforcementAppArmor EnforcementType = "apparmor"
+	EnforcementNone     EnforcementType = "none"
+	EnforcementUnknown  EnforcementType = "unknown"
 )
 
 // EnforcementMode represents the enforcement mode.
@@ -48,26 +48,26 @@ type SecurityContext struct {
 
 // EnforcementStatus represents the current enforcement status.
 type EnforcementStatus struct {
-	Type           EnforcementType  `json:"type"`
-	Mode           EnforcementMode  `json:"mode"`
-	PolicyLoaded   bool             `json:"policy_loaded"`
-	PolicyVersion  string           `json:"policy_version"`
-	Context        *SecurityContext `json:"context,omitempty"`
-	ProfileName    string           `json:"profile_name,omitempty"`
-	ProfileMode    string           `json:"profile_mode,omitempty"`
-	LastCheck      time.Time        `json:"last_check"`
-	Healthy        bool             `json:"healthy"`
-	Error          string           `json:"error,omitempty"`
+	Type          EnforcementType  `json:"type"`
+	Mode          EnforcementMode  `json:"mode"`
+	PolicyLoaded  bool             `json:"policy_loaded"`
+	PolicyVersion string           `json:"policy_version"`
+	Context       *SecurityContext `json:"context,omitempty"`
+	ProfileName   string           `json:"profile_name,omitempty"`
+	ProfileMode   string           `json:"profile_mode,omitempty"`
+	LastCheck     time.Time        `json:"last_check"`
+	Healthy       bool             `json:"healthy"`
+	Error         string           `json:"error,omitempty"`
 }
 
 // EnforcementConfig configures the enforcement verifier.
 type EnforcementConfig struct {
-	RequiredType          EnforcementType `json:"required_type"`
-	RequiredMode          EnforcementMode `json:"required_mode"`
-	ExpectedSELinuxDomain string          `json:"expected_selinux_domain"`
-	ExpectedAppArmorProfile string        `json:"expected_apparmor_profile"`
-	CheckInterval         time.Duration   `json:"check_interval"`
-	FailOnMismatch        bool            `json:"fail_on_mismatch"`
+	RequiredType            EnforcementType `json:"required_type"`
+	RequiredMode            EnforcementMode `json:"required_mode"`
+	ExpectedSELinuxDomain   string          `json:"expected_selinux_domain"`
+	ExpectedAppArmorProfile string          `json:"expected_apparmor_profile"`
+	CheckInterval           time.Duration   `json:"check_interval"`
+	FailOnMismatch          bool            `json:"fail_on_mismatch"`
 }
 
 // DefaultEnforcementConfig returns the default configuration.
@@ -434,12 +434,12 @@ type AuditLogEntry struct {
 
 // AuditLogWatcher watches for MAC audit log entries.
 type AuditLogWatcher struct {
-	logger     *slog.Logger
-	ctx        context.Context
-	cancel     context.CancelFunc
-	entries    chan *AuditLogEntry
-	patterns   []*regexp.Regexp
-	enfType    EnforcementType
+	logger   *slog.Logger
+	ctx      context.Context
+	cancel   context.CancelFunc
+	entries  chan *AuditLogEntry
+	patterns []*regexp.Regexp
+	enfType  EnforcementType
 }
 
 // NewAuditLogWatcher creates a new audit log watcher.

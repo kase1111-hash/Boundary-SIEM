@@ -331,15 +331,15 @@ func TestTrustGate_GetDenied(t *testing.T) {
 
 	// Register a requirement we can't meet
 	tg.RegisterRequirement(&TrustRequirement{
-		Name:          "impossible_op",
-		MinTrustLevel: TrustLevelFull,
-		RequireTPM:    true,
-		RequireSecureBoot: true,
+		Name:                "impossible_op",
+		MinTrustLevel:       TrustLevelFull,
+		RequireTPM:          true,
+		RequireSecureBoot:   true,
 		RequireMeasuredBoot: true,
 	})
 
 	ctx := context.Background()
-	tg.Gate(ctx, "test_success") // No requirement - should succeed
+	tg.Gate(ctx, "test_success")  // No requirement - should succeed
 	tg.Gate(ctx, "impossible_op") // High requirement - likely fails
 
 	denied := tg.GetDenied()

@@ -28,27 +28,27 @@ const (
 
 // Alert represents a managed alert.
 type Alert struct {
-	ID           uuid.UUID              `json:"id"`
-	RuleID       string                 `json:"rule_id"`
-	RuleName     string                 `json:"rule_name"`
-	Severity     correlation.Severity   `json:"severity"`
-	Status       AlertStatus            `json:"status"`
-	Title        string                 `json:"title"`
-	Description  string                 `json:"description"`
-	CreatedAt    time.Time              `json:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at"`
-	AckedAt      *time.Time             `json:"acked_at,omitempty"`
-	AckedBy      string                 `json:"acked_by,omitempty"`
-	ResolvedAt   *time.Time             `json:"resolved_at,omitempty"`
-	ResolvedBy   string                 `json:"resolved_by,omitempty"`
-	GroupKey     string                 `json:"group_key,omitempty"`
-	EventCount   int                    `json:"event_count"`
-	EventIDs     []uuid.UUID            `json:"event_ids,omitempty"`
-	Tags         []string               `json:"tags,omitempty"`
-	MITRE        *correlation.MITREMapping `json:"mitre,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
-	Notes        []Note                 `json:"notes,omitempty"`
-	AssignedTo   string                 `json:"assigned_to,omitempty"`
+	ID          uuid.UUID                 `json:"id"`
+	RuleID      string                    `json:"rule_id"`
+	RuleName    string                    `json:"rule_name"`
+	Severity    correlation.Severity      `json:"severity"`
+	Status      AlertStatus               `json:"status"`
+	Title       string                    `json:"title"`
+	Description string                    `json:"description"`
+	CreatedAt   time.Time                 `json:"created_at"`
+	UpdatedAt   time.Time                 `json:"updated_at"`
+	AckedAt     *time.Time                `json:"acked_at,omitempty"`
+	AckedBy     string                    `json:"acked_by,omitempty"`
+	ResolvedAt  *time.Time                `json:"resolved_at,omitempty"`
+	ResolvedBy  string                    `json:"resolved_by,omitempty"`
+	GroupKey    string                    `json:"group_key,omitempty"`
+	EventCount  int                       `json:"event_count"`
+	EventIDs    []uuid.UUID               `json:"event_ids,omitempty"`
+	Tags        []string                  `json:"tags,omitempty"`
+	MITRE       *correlation.MITREMapping `json:"mitre,omitempty"`
+	Metadata    map[string]interface{}    `json:"metadata,omitempty"`
+	Notes       []Note                    `json:"notes,omitempty"`
+	AssignedTo  string                    `json:"assigned_to,omitempty"`
 }
 
 // Note represents a note on an alert.
@@ -487,10 +487,10 @@ func (m *Manager) Stats() map[string]interface{} {
 	defer m.mu.RUnlock()
 
 	stats := map[string]interface{}{
-		"total":        len(m.alerts),
-		"by_status":    make(map[string]int),
-		"by_severity":  make(map[string]int),
-		"channels":     len(m.channels),
+		"total":       len(m.alerts),
+		"by_status":   make(map[string]int),
+		"by_severity": make(map[string]int),
+		"channels":    len(m.channels),
 	}
 
 	statusCounts := stats["by_status"].(map[string]int)

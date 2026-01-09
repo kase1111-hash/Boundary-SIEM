@@ -27,37 +27,37 @@ const (
 // SyncState represents the current synchronization state.
 type SyncState struct {
 	// Sync status
-	IsSyncing       bool      `json:"is_syncing"`
-	SyncMode        SyncMode  `json:"sync_mode"`
-	SyncStartTime   time.Time `json:"sync_start_time,omitempty"`
-	SyncProgress    float64   `json:"sync_progress"` // 0.0 to 100.0
+	IsSyncing     bool      `json:"is_syncing"`
+	SyncMode      SyncMode  `json:"sync_mode"`
+	SyncStartTime time.Time `json:"sync_start_time,omitempty"`
+	SyncProgress  float64   `json:"sync_progress"` // 0.0 to 100.0
 
 	// Block heights
-	HeadSlot         uint64    `json:"head_slot"`           // Current local head
-	NetworkHeadSlot  uint64    `json:"network_head_slot"`   // Network canonical head
-	FinalizedSlot    uint64    `json:"finalized_slot"`      // Last finalized slot
-	JustifiedSlot    uint64    `json:"justified_slot"`      // Last justified slot
+	HeadSlot        uint64 `json:"head_slot"`         // Current local head
+	NetworkHeadSlot uint64 `json:"network_head_slot"` // Network canonical head
+	FinalizedSlot   uint64 `json:"finalized_slot"`    // Last finalized slot
+	JustifiedSlot   uint64 `json:"justified_slot"`    // Last justified slot
 
 	// Lag metrics
-	SyncLagSlots     uint64    `json:"sync_lag_slots"`      // Slots behind network
-	SyncLagSeconds   int64     `json:"sync_lag_seconds"`    // Time behind in seconds
-	FinalityDelay    uint64    `json:"finality_delay"`      // Epochs since last finality
+	SyncLagSlots   uint64 `json:"sync_lag_slots"`   // Slots behind network
+	SyncLagSeconds int64  `json:"sync_lag_seconds"` // Time behind in seconds
+	FinalityDelay  uint64 `json:"finality_delay"`   // Epochs since last finality
 
 	// Peer information
-	PeerCount        int                `json:"peer_count"`
-	PeerHeadSlots    map[string]uint64  `json:"peer_head_slots,omitempty"` // peer ID -> head slot
-	MajorityPeerHead uint64             `json:"majority_peer_head"`        // What most peers report
+	PeerCount        int               `json:"peer_count"`
+	PeerHeadSlots    map[string]uint64 `json:"peer_head_slots,omitempty"` // peer ID -> head slot
+	MajorityPeerHead uint64            `json:"majority_peer_head"`        // What most peers report
 
 	// Reorg tracking
-	LastReorgDepth   uint64    `json:"last_reorg_depth"`
-	LastReorgTime    time.Time `json:"last_reorg_time,omitempty"`
-	ReorgCount1h     int       `json:"reorg_count_1h"` // Reorgs in last hour
+	LastReorgDepth uint64    `json:"last_reorg_depth"`
+	LastReorgTime  time.Time `json:"last_reorg_time,omitempty"`
+	ReorgCount1h   int       `json:"reorg_count_1h"` // Reorgs in last hour
 
 	// Progress tracking
-	LastHeadUpdate   time.Time `json:"last_head_update"`
-	HeadUpdateRate   float64   `json:"head_update_rate"` // Slots per second
+	LastHeadUpdate time.Time `json:"last_head_update"`
+	HeadUpdateRate float64   `json:"head_update_rate"` // Slots per second
 
-	Timestamp        time.Time `json:"timestamp"`
+	Timestamp time.Time `json:"timestamp"`
 }
 
 // Alert represents a sync-related alert.
@@ -78,63 +78,63 @@ type AlertHandler func(context.Context, *Alert) error
 // MonitorConfig configures the sync monitor.
 type MonitorConfig struct {
 	// Lag thresholds
-	LagThresholdSlots    uint64        // Slots behind to trigger warning (default: 32 = 2 epochs for Ethereum)
-	LagCriticalSlots     uint64        // Slots behind for critical alert (default: 128 = 8 epochs)
-	LagThresholdSeconds  int64         // Time behind to alert (default: 384 seconds = ~6.4 minutes)
+	LagThresholdSlots   uint64 // Slots behind to trigger warning (default: 32 = 2 epochs for Ethereum)
+	LagCriticalSlots    uint64 // Slots behind for critical alert (default: 128 = 8 epochs)
+	LagThresholdSeconds int64  // Time behind to alert (default: 384 seconds = ~6.4 minutes)
 
 	// Finality monitoring
-	FinalityTimeoutEpochs uint64       // Epochs without finality before alert (default: 4 = ~25 min)
+	FinalityTimeoutEpochs uint64        // Epochs without finality before alert (default: 4 = ~25 min)
 	JustificationTimeout  time.Duration // Timeout for justification (default: 10 minutes)
 
 	// Sync progress monitoring
-	SyncStuckThreshold    time.Duration // No progress for this long = stuck (default: 10 min)
-	SyncSlowThreshold     float64       // Slots per second (default: 0.5 for Ethereum)
+	SyncStuckThreshold time.Duration // No progress for this long = stuck (default: 10 min)
+	SyncSlowThreshold  float64       // Slots per second (default: 0.5 for Ethereum)
 
 	// Reorg monitoring
-	MaxSafeReorgDepth     uint64        // Max safe reorg depth (default: 32 blocks)
-	DeepReorgThreshold    uint64        // Reorg deeper than this = critical (default: 64)
-	FrequentReorgCount    int           // Reorgs per hour to trigger alert (default: 3)
+	MaxSafeReorgDepth  uint64 // Max safe reorg depth (default: 32 blocks)
+	DeepReorgThreshold uint64 // Reorg deeper than this = critical (default: 64)
+	FrequentReorgCount int    // Reorgs per hour to trigger alert (default: 3)
 
 	// Peer monitoring
-	MinPeerConsensus      float64       // Min % of peers agreeing on head (default: 0.8 = 80%)
-	MinPeerCount          int           // Minimum peer count (default: 10)
+	MinPeerConsensus float64 // Min % of peers agreeing on head (default: 0.8 = 80%)
+	MinPeerCount     int     // Minimum peer count (default: 10)
 
 	// Monitoring intervals
-	CheckInterval         time.Duration // How often to check sync status (default: 30s)
-	StateRetention        int           // Number of historical states to keep (default: 2880 = 24h at 30s)
-	CleanupInterval       time.Duration // Cleanup old data (default: 5 minutes)
+	CheckInterval   time.Duration // How often to check sync status (default: 30s)
+	StateRetention  int           // Number of historical states to keep (default: 2880 = 24h at 30s)
+	CleanupInterval time.Duration // Cleanup old data (default: 5 minutes)
 
 	// Network-specific settings
-	SecondsPerSlot        uint64        // Seconds per slot (12 for Ethereum, 0.4 for Solana)
-	SlotsPerEpoch         uint64        // Slots per epoch (32 for Ethereum)
+	SecondsPerSlot uint64 // Seconds per slot (12 for Ethereum, 0.4 for Solana)
+	SlotsPerEpoch  uint64 // Slots per epoch (32 for Ethereum)
 }
 
 // DefaultMonitorConfig returns default configuration for Ethereum.
 func DefaultMonitorConfig() MonitorConfig {
 	return MonitorConfig{
-		LagThresholdSlots:     32,  // 2 epochs
-		LagCriticalSlots:      128, // 8 epochs
-		LagThresholdSeconds:   384, // ~6.4 minutes
+		LagThresholdSlots:   32,  // 2 epochs
+		LagCriticalSlots:    128, // 8 epochs
+		LagThresholdSeconds: 384, // ~6.4 minutes
 
-		FinalityTimeoutEpochs: 4,              // ~25 minutes
+		FinalityTimeoutEpochs: 4, // ~25 minutes
 		JustificationTimeout:  10 * time.Minute,
 
-		SyncStuckThreshold:    10 * time.Minute,
-		SyncSlowThreshold:     0.5, // slots per second
+		SyncStuckThreshold: 10 * time.Minute,
+		SyncSlowThreshold:  0.5, // slots per second
 
-		MaxSafeReorgDepth:     32,
-		DeepReorgThreshold:    64,
-		FrequentReorgCount:    3,
+		MaxSafeReorgDepth:  32,
+		DeepReorgThreshold: 64,
+		FrequentReorgCount: 3,
 
-		MinPeerConsensus:      0.8,
-		MinPeerCount:          10,
+		MinPeerConsensus: 0.8,
+		MinPeerCount:     10,
 
-		CheckInterval:         30 * time.Second,
-		StateRetention:        2880, // 24 hours
-		CleanupInterval:       5 * time.Minute,
+		CheckInterval:   30 * time.Second,
+		StateRetention:  2880, // 24 hours
+		CleanupInterval: 5 * time.Minute,
 
-		SecondsPerSlot:        12,
-		SlotsPerEpoch:         32,
+		SecondsPerSlot: 12,
+		SlotsPerEpoch:  32,
 	}
 }
 
@@ -145,28 +145,28 @@ type Monitor struct {
 	mu       sync.RWMutex
 
 	// Current state
-	currentState  *SyncState
-	stateHistory  []SyncState
+	currentState *SyncState
+	stateHistory []SyncState
 
 	// Reorg tracking
-	reorgHistory  []ReorgEvent
+	reorgHistory []ReorgEvent
 
 	// Alert deduplication
-	recentAlerts  map[string]time.Time
+	recentAlerts map[string]time.Time
 
 	// Lifecycle
-	stopCh        chan struct{}
-	wg            sync.WaitGroup
-	logger        *slog.Logger
+	stopCh chan struct{}
+	wg     sync.WaitGroup
+	logger *slog.Logger
 }
 
 // ReorgEvent represents a chain reorganization event.
 type ReorgEvent struct {
-	Timestamp    time.Time `json:"timestamp"`
-	OldHead      uint64    `json:"old_head"`
-	NewHead      uint64    `json:"new_head"`
-	Depth        uint64    `json:"depth"`
-	Duration     time.Duration `json:"duration"`
+	Timestamp time.Time     `json:"timestamp"`
+	OldHead   uint64        `json:"old_head"`
+	NewHead   uint64        `json:"new_head"`
+	Depth     uint64        `json:"depth"`
+	Duration  time.Duration `json:"duration"`
 }
 
 // NewMonitor creates a new sync monitor.
@@ -343,8 +343,8 @@ func (m *Monitor) checkSyncLag(ctx context.Context, state *SyncState) {
 			Timestamp: state.Timestamp,
 			State:     state,
 			Metadata: map[string]interface{}{
-				"lag_slots":    state.SyncLagSlots,
-				"lag_seconds":  state.SyncLagSeconds,
+				"lag_slots":   state.SyncLagSlots,
+				"lag_seconds": state.SyncLagSeconds,
 			},
 		})
 	}
@@ -376,13 +376,13 @@ func (m *Monitor) checkFinality(ctx context.Context, state *SyncState) {
 		justificationDelay := (state.HeadSlot - state.JustifiedSlot) / m.config.SlotsPerEpoch
 		if time.Duration(justificationDelay*m.config.SlotsPerEpoch*m.config.SecondsPerSlot)*time.Second > m.config.JustificationTimeout {
 			m.emitAlert(ctx, &Alert{
-				ID:       uuid.New(),
-				Type:     "sync-justification-delayed",
-				Severity: "high",
-				Title:    "Justification Delayed",
+				ID:          uuid.New(),
+				Type:        "sync-justification-delayed",
+				Severity:    "high",
+				Title:       "Justification Delayed",
 				Description: fmt.Sprintf("No justification for %d epochs", justificationDelay),
-				Timestamp: state.Timestamp,
-				State:     state,
+				Timestamp:   state.Timestamp,
+				State:       state,
 			})
 		}
 	}
@@ -407,8 +407,8 @@ func (m *Monitor) checkSyncProgress(ctx context.Context, state *SyncState) {
 			Timestamp: state.Timestamp,
 			State:     state,
 			Metadata: map[string]interface{}{
-				"sync_rate":      state.HeadUpdateRate,
-				"sync_progress":  state.SyncProgress,
+				"sync_rate":     state.HeadUpdateRate,
+				"sync_progress": state.SyncProgress,
 			},
 		})
 	}

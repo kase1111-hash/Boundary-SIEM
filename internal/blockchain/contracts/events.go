@@ -31,17 +31,17 @@ type EventSignature struct {
 
 // Log represents an Ethereum log/event.
 type Log struct {
-	Address     string   `json:"address"`
-	Topics      []string `json:"topics"`
-	Data        string   `json:"data"`
-	BlockNumber uint64   `json:"block_number"`
-	BlockHash   string   `json:"block_hash"`
-	TxHash      string   `json:"tx_hash"`
-	TxIndex     int      `json:"tx_index"`
-	LogIndex    int      `json:"log_index"`
-	Removed     bool     `json:"removed"`
+	Address     string    `json:"address"`
+	Topics      []string  `json:"topics"`
+	Data        string    `json:"data"`
+	BlockNumber uint64    `json:"block_number"`
+	BlockHash   string    `json:"block_hash"`
+	TxHash      string    `json:"tx_hash"`
+	TxIndex     int       `json:"tx_index"`
+	LogIndex    int       `json:"log_index"`
+	Removed     bool      `json:"removed"`
 	Timestamp   time.Time `json:"timestamp"`
-	Network     string   `json:"network"`
+	Network     string    `json:"network"`
 }
 
 // DecodedEvent represents a decoded smart contract event.
@@ -73,11 +73,11 @@ type AlertHandler func(context.Context, *Alert) error
 
 // MonitorConfig configures the contract event monitor.
 type MonitorConfig struct {
-	WatchedContracts    []string          // Contract addresses to monitor
-	ContractLabels      map[string]string // address -> label
-	AlertOnTransfer     bool
-	AlertOnApproval     bool
-	AlertOnOwnership    bool
+	WatchedContracts       []string          // Contract addresses to monitor
+	ContractLabels         map[string]string // address -> label
+	AlertOnTransfer        bool
+	AlertOnApproval        bool
+	AlertOnOwnership       bool
 	LargeTransferThreshold *big.Int
 }
 
@@ -604,9 +604,9 @@ func (m *Monitor) NormalizeToEvent(event *DecodedEvent, tenantID string) *schema
 		Timestamp: event.Timestamp,
 		TenantID:  tenantID,
 		Source: schema.Source{
-			Product:  "contract-monitor",
-			Host:     event.Network,
-			Version:  "1.0",
+			Product: "contract-monitor",
+			Host:    event.Network,
+			Version: "1.0",
 		},
 		Action:   action,
 		Outcome:  outcome,
@@ -623,10 +623,10 @@ func (m *Monitor) GetStats() map[string]interface{} {
 	defer m.mu.RUnlock()
 
 	return map[string]interface{}{
-		"known_signatures":   len(m.signatures),
-		"watched_contracts":  len(m.config.WatchedContracts),
-		"event_counts":       m.eventCounts,
-		"handler_count":      len(m.handlers),
+		"known_signatures":  len(m.signatures),
+		"watched_contracts": len(m.config.WatchedContracts),
+		"event_counts":      m.eventCounts,
+		"handler_count":     len(m.handlers),
 	}
 }
 

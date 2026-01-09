@@ -621,11 +621,11 @@ func TestCreateTenant(t *testing.T) {
 		Description: "Test tenant description",
 		Domain:      "test.example.com",
 		Settings: &TenantSettings{
-			MaxUsers:        50,
-			MaxEventsPerDay: 1000000,
-			RetentionDays:   30,
+			MaxUsers:         50,
+			MaxEventsPerDay:  1000000,
+			RetentionDays:    30,
 			AllowedProviders: []AuthProvider{AuthProviderLocal},
-			RequireMFA:      true,
+			RequireMFA:       true,
 		},
 	}
 
@@ -898,9 +898,9 @@ func TestRequirePermission(t *testing.T) {
 // TestGetClientIP tests IP extraction from requests.
 func TestGetClientIP(t *testing.T) {
 	tests := []struct {
-		name      string
-		setupReq  func(*http.Request)
-		wantIP    string
+		name     string
+		setupReq func(*http.Request)
+		wantIP   string
 	}{
 		{
 			name: "X-Forwarded-For single IP",
@@ -974,8 +974,8 @@ func TestGenerateToken(t *testing.T) {
 // TestIsPublicEndpoint tests public endpoint detection.
 func TestIsPublicEndpoint(t *testing.T) {
 	tests := []struct {
-		path   string
-		want   bool
+		path string
+		want bool
 	}{
 		{"/api/auth/login", true},
 		{"/api/auth/oauth/callback", true},

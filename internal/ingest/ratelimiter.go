@@ -165,8 +165,8 @@ type RateLimiterStats struct {
 
 // Global metrics for rate limiting
 var (
-	rateLimitedTotal   uint64
-	rateLimitAllowed   uint64
+	rateLimitedTotal uint64
+	rateLimitAllowed uint64
 )
 
 // rateLimitMiddleware applies rate limiting based on client IP.

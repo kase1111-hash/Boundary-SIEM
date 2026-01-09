@@ -51,42 +51,42 @@ func NewClient(cfg ClientConfig) *Client {
 
 // Intent represents a captured posthumous intent in FIE.
 type Intent struct {
-	ID              string                 `json:"id"`
-	CreatorID       string                 `json:"creator_id"`
-	CreatorAddress  string                 `json:"creator_address"`
-	ContentHash     string                 `json:"content_hash"`
-	Goals           []string               `json:"goals"`
-	Assets          []Asset                `json:"assets,omitempty"`
-	TriggerType     string                 `json:"trigger_type"` // deadman, quorum, oracle
-	TriggerConfig   map[string]any         `json:"trigger_config,omitempty"`
-	Status          string                 `json:"status"` // captured, active, executing, sunset, archived
-	CreatedAt       time.Time              `json:"created_at"`
-	ModifiedAt      *time.Time             `json:"modified_at,omitempty"`
-	ActivatedAt     *time.Time             `json:"activated_at,omitempty"`
-	SunsetAt        *time.Time             `json:"sunset_at,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	ID             string                 `json:"id"`
+	CreatorID      string                 `json:"creator_id"`
+	CreatorAddress string                 `json:"creator_address"`
+	ContentHash    string                 `json:"content_hash"`
+	Goals          []string               `json:"goals"`
+	Assets         []Asset                `json:"assets,omitempty"`
+	TriggerType    string                 `json:"trigger_type"` // deadman, quorum, oracle
+	TriggerConfig  map[string]any         `json:"trigger_config,omitempty"`
+	Status         string                 `json:"status"` // captured, active, executing, sunset, archived
+	CreatedAt      time.Time              `json:"created_at"`
+	ModifiedAt     *time.Time             `json:"modified_at,omitempty"`
+	ActivatedAt    *time.Time             `json:"activated_at,omitempty"`
+	SunsetAt       *time.Time             `json:"sunset_at,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // Asset represents an asset bound to an intent.
 type Asset struct {
-	ID          string `json:"id"`
-	Type        string `json:"type"` // ip_token, crypto, document, credential
-	TokenID     string `json:"token_id,omitempty"`
+	ID           string `json:"id"`
+	Type         string `json:"type"` // ip_token, crypto, document, credential
+	TokenID      string `json:"token_id,omitempty"`
 	ContractAddr string `json:"contract_address,omitempty"`
-	Value       string `json:"value,omitempty"`
+	Value        string `json:"value,omitempty"`
 }
 
 // TriggerEvent represents a trigger activation event.
 type TriggerEvent struct {
-	ID            string                 `json:"id"`
-	IntentID      string                 `json:"intent_id"`
-	TriggerType   string                 `json:"trigger_type"` // deadman_switch, quorum_vote, oracle_verify
-	Timestamp     time.Time              `json:"timestamp"`
-	Status        string                 `json:"status"` // pending, validated, rejected, expired
-	ValidatorID   string                 `json:"validator_id,omitempty"`
-	Confidence    float64                `json:"confidence,omitempty"`
-	Evidence      []string               `json:"evidence,omitempty"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID          string                 `json:"id"`
+	IntentID    string                 `json:"intent_id"`
+	TriggerType string                 `json:"trigger_type"` // deadman_switch, quorum_vote, oracle_verify
+	Timestamp   time.Time              `json:"timestamp"`
+	Status      string                 `json:"status"` // pending, validated, rejected, expired
+	ValidatorID string                 `json:"validator_id,omitempty"`
+	Confidence  float64                `json:"confidence,omitempty"`
+	Evidence    []string               `json:"evidence,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // ExecutionEvent represents an execution agent action.
@@ -120,40 +120,40 @@ type IPToken struct {
 
 // SunsetEvent represents a 20-year sunset transition.
 type SunsetEvent struct {
-	ID              string                 `json:"id"`
-	IntentID        string                 `json:"intent_id"`
-	Phase           string                 `json:"phase"` // initiated, ip_transition, asset_release, complete
-	Timestamp       time.Time              `json:"timestamp"`
-	AssetsReleased  int                    `json:"assets_released"`
-	IPTransitioned  int                    `json:"ip_transitioned"`
-	PublicDomainTx  string                 `json:"public_domain_tx,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	ID             string                 `json:"id"`
+	IntentID       string                 `json:"intent_id"`
+	Phase          string                 `json:"phase"` // initiated, ip_transition, asset_release, complete
+	Timestamp      time.Time              `json:"timestamp"`
+	AssetsReleased int                    `json:"assets_released"`
+	IPTransitioned int                    `json:"ip_transitioned"`
+	PublicDomainTx string                 `json:"public_domain_tx,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // OracleEvent represents an oracle verification event.
 type OracleEvent struct {
-	ID            string                 `json:"id"`
-	IntentID      string                 `json:"intent_id"`
-	OracleType    string                 `json:"oracle_type"` // chainlink, uma, zk_proof
-	RequestID     string                 `json:"request_id"`
-	Query         string                 `json:"query"`
-	Response      string                 `json:"response,omitempty"`
-	Timestamp     time.Time              `json:"timestamp"`
-	Status        string                 `json:"status"` // requested, fulfilled, disputed, timeout
-	DisputeID     string                 `json:"dispute_id,omitempty"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	IntentID   string                 `json:"intent_id"`
+	OracleType string                 `json:"oracle_type"` // chainlink, uma, zk_proof
+	RequestID  string                 `json:"request_id"`
+	Query      string                 `json:"query"`
+	Response   string                 `json:"response,omitempty"`
+	Timestamp  time.Time              `json:"timestamp"`
+	Status     string                 `json:"status"` // requested, fulfilled, disputed, timeout
+	DisputeID  string                 `json:"dispute_id,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // SecurityEvent represents a security-related event.
 type SecurityEvent struct {
-	ID            string                 `json:"id"`
-	IntentID      string                 `json:"intent_id,omitempty"`
-	EventType     string                 `json:"event_type"` // access_change, role_assignment, constraint_violation, anomaly
-	Severity      string                 `json:"severity"` // low, medium, high, critical
-	Description   string                 `json:"description"`
-	ActorID       string                 `json:"actor_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID          string                 `json:"id"`
+	IntentID    string                 `json:"intent_id,omitempty"`
+	EventType   string                 `json:"event_type"` // access_change, role_assignment, constraint_violation, anomaly
+	Severity    string                 `json:"severity"`   // low, medium, high, critical
+	Description string                 `json:"description"`
+	ActorID     string                 `json:"actor_id"`
+	Timestamp   time.Time              `json:"timestamp"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // HealthStatus represents the health of the FIE node.

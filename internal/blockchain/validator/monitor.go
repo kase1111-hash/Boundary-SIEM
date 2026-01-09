@@ -18,53 +18,53 @@ import (
 type ValidatorStatus string
 
 const (
-	StatusActive         ValidatorStatus = "active"
-	StatusPending        ValidatorStatus = "pending"
-	StatusExiting        ValidatorStatus = "exiting"
-	StatusSlashed        ValidatorStatus = "slashed"
-	StatusWithdrawable   ValidatorStatus = "withdrawable"
-	StatusOffline        ValidatorStatus = "offline"
+	StatusActive       ValidatorStatus = "active"
+	StatusPending      ValidatorStatus = "pending"
+	StatusExiting      ValidatorStatus = "exiting"
+	StatusSlashed      ValidatorStatus = "slashed"
+	StatusWithdrawable ValidatorStatus = "withdrawable"
+	StatusOffline      ValidatorStatus = "offline"
 )
 
 // ValidatorState tracks the state of a single validator.
 type ValidatorState struct {
-	Index              int64           `json:"index"`
-	PublicKey          string          `json:"public_key"`
-	Status             ValidatorStatus `json:"status"`
-	EffectiveBalance   uint64          `json:"effective_balance"`
-	ActivationEpoch    int64           `json:"activation_epoch"`
-	ExitEpoch          int64           `json:"exit_epoch"`
-	WithdrawableEpoch  int64           `json:"withdrawable_epoch"`
-	Slashed            bool            `json:"slashed"`
+	Index             int64           `json:"index"`
+	PublicKey         string          `json:"public_key"`
+	Status            ValidatorStatus `json:"status"`
+	EffectiveBalance  uint64          `json:"effective_balance"`
+	ActivationEpoch   int64           `json:"activation_epoch"`
+	ExitEpoch         int64           `json:"exit_epoch"`
+	WithdrawableEpoch int64           `json:"withdrawable_epoch"`
+	Slashed           bool            `json:"slashed"`
 
 	// Performance metrics
-	AttestationsSubmitted   int64     `json:"attestations_submitted"`
-	AttestationsMissed      int64     `json:"attestations_missed"`
-	ProposalsSubmitted      int64     `json:"proposals_submitted"`
-	ProposalsMissed         int64     `json:"proposals_missed"`
-	SyncCommitteeSubmitted  int64     `json:"sync_committee_submitted"`
-	SyncCommitteeMissed     int64     `json:"sync_committee_missed"`
+	AttestationsSubmitted  int64 `json:"attestations_submitted"`
+	AttestationsMissed     int64 `json:"attestations_missed"`
+	ProposalsSubmitted     int64 `json:"proposals_submitted"`
+	ProposalsMissed        int64 `json:"proposals_missed"`
+	SyncCommitteeSubmitted int64 `json:"sync_committee_submitted"`
+	SyncCommitteeMissed    int64 `json:"sync_committee_missed"`
 
 	// Timing
-	LastAttestationSlot     int64     `json:"last_attestation_slot"`
-	LastProposalSlot        int64     `json:"last_proposal_slot"`
-	LastSyncContributionSlot int64    `json:"last_sync_contribution_slot"`
-	LastSeenAt              time.Time `json:"last_seen_at"`
+	LastAttestationSlot      int64     `json:"last_attestation_slot"`
+	LastProposalSlot         int64     `json:"last_proposal_slot"`
+	LastSyncContributionSlot int64     `json:"last_sync_contribution_slot"`
+	LastSeenAt               time.Time `json:"last_seen_at"`
 
 	// Risk assessment
-	SlashingRiskScore       float64   `json:"slashing_risk_score"`
-	PerformanceScore        float64   `json:"performance_score"`
+	SlashingRiskScore float64 `json:"slashing_risk_score"`
+	PerformanceScore  float64 `json:"performance_score"`
 }
 
 // Alert represents a validator alert.
 type Alert struct {
-	ID          uuid.UUID       `json:"id"`
-	Type        AlertType       `json:"type"`
-	Severity    string          `json:"severity"`
-	Validator   int64           `json:"validator_index"`
-	Title       string          `json:"title"`
-	Description string          `json:"description"`
-	Timestamp   time.Time       `json:"timestamp"`
+	ID          uuid.UUID              `json:"id"`
+	Type        AlertType              `json:"type"`
+	Severity    string                 `json:"severity"`
+	Validator   int64                  `json:"validator_index"`
+	Title       string                 `json:"title"`
+	Description string                 `json:"description"`
+	Timestamp   time.Time              `json:"timestamp"`
 	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -93,12 +93,12 @@ type MonitorConfig struct {
 	BalanceDecreaseThreshold   float64 // Percentage balance decrease to alert
 
 	// Monitoring intervals
-	HealthCheckInterval  time.Duration
-	MetricsInterval      time.Duration
-	CleanupInterval      time.Duration
+	HealthCheckInterval time.Duration
+	MetricsInterval     time.Duration
+	CleanupInterval     time.Duration
 
 	// Retention
-	MaxHistoryEntries    int
+	MaxHistoryEntries int
 }
 
 // DefaultMonitorConfig returns default monitor configuration.

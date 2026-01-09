@@ -113,32 +113,32 @@ type UserPreferences struct {
 
 // NotificationPrefs defines notification preferences.
 type NotificationPrefs struct {
-	Email     bool     `json:"email"`
-	Slack     bool     `json:"slack"`
-	Browser   bool     `json:"browser"`
-	Sound     bool     `json:"sound"`
+	Email      bool     `json:"email"`
+	Slack      bool     `json:"slack"`
+	Browser    bool     `json:"browser"`
+	Sound      bool     `json:"sound"`
 	Severities []string `json:"severities"`
 }
 
 // DashboardStats provides overall dashboard statistics.
 type DashboardStats struct {
-	TotalEvents        int64            `json:"total_events"`
-	EventsPerSecond    float64          `json:"events_per_second"`
-	ActiveAlerts       int              `json:"active_alerts"`
-	CriticalAlerts     int              `json:"critical_alerts"`
-	HighAlerts         int              `json:"high_alerts"`
-	MediumAlerts       int              `json:"medium_alerts"`
-	LowAlerts          int              `json:"low_alerts"`
-	ValidatorsOnline   int              `json:"validators_online"`
-	ValidatorsOffline  int              `json:"validators_offline"`
-	NodesHealthy       int              `json:"nodes_healthy"`
-	NodesUnhealthy     int              `json:"nodes_unhealthy"`
-	ComplianceScore    float64          `json:"compliance_score"`
-	ThreatLevel        string           `json:"threat_level"`
-	TopSources         []SourceStats    `json:"top_sources"`
-	TopAlertTypes      []AlertTypeStats `json:"top_alert_types"`
-	RecentIncidents    []IncidentBrief  `json:"recent_incidents"`
-	LastUpdated        time.Time        `json:"last_updated"`
+	TotalEvents       int64            `json:"total_events"`
+	EventsPerSecond   float64          `json:"events_per_second"`
+	ActiveAlerts      int              `json:"active_alerts"`
+	CriticalAlerts    int              `json:"critical_alerts"`
+	HighAlerts        int              `json:"high_alerts"`
+	MediumAlerts      int              `json:"medium_alerts"`
+	LowAlerts         int              `json:"low_alerts"`
+	ValidatorsOnline  int              `json:"validators_online"`
+	ValidatorsOffline int              `json:"validators_offline"`
+	NodesHealthy      int              `json:"nodes_healthy"`
+	NodesUnhealthy    int              `json:"nodes_unhealthy"`
+	ComplianceScore   float64          `json:"compliance_score"`
+	ThreatLevel       string           `json:"threat_level"`
+	TopSources        []SourceStats    `json:"top_sources"`
+	TopAlertTypes     []AlertTypeStats `json:"top_alert_types"`
+	RecentIncidents   []IncidentBrief  `json:"recent_incidents"`
+	LastUpdated       time.Time        `json:"last_updated"`
 }
 
 // SourceStats provides statistics per source.
@@ -164,9 +164,9 @@ type IncidentBrief struct {
 
 // TimeSeriesData represents time series data for charts.
 type TimeSeriesData struct {
-	Labels   []string    `json:"labels"`
-	Datasets []Dataset   `json:"datasets"`
-	Interval string      `json:"interval"`
+	Labels   []string  `json:"labels"`
+	Datasets []Dataset `json:"datasets"`
+	Interval string    `json:"interval"`
 }
 
 // Dataset represents a chart dataset.

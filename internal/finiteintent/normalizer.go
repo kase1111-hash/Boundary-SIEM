@@ -12,12 +12,12 @@ import (
 // ActionMappings maps FIE event types to canonical action names.
 var ActionMappings = map[string]string{
 	// Intent lifecycle events
-	"intent.captured":    "fie.intent.captured",
-	"intent.modified":    "fie.intent.modified",
-	"intent.activated":   "fie.intent.activated",
-	"intent.executing":   "fie.intent.executing",
-	"intent.completed":   "fie.intent.completed",
-	"intent.sunset":      "fie.intent.sunset",
+	"intent.captured":  "fie.intent.captured",
+	"intent.modified":  "fie.intent.modified",
+	"intent.activated": "fie.intent.activated",
+	"intent.executing": "fie.intent.executing",
+	"intent.completed": "fie.intent.completed",
+	"intent.sunset":    "fie.intent.sunset",
 
 	// Trigger events
 	"trigger.deadman.activated": "fie.trigger.deadman",
@@ -28,19 +28,19 @@ var ActionMappings = map[string]string{
 	"trigger.expired":           "fie.trigger.expired",
 
 	// Execution agent events
-	"execution.decision":       "fie.execution.decision",
-	"execution.ip_transfer":    "fie.execution.ip_transfer",
+	"execution.decision":         "fie.execution.decision",
+	"execution.ip_transfer":      "fie.execution.ip_transfer",
 	"execution.asset_distribute": "fie.execution.asset_distribute",
-	"execution.goal_execute":   "fie.execution.goal_execute",
-	"execution.blocked":        "fie.execution.blocked",
-	"execution.low_confidence": "fie.execution.low_confidence",
+	"execution.goal_execute":     "fie.execution.goal_execute",
+	"execution.blocked":          "fie.execution.blocked",
+	"execution.low_confidence":   "fie.execution.low_confidence",
 
 	// IP Token events
-	"ip.token.created":      "fie.ip.created",
-	"ip.token.transferred":  "fie.ip.transferred",
-	"ip.token.licensed":     "fie.ip.licensed",
+	"ip.token.created":       "fie.ip.created",
+	"ip.token.transferred":   "fie.ip.transferred",
+	"ip.token.licensed":      "fie.ip.licensed",
 	"ip.token.public_domain": "fie.ip.public_domain",
-	"ip.token.revoked":      "fie.ip.revoked",
+	"ip.token.revoked":       "fie.ip.revoked",
 
 	// Sunset events
 	"sunset.initiated":     "fie.sunset.initiated",
@@ -49,17 +49,17 @@ var ActionMappings = map[string]string{
 	"sunset.complete":      "fie.sunset.complete",
 
 	// Oracle events
-	"oracle.requested":  "fie.oracle.requested",
-	"oracle.fulfilled":  "fie.oracle.fulfilled",
-	"oracle.disputed":   "fie.oracle.disputed",
-	"oracle.timeout":    "fie.oracle.timeout",
+	"oracle.requested": "fie.oracle.requested",
+	"oracle.fulfilled": "fie.oracle.fulfilled",
+	"oracle.disputed":  "fie.oracle.disputed",
+	"oracle.timeout":   "fie.oracle.timeout",
 
 	// Security events
-	"security.access_change":       "fie.security.access_change",
-	"security.role_assignment":     "fie.security.role_assignment",
+	"security.access_change":        "fie.security.access_change",
+	"security.role_assignment":      "fie.security.role_assignment",
 	"security.constraint_violation": "fie.security.constraint_violation",
-	"security.anomaly":             "fie.security.anomaly",
-	"security.political_content":   "fie.security.political_content",
+	"security.anomaly":              "fie.security.anomaly",
+	"security.political_content":    "fie.security.political_content",
 }
 
 // Normalizer converts FIE events to canonical SIEM schema.
@@ -135,12 +135,12 @@ func (n *Normalizer) NormalizeIntent(intent *Intent, eventType string) (*schema.
 		},
 
 		Metadata: map[string]any{
-			"fie_intent_id":      intent.ID,
-			"fie_content_hash":   intent.ContentHash,
-			"fie_trigger_type":   intent.TriggerType,
-			"fie_status":         intent.Status,
-			"fie_goal_count":     len(intent.Goals),
-			"fie_asset_count":    len(intent.Assets),
+			"fie_intent_id":    intent.ID,
+			"fie_content_hash": intent.ContentHash,
+			"fie_trigger_type": intent.TriggerType,
+			"fie_status":       intent.Status,
+			"fie_goal_count":   len(intent.Goals),
+			"fie_asset_count":  len(intent.Assets),
 		},
 	}
 
@@ -269,13 +269,13 @@ func (n *Normalizer) NormalizeIPToken(token *IPToken, eventType string) (*schema
 		},
 
 		Metadata: map[string]any{
-			"fie_token_id":       token.TokenID,
-			"fie_intent_id":      token.IntentID,
-			"fie_contract_addr":  token.ContractAddr,
-			"fie_ip_type":        token.IPType,
-			"fie_license_type":   token.LicenseType,
-			"fie_royalty_rate":   token.RoyaltyRate,
-			"fie_token_status":   token.Status,
+			"fie_token_id":      token.TokenID,
+			"fie_intent_id":     token.IntentID,
+			"fie_contract_addr": token.ContractAddr,
+			"fie_ip_type":       token.IPType,
+			"fie_license_type":  token.LicenseType,
+			"fie_royalty_rate":  token.RoyaltyRate,
+			"fie_token_status":  token.Status,
 		},
 	}
 
@@ -313,11 +313,11 @@ func (n *Normalizer) NormalizeSunset(sunset *SunsetEvent) (*schema.Event, error)
 		},
 
 		Metadata: map[string]any{
-			"fie_sunset_id":       sunset.ID,
-			"fie_intent_id":       sunset.IntentID,
-			"fie_sunset_phase":    sunset.Phase,
-			"fie_assets_released": sunset.AssetsReleased,
-			"fie_ip_transitioned": sunset.IPTransitioned,
+			"fie_sunset_id":        sunset.ID,
+			"fie_intent_id":        sunset.IntentID,
+			"fie_sunset_phase":     sunset.Phase,
+			"fie_assets_released":  sunset.AssetsReleased,
+			"fie_ip_transitioned":  sunset.IPTransitioned,
 			"fie_public_domain_tx": sunset.PublicDomainTx,
 		},
 	}
@@ -403,10 +403,10 @@ func (n *Normalizer) NormalizeSecurity(sec *SecurityEvent) (*schema.Event, error
 		},
 
 		Metadata: map[string]any{
-			"fie_security_id":   sec.ID,
-			"fie_intent_id":     sec.IntentID,
-			"fie_event_type":    sec.EventType,
-			"fie_severity":      sec.Severity,
+			"fie_security_id": sec.ID,
+			"fie_intent_id":   sec.IntentID,
+			"fie_event_type":  sec.EventType,
+			"fie_severity":    sec.Severity,
 		},
 
 		Raw: sec.Description,

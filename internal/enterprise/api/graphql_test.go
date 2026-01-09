@@ -72,12 +72,12 @@ func TestLexer(t *testing.T) {
 
 func TestParser(t *testing.T) {
 	tests := []struct {
-		name          string
-		query         string
-		expectError   bool
-		opCount       int
-		opType        string
-		opName        string
+		name        string
+		query       string
+		expectError bool
+		opCount     int
+		opType      string
+		opName      string
 	}{
 		{
 			name:        "simple query",
@@ -325,10 +325,10 @@ func TestComplexityAnalysis(t *testing.T) {
 	executor := NewExecutor(schema)
 
 	tests := []struct {
-		name          string
-		query         string
-		config        *ComplexityConfig
-		expectErrors  bool
+		name         string
+		query        string
+		config       *ComplexityConfig
+		expectErrors bool
 	}{
 		{
 			name:  "simple query within limits",

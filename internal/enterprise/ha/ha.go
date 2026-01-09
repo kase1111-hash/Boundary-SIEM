@@ -16,8 +16,8 @@ import (
 type ClusterRole string
 
 const (
-	RoleLeader   ClusterRole = "leader"
-	RoleFollower ClusterRole = "follower"
+	RoleLeader    ClusterRole = "leader"
+	RoleFollower  ClusterRole = "follower"
 	RoleCandidate ClusterRole = "candidate"
 )
 
@@ -34,45 +34,45 @@ const (
 
 // ClusterNode represents a node in the SIEM cluster.
 type ClusterNode struct {
-	ID           string            `json:"id"`
-	Name         string            `json:"name"`
-	Address      string            `json:"address"`
-	Port         int               `json:"port"`
-	Role         ClusterRole       `json:"role"`
-	State        NodeState         `json:"state"`
-	Version      string            `json:"version"`
-	StartedAt    time.Time         `json:"started_at"`
-	LastSeen     time.Time         `json:"last_seen"`
-	Metrics      *NodeMetrics      `json:"metrics"`
-	Labels       map[string]string `json:"labels,omitempty"`
-	Zone         string            `json:"zone,omitempty"`
-	Region       string            `json:"region,omitempty"`
+	ID        string            `json:"id"`
+	Name      string            `json:"name"`
+	Address   string            `json:"address"`
+	Port      int               `json:"port"`
+	Role      ClusterRole       `json:"role"`
+	State     NodeState         `json:"state"`
+	Version   string            `json:"version"`
+	StartedAt time.Time         `json:"started_at"`
+	LastSeen  time.Time         `json:"last_seen"`
+	Metrics   *NodeMetrics      `json:"metrics"`
+	Labels    map[string]string `json:"labels,omitempty"`
+	Zone      string            `json:"zone,omitempty"`
+	Region    string            `json:"region,omitempty"`
 }
 
 // NodeMetrics contains node performance metrics.
 type NodeMetrics struct {
-	CPUUsage        float64 `json:"cpu_usage"`
-	MemoryUsage     float64 `json:"memory_usage"`
-	DiskUsage       float64 `json:"disk_usage"`
-	EventsPerSecond float64 `json:"events_per_second"`
-	QueueDepth      int64   `json:"queue_depth"`
-	ActiveConnections int   `json:"active_connections"`
-	Latency         time.Duration `json:"latency"`
+	CPUUsage          float64       `json:"cpu_usage"`
+	MemoryUsage       float64       `json:"memory_usage"`
+	DiskUsage         float64       `json:"disk_usage"`
+	EventsPerSecond   float64       `json:"events_per_second"`
+	QueueDepth        int64         `json:"queue_depth"`
+	ActiveConnections int           `json:"active_connections"`
+	Latency           time.Duration `json:"latency"`
 }
 
 // ClusterConfig configures the HA cluster.
 type ClusterConfig struct {
-	NodeID           string        `json:"node_id"`
-	NodeName         string        `json:"node_name"`
-	BindAddress      string        `json:"bind_address"`
-	BindPort         int           `json:"bind_port"`
-	AdvertiseAddress string        `json:"advertise_address"`
-	AdvertisePort    int           `json:"advertise_port"`
-	JoinAddresses    []string      `json:"join_addresses"`
+	NodeID            string        `json:"node_id"`
+	NodeName          string        `json:"node_name"`
+	BindAddress       string        `json:"bind_address"`
+	BindPort          int           `json:"bind_port"`
+	AdvertiseAddress  string        `json:"advertise_address"`
+	AdvertisePort     int           `json:"advertise_port"`
+	JoinAddresses     []string      `json:"join_addresses"`
 	HeartbeatInterval time.Duration `json:"heartbeat_interval"`
-	ElectionTimeout  time.Duration `json:"election_timeout"`
-	ReplicationFactor int          `json:"replication_factor"`
-	MinQuorum        int           `json:"min_quorum"`
+	ElectionTimeout   time.Duration `json:"election_timeout"`
+	ReplicationFactor int           `json:"replication_factor"`
+	MinQuorum         int           `json:"min_quorum"`
 }
 
 // Cluster manages the HA cluster.
@@ -443,18 +443,18 @@ func (c *KafkaConsumer) HealthCheck(ctx context.Context) kafka.HealthStatus {
 
 // ClickHouseConfig configures ClickHouse for analytics.
 type ClickHouseConfig struct {
-	Hosts             []string      `json:"hosts"`
-	Database          string        `json:"database"`
-	Username          string        `json:"username"`
-	Password          string        `json:"password"`
-	Cluster           string        `json:"cluster"`
-	ReplicatedMergeTree bool        `json:"replicated_merge_tree"`
-	Shards            int           `json:"shards"`
-	Replicas          int           `json:"replicas"`
-	MaxConnections    int           `json:"max_connections"`
-	DialTimeout       time.Duration `json:"dial_timeout"`
-	MaxExecutionTime  time.Duration `json:"max_execution_time"`
-	Compression       string        `json:"compression"`
+	Hosts               []string      `json:"hosts"`
+	Database            string        `json:"database"`
+	Username            string        `json:"username"`
+	Password            string        `json:"password"`
+	Cluster             string        `json:"cluster"`
+	ReplicatedMergeTree bool          `json:"replicated_merge_tree"`
+	Shards              int           `json:"shards"`
+	Replicas            int           `json:"replicas"`
+	MaxConnections      int           `json:"max_connections"`
+	DialTimeout         time.Duration `json:"dial_timeout"`
+	MaxExecutionTime    time.Duration `json:"max_execution_time"`
+	Compression         string        `json:"compression"`
 }
 
 // ClickHouseCluster manages ClickHouse cluster connections.
@@ -493,11 +493,11 @@ func (c *ClickHouseCluster) CreateReplicatedTable(table, columns string) error {
 // GetClusterStatus returns cluster health status.
 func (c *ClickHouseCluster) GetClusterStatus() *ClusterStatus {
 	return &ClusterStatus{
-		Name:       c.config.Cluster,
-		Shards:     c.config.Shards,
-		Replicas:   c.config.Replicas,
-		Healthy:    true,
-		TotalNodes: c.config.Shards * c.config.Replicas,
+		Name:        c.config.Cluster,
+		Shards:      c.config.Shards,
+		Replicas:    c.config.Replicas,
+		Healthy:     true,
+		TotalNodes:  c.config.Shards * c.config.Replicas,
 		ActiveNodes: c.config.Shards * c.config.Replicas,
 	}
 }
@@ -514,14 +514,14 @@ type ClusterStatus struct {
 
 // KubernetesConfig configures Kubernetes deployment.
 type KubernetesConfig struct {
-	Namespace         string            `json:"namespace"`
-	ServiceAccount    string            `json:"service_account"`
-	Replicas          int               `json:"replicas"`
-	Resources         ResourceRequirements `json:"resources"`
-	Affinity          *AffinityConfig   `json:"affinity,omitempty"`
-	Tolerations       []Toleration      `json:"tolerations,omitempty"`
-	PodDisruptionBudget *PDBConfig      `json:"pod_disruption_budget,omitempty"`
-	HorizontalPodAutoscaler *HPAConfig  `json:"horizontal_pod_autoscaler,omitempty"`
+	Namespace               string               `json:"namespace"`
+	ServiceAccount          string               `json:"service_account"`
+	Replicas                int                  `json:"replicas"`
+	Resources               ResourceRequirements `json:"resources"`
+	Affinity                *AffinityConfig      `json:"affinity,omitempty"`
+	Tolerations             []Toleration         `json:"tolerations,omitempty"`
+	PodDisruptionBudget     *PDBConfig           `json:"pod_disruption_budget,omitempty"`
+	HorizontalPodAutoscaler *HPAConfig           `json:"horizontal_pod_autoscaler,omitempty"`
 }
 
 // ResourceRequirements defines resource requests/limits.
@@ -566,10 +566,10 @@ type PDBConfig struct {
 
 // HPAConfig defines HorizontalPodAutoscaler.
 type HPAConfig struct {
-	MinReplicas     int `json:"min_replicas"`
-	MaxReplicas     int `json:"max_replicas"`
-	TargetCPU       int `json:"target_cpu_percent"`
-	TargetMemory    int `json:"target_memory_percent,omitempty"`
+	MinReplicas       int           `json:"min_replicas"`
+	MaxReplicas       int           `json:"max_replicas"`
+	TargetCPU         int           `json:"target_cpu_percent"`
+	TargetMemory      int           `json:"target_memory_percent,omitempty"`
 	ScaleUpCooldown   time.Duration `json:"scale_up_cooldown"`
 	ScaleDownCooldown time.Duration `json:"scale_down_cooldown"`
 }

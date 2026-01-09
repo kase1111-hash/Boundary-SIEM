@@ -136,13 +136,13 @@ type Event struct {
 type EventType string
 
 const (
-	EventAdd      EventType = "add"
-	EventRemove   EventType = "remove"
-	EventBind     EventType = "bind"
-	EventUnbind   EventType = "unbind"
-	EventChange   EventType = "change"
+	EventAdd       EventType = "add"
+	EventRemove    EventType = "remove"
+	EventBind      EventType = "bind"
+	EventUnbind    EventType = "unbind"
+	EventChange    EventType = "change"
 	EventAuthorize EventType = "authorize"
-	EventBlock    EventType = "block"
+	EventBlock     EventType = "block"
 )
 
 // Policy represents a USB device policy.

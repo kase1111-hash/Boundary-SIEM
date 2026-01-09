@@ -78,15 +78,15 @@ type IngestionEvent struct {
 
 // NegotiationEvent represents a licensing negotiation event.
 type NegotiationEvent struct {
-	ID            string                 `json:"id"`
-	AgentID       string                 `json:"agent_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	CounterpartyID string                `json:"counterparty_id"`
-	EventType     string                 `json:"event_type"` // initiated, offer_made, counter_offer, accepted, rejected, expired
-	OfferAmount   float64                `json:"offer_amount,omitempty"`
-	LicenseTerms  string                 `json:"license_terms,omitempty"`
-	LLMModel      string                 `json:"llm_model"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID             string                 `json:"id"`
+	AgentID        string                 `json:"agent_id"`
+	Timestamp      time.Time              `json:"timestamp"`
+	CounterpartyID string                 `json:"counterparty_id"`
+	EventType      string                 `json:"event_type"` // initiated, offer_made, counter_offer, accepted, rejected, expired
+	OfferAmount    float64                `json:"offer_amount,omitempty"`
+	LicenseTerms   string                 `json:"license_terms,omitempty"`
+	LLMModel       string                 `json:"llm_model"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // ContractEvent represents a smart contract deployment/interaction event.
@@ -105,15 +105,15 @@ type ContractEvent struct {
 
 // RevenueEvent represents a revenue distribution event.
 type RevenueEvent struct {
-	ID           string    `json:"id"`
-	AgentID      string    `json:"agent_id"`
-	Timestamp    time.Time `json:"timestamp"`
-	EventType    string    `json:"event_type"` // license_fee, royalty, yield
-	Amount       float64   `json:"amount"`
-	Currency     string    `json:"currency"`
-	Source       string    `json:"source"`
-	Recipient    string    `json:"recipient"`
-	TxHash       string    `json:"tx_hash,omitempty"`
+	ID        string    `json:"id"`
+	AgentID   string    `json:"agent_id"`
+	Timestamp time.Time `json:"timestamp"`
+	EventType string    `json:"event_type"` // license_fee, royalty, yield
+	Amount    float64   `json:"amount"`
+	Currency  string    `json:"currency"`
+	Source    string    `json:"source"`
+	Recipient string    `json:"recipient"`
+	TxHash    string    `json:"tx_hash,omitempty"`
 }
 
 // SecurityEvent represents a security-related event.
@@ -131,23 +131,23 @@ type SecurityEvent struct {
 
 // GovernanceEvent represents a DAO governance event.
 type GovernanceEvent struct {
-	ID          string    `json:"id"`
-	AgentID     string    `json:"agent_id"`
-	Timestamp   time.Time `json:"timestamp"`
-	EventType   string    `json:"event_type"` // proposal_created, vote_cast, proposal_executed, quorum_reached
-	ProposalID  string    `json:"proposal_id"`
-	VoterID     string    `json:"voter_id,omitempty"`
-	VoteWeight  float64   `json:"vote_weight,omitempty"`
-	Outcome     string    `json:"outcome,omitempty"`
+	ID         string    `json:"id"`
+	AgentID    string    `json:"agent_id"`
+	Timestamp  time.Time `json:"timestamp"`
+	EventType  string    `json:"event_type"` // proposal_created, vote_cast, proposal_executed, quorum_reached
+	ProposalID string    `json:"proposal_id"`
+	VoterID    string    `json:"voter_id,omitempty"`
+	VoteWeight float64   `json:"vote_weight,omitempty"`
+	Outcome    string    `json:"outcome,omitempty"`
 }
 
 // ModuleStats represents statistics about the RRA module.
 type ModuleStats struct {
-	TotalAgents      int64     `json:"total_agents"`
-	ActiveAgents     int64     `json:"active_agents"`
-	TotalRevenue     float64   `json:"total_revenue"`
-	TotalNegotiations int64    `json:"total_negotiations"`
-	LastActivityTime time.Time `json:"last_activity_time"`
+	TotalAgents       int64     `json:"total_agents"`
+	ActiveAgents      int64     `json:"active_agents"`
+	TotalRevenue      float64   `json:"total_revenue"`
+	TotalNegotiations int64     `json:"total_negotiations"`
+	LastActivityTime  time.Time `json:"last_activity_time"`
 }
 
 // HealthStatus represents the health of the RRA-Module service.

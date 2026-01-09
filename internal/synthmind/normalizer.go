@@ -75,9 +75,9 @@ func (n *Normalizer) NormalizeEmotionalState(state *EmotionalState) (*schema.Eve
 			Host:       n.sourceHost,
 			InstanceID: state.ID,
 		},
-		Action:  "sm.emotional.state",
-		Target:  fmt.Sprintf("agent:%s", state.AgentID),
-		Outcome: outcome,
+		Action:   "sm.emotional.state",
+		Target:   fmt.Sprintf("agent:%s", state.AgentID),
+		Outcome:  outcome,
 		Severity: severity,
 		Actor: &schema.Actor{
 			Type: schema.ActorService,

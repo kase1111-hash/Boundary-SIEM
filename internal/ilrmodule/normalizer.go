@@ -175,11 +175,11 @@ func (n *Normalizer) NormalizeComplianceEvent(compEvent *ComplianceEvent) (*sche
 		Severity: severity,
 
 		Metadata: map[string]any{
-			"ilr_event_id":     compEvent.ID,
-			"ilr_event_type":   compEvent.EventType,
-			"ilr_dispute_id":   compEvent.DisputeID,
-			"ilr_passed":       compEvent.Passed,
-			"ilr_details":      compEvent.Details,
+			"ilr_event_id":   compEvent.ID,
+			"ilr_event_type": compEvent.EventType,
+			"ilr_dispute_id": compEvent.DisputeID,
+			"ilr_passed":     compEvent.Passed,
+			"ilr_details":    compEvent.Details,
 		},
 	}
 
@@ -266,11 +266,11 @@ func (n *Normalizer) NormalizeOracleEvent(oracle *OracleEvent) (*schema.Event, e
 		Severity: severity,
 
 		Metadata: map[string]any{
-			"ilr_oracle_id":      oracle.ID,
-			"ilr_oracle_type":    oracle.OracleType,
-			"ilr_dispute_id":     oracle.DisputeID,
-			"ilr_request_type":   oracle.RequestType,
-			"ilr_oracle_status":  oracle.Status,
+			"ilr_oracle_id":     oracle.ID,
+			"ilr_oracle_type":   oracle.OracleType,
+			"ilr_dispute_id":    oracle.DisputeID,
+			"ilr_request_type":  oracle.RequestType,
+			"ilr_oracle_status": oracle.Status,
 		},
 	}
 

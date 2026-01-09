@@ -34,10 +34,10 @@ var ActionMappings = map[string]string{
 	"slide.end":          "lh.slide.end",
 
 	// Rope events
-	"rope.deploy":      "lh.rope.deploy",
-	"rope.rappel":      "lh.rope.rappel",
-	"rope.anchor_set":  "lh.rope.anchor",
-	"rope.break":       "lh.rope.break",
+	"rope.deploy":     "lh.rope.deploy",
+	"rope.rappel":     "lh.rope.rappel",
+	"rope.anchor_set": "lh.rope.anchor",
+	"rope.break":      "lh.rope.break",
 
 	// Body condition events
 	"body.critical":  "lh.body.critical",
@@ -45,9 +45,9 @@ var ActionMappings = map[string]string{
 	"body.exhausted": "lh.body.exhausted",
 
 	// Input events
-	"input.valid":    "lh.input.valid",
-	"input.invalid":  "lh.input.invalid",
-	"input.risky":    "lh.input.risky",
+	"input.valid":   "lh.input.valid",
+	"input.invalid": "lh.input.invalid",
+	"input.risky":   "lh.input.risky",
 
 	// Save events
 	"save.created":   "lh.save.created",
@@ -218,14 +218,14 @@ func (n *Normalizer) NormalizeFatal(fatal *FatalEvent) (*schema.Event, error) {
 		},
 
 		Metadata: map[string]any{
-			"lh_fatal_id":     fatal.ID,
-			"lh_session_id":   fatal.SessionID,
-			"lh_player_id":    fatal.PlayerID,
-			"lh_phase":        fatal.Phase,
-			"lh_cause":        fatal.Cause,
-			"lh_altitude":     fatal.Altitude,
-			"lh_duration":     fatal.Duration,
-			"lh_has_replay":   fatal.ReplayData != "",
+			"lh_fatal_id":   fatal.ID,
+			"lh_session_id": fatal.SessionID,
+			"lh_player_id":  fatal.PlayerID,
+			"lh_phase":      fatal.Phase,
+			"lh_cause":      fatal.Cause,
+			"lh_altitude":   fatal.Altitude,
+			"lh_duration":   fatal.Duration,
+			"lh_has_replay": fatal.ReplayData != "",
 		},
 	}
 
@@ -435,12 +435,12 @@ func (n *Normalizer) NormalizeInput(input *InputValidation) (*schema.Event, erro
 		},
 
 		Metadata: map[string]any{
-			"lh_input_id":     input.ID,
-			"lh_session_id":   input.SessionID,
-			"lh_action_type":  input.ActionType,
-			"lh_input_valid":  input.InputValid,
-			"lh_risk_level":   input.RiskLevel,
-			"lh_anomalies":    input.Anomalies,
+			"lh_input_id":    input.ID,
+			"lh_session_id":  input.SessionID,
+			"lh_action_type": input.ActionType,
+			"lh_input_valid": input.InputValid,
+			"lh_risk_level":  input.RiskLevel,
+			"lh_anomalies":   input.Anomalies,
 		},
 	}
 
@@ -539,12 +539,12 @@ func (n *Normalizer) NormalizePhysicsAnomaly(anomaly *PhysicsAnomaly) (*schema.E
 		},
 
 		Metadata: map[string]any{
-			"lh_anomaly_id":    anomaly.ID,
-			"lh_session_id":    anomaly.SessionID,
-			"lh_anomaly_type":  anomaly.AnomalyType,
-			"lh_expected":      anomaly.Expected,
-			"lh_actual":        anomaly.Actual,
-			"lh_severity":      anomaly.Severity,
+			"lh_anomaly_id":   anomaly.ID,
+			"lh_session_id":   anomaly.SessionID,
+			"lh_anomaly_type": anomaly.AnomalyType,
+			"lh_expected":     anomaly.Expected,
+			"lh_actual":       anomaly.Actual,
+			"lh_severity":     anomaly.Severity,
 		},
 	}
 

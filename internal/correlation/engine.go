@@ -642,10 +642,10 @@ func (e *Engine) Stats() map[string]interface{} {
 	defer e.mu.RUnlock()
 
 	stats := map[string]interface{}{
-		"rules_count":    len(e.rules),
-		"event_queue":    len(e.eventCh),
-		"alert_queue":    len(e.alertCh),
-		"handler_count":  len(e.handlers),
+		"rules_count":   len(e.rules),
+		"event_queue":   len(e.eventCh),
+		"alert_queue":   len(e.alertCh),
+		"handler_count": len(e.handlers),
 	}
 
 	// Count windows

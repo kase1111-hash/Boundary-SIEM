@@ -383,15 +383,15 @@ func (l *LogChannel) Send(ctx context.Context, alert *Alert) error {
 
 // EmailConfig configures email notifications.
 type EmailConfig struct {
-	SMTPHost     string
-	SMTPPort     int
-	Username     string
-	Password     string
-	From         string
-	To           []string
-	UseTLS       bool
-	UseSTARTTLS  bool
-	SkipVerify   bool // Skip TLS certificate verification (not recommended for production)
+	SMTPHost    string
+	SMTPPort    int
+	Username    string
+	Password    string
+	From        string
+	To          []string
+	UseTLS      bool
+	UseSTARTTLS bool
+	SkipVerify  bool // Skip TLS certificate verification (not recommended for production)
 }
 
 // EmailChannel sends alerts via SMTP email.

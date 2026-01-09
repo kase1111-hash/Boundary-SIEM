@@ -305,8 +305,8 @@ func isNonRetryableError(err error) bool {
 
 // Common errors
 var (
-	ErrProducerClosed  = fmt.Errorf("kafka: producer is closed")
-	ErrConsumerClosed  = fmt.Errorf("kafka: consumer is closed")
-	ErrInvalidMessage  = fmt.Errorf("kafka: invalid message")
-	ErrTopicNotFound   = fmt.Errorf("kafka: topic not found")
+	ErrProducerClosed = fmt.Errorf("kafka: producer is closed")
+	ErrConsumerClosed = fmt.Errorf("kafka: consumer is closed")
+	ErrInvalidMessage = fmt.Errorf("kafka: invalid message")
+	ErrTopicNotFound  = fmt.Errorf("kafka: topic not found")
 )

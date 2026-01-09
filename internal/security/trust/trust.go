@@ -95,39 +95,39 @@ type PCRValue struct {
 
 // PlatformState represents the current platform trust state.
 type PlatformState struct {
-	TrustLevel     TrustLevel   `json:"trust_level"`
-	TPMAvailable   bool         `json:"tpm_available"`
-	TPMVersion     TPMVersion   `json:"tpm_version,omitempty"`
-	SecureBootOn   bool         `json:"secure_boot_on"`
-	MeasuredBoot   bool         `json:"measured_boot"`
-	PCRValues      []PCRValue   `json:"pcr_values,omitempty"`
-	BootHash       string       `json:"boot_hash,omitempty"`
-	KernelLockdown string       `json:"kernel_lockdown,omitempty"`
-	IMAEnabled     bool         `json:"ima_enabled"`
-	CapturedAt     time.Time    `json:"captured_at"`
+	TrustLevel     TrustLevel `json:"trust_level"`
+	TPMAvailable   bool       `json:"tpm_available"`
+	TPMVersion     TPMVersion `json:"tpm_version,omitempty"`
+	SecureBootOn   bool       `json:"secure_boot_on"`
+	MeasuredBoot   bool       `json:"measured_boot"`
+	PCRValues      []PCRValue `json:"pcr_values,omitempty"`
+	BootHash       string     `json:"boot_hash,omitempty"`
+	KernelLockdown string     `json:"kernel_lockdown,omitempty"`
+	IMAEnabled     bool       `json:"ima_enabled"`
+	CapturedAt     time.Time  `json:"captured_at"`
 }
 
 // TrustRequirement defines trust requirements for an operation.
 type TrustRequirement struct {
-	Name             string     `json:"name"`
-	MinTrustLevel    TrustLevel `json:"min_trust_level"`
-	RequireTPM       bool       `json:"require_tpm"`
-	RequireSecureBoot bool      `json:"require_secure_boot"`
-	RequireMeasuredBoot bool    `json:"require_measured_boot"`
-	RequiredPCRs     []int      `json:"required_pcrs,omitempty"`
-	ExpectedPCRs     map[int]string `json:"expected_pcrs,omitempty"` // PCR index -> expected value
-	AllowDegraded    bool       `json:"allow_degraded"` // Allow operation with warning if requirement not met
+	Name                string         `json:"name"`
+	MinTrustLevel       TrustLevel     `json:"min_trust_level"`
+	RequireTPM          bool           `json:"require_tpm"`
+	RequireSecureBoot   bool           `json:"require_secure_boot"`
+	RequireMeasuredBoot bool           `json:"require_measured_boot"`
+	RequiredPCRs        []int          `json:"required_pcrs,omitempty"`
+	ExpectedPCRs        map[int]string `json:"expected_pcrs,omitempty"` // PCR index -> expected value
+	AllowDegraded       bool           `json:"allow_degraded"`          // Allow operation with warning if requirement not met
 }
 
 // GateResult represents the result of a trust gate check.
 type GateResult struct {
-	Allowed       bool           `json:"allowed"`
-	TrustLevel    TrustLevel     `json:"trust_level"`
+	Allowed       bool              `json:"allowed"`
+	TrustLevel    TrustLevel        `json:"trust_level"`
 	Requirement   *TrustRequirement `json:"requirement,omitempty"`
-	PlatformState *PlatformState `json:"platform_state,omitempty"`
-	Degraded      bool           `json:"degraded"` // Operation allowed but in degraded mode
-	Reason        string         `json:"reason,omitempty"`
-	Timestamp     time.Time      `json:"timestamp"`
+	PlatformState *PlatformState    `json:"platform_state,omitempty"`
+	Degraded      bool              `json:"degraded"` // Operation allowed but in degraded mode
+	Reason        string            `json:"reason,omitempty"`
+	Timestamp     time.Time         `json:"timestamp"`
 }
 
 // TrustGate manages hardware trust verification for policy decisions.
@@ -659,10 +659,10 @@ func (tg *TrustGate) RequireLevel(ctx context.Context, operation string, minLeve
 // Common requirements for SIEM operations.
 var (
 	RequireFullTrust = &TrustRequirement{
-		Name:              "full_trust",
-		MinTrustLevel:     TrustLevelFull,
-		RequireTPM:        true,
-		RequireSecureBoot: true,
+		Name:                "full_trust",
+		MinTrustLevel:       TrustLevelFull,
+		RequireTPM:          true,
+		RequireSecureBoot:   true,
 		RequireMeasuredBoot: true,
 	}
 
@@ -695,19 +695,19 @@ var (
 	}
 
 	RequireModeTransition = &TrustRequirement{
-		Name:              "mode_transition",
-		MinTrustLevel:     TrustLevelTPM,
-		RequireTPM:        true,
-		AllowDegraded:     true,
+		Name:          "mode_transition",
+		MinTrustLevel: TrustLevelTPM,
+		RequireTPM:    true,
+		AllowDegraded: true,
 	}
 
 	RequireKeyOperation = &TrustRequirement{
-		Name:              "key_operation",
-		MinTrustLevel:     TrustLevelFull,
-		RequireTPM:        true,
-		RequireSecureBoot: true,
+		Name:                "key_operation",
+		MinTrustLevel:       TrustLevelFull,
+		RequireTPM:          true,
+		RequireSecureBoot:   true,
 		RequireMeasuredBoot: true,
-		AllowDegraded:     false,
+		AllowDegraded:       false,
 	}
 )
 

@@ -47,9 +47,9 @@ var (
 // MemorySessionStorage implements SessionStorage using in-memory maps.
 // This is suitable for single-instance deployments and testing.
 type MemorySessionStorage struct {
-	mu       sync.RWMutex
-	sessions map[string]*Session        // token -> session
-	userSessions map[string][]string    // userID -> []token
+	mu           sync.RWMutex
+	sessions     map[string]*Session // token -> session
+	userSessions map[string][]string // userID -> []token
 }
 
 // NewMemorySessionStorage creates a new in-memory session storage.
@@ -251,16 +251,16 @@ type RedisClient interface {
 
 // RedisConfig holds Redis connection configuration.
 type RedisConfig struct {
-	Addr         string        `yaml:"addr"`          // Redis server address (host:port)
-	Password     string        `yaml:"password"`      // Password for authentication
-	DB           int           `yaml:"db"`            // Database number
-	DialTimeout  time.Duration `yaml:"dial_timeout"`  // Connection timeout
-	ReadTimeout  time.Duration `yaml:"read_timeout"`  // Read timeout
-	WriteTimeout time.Duration `yaml:"write_timeout"` // Write timeout
-	PoolSize     int           `yaml:"pool_size"`     // Connection pool size
+	Addr         string        `yaml:"addr"`           // Redis server address (host:port)
+	Password     string        `yaml:"password"`       // Password for authentication
+	DB           int           `yaml:"db"`             // Database number
+	DialTimeout  time.Duration `yaml:"dial_timeout"`   // Connection timeout
+	ReadTimeout  time.Duration `yaml:"read_timeout"`   // Read timeout
+	WriteTimeout time.Duration `yaml:"write_timeout"`  // Write timeout
+	PoolSize     int           `yaml:"pool_size"`      // Connection pool size
 	MinIdleConns int           `yaml:"min_idle_conns"` // Minimum idle connections
-	MaxRetries   int           `yaml:"max_retries"`   // Maximum retry attempts
-	TLSEnabled   bool          `yaml:"tls_enabled"`   // Enable TLS
+	MaxRetries   int           `yaml:"max_retries"`    // Maximum retry attempts
+	TLSEnabled   bool          `yaml:"tls_enabled"`    // Enable TLS
 }
 
 // DefaultRedisConfig returns sensible defaults.

@@ -15,13 +15,13 @@ import (
 
 // StateCheck represents a state integrity check result.
 type StateCheck struct {
-	Slot          uint64
-	Timestamp     time.Time
-	StateRoot     string
-	Expected      string
-	Valid         bool
-	CheckType     string
-	ErrorMessage  string
+	Slot         uint64
+	Timestamp    time.Time
+	StateRoot    string
+	Expected     string
+	Valid        bool
+	CheckType    string
+	ErrorMessage string
 }
 
 // ReorgInfo contains information about a chain reorganization.
@@ -39,8 +39,8 @@ type IntegrityMetrics struct {
 	Timestamp time.Time
 
 	// State root validation
-	StateRootChecks     int
-	StateRootFailures   int
+	StateRootChecks      int
+	StateRootFailures    int
 	StateRootFailureRate float64
 	LastStateRootError   string
 
@@ -50,10 +50,10 @@ type IntegrityMetrics struct {
 	DBConsistencyErrors  int
 
 	// Reorg tracking
-	ReorgCount1h         int
-	ReorgCount24h        int
-	MaxReorgDepth        uint64
-	DeepReorgDetected    bool
+	ReorgCount1h      int
+	ReorgCount24h     int
+	MaxReorgDepth     uint64
+	DeepReorgDetected bool
 
 	// State consistency
 	ConsistencyChecks    int
@@ -64,7 +64,7 @@ type IntegrityMetrics struct {
 // MonitorConfig contains configuration for the integrity monitor.
 type MonitorConfig struct {
 	// State root thresholds
-	StateRootFailureThreshold float64       // Percentage threshold
+	StateRootFailureThreshold float64 // Percentage threshold
 	StateRootCheckInterval    time.Duration
 
 	// Database checks
@@ -72,9 +72,9 @@ type MonitorConfig struct {
 	DBCorruptionThreshold int // Number of errors before alert
 
 	// Reorg thresholds
-	DeepReorgThreshold    uint64        // Slots
-	FrequentReorgCount    int           // Count per hour
-	ReorgCheckWindow      time.Duration
+	DeepReorgThreshold uint64 // Slots
+	FrequentReorgCount int    // Count per hour
+	ReorgCheckWindow   time.Duration
 
 	// Consistency checks
 	ConsistencyCheckInterval time.Duration
@@ -88,14 +88,14 @@ type MonitorConfig struct {
 // DefaultMonitorConfig returns default configuration.
 func DefaultMonitorConfig() MonitorConfig {
 	return MonitorConfig{
-		StateRootFailureThreshold: 1.0,               // 1% failure rate
+		StateRootFailureThreshold: 1.0, // 1% failure rate
 		StateRootCheckInterval:    5 * time.Minute,
 
 		DBCheckInterval:       1 * time.Hour,
 		DBCorruptionThreshold: 3,
 
-		DeepReorgThreshold: 64,   // 64 slots = critical
-		FrequentReorgCount: 5,    // 5 reorgs/hour = suspicious
+		DeepReorgThreshold: 64, // 64 slots = critical
+		FrequentReorgCount: 5,  // 5 reorgs/hour = suspicious
 		ReorgCheckWindow:   1 * time.Hour,
 
 		ConsistencyCheckInterval: 30 * time.Minute,
@@ -126,15 +126,15 @@ type Monitor struct {
 	config MonitorConfig
 	logger *slog.Logger
 
-	mu                sync.RWMutex
-	stateChecks       []StateCheck
-	reorgHistory      []ReorgInfo
-	metricsHistory    []IntegrityMetrics
-	lastMetrics       *IntegrityMetrics
-	handlers          []AlertHandler
-	recentAlerts      map[string]time.Time
-	dbErrorCount      int
-	lastDBCheck       time.Time
+	mu                   sync.RWMutex
+	stateChecks          []StateCheck
+	reorgHistory         []ReorgInfo
+	metricsHistory       []IntegrityMetrics
+	lastMetrics          *IntegrityMetrics
+	handlers             []AlertHandler
+	recentAlerts         map[string]time.Time
+	dbErrorCount         int
+	lastDBCheck          time.Time
 	lastConsistencyCheck time.Time
 
 	running bool
@@ -387,10 +387,10 @@ func (m *Monitor) checkStateRootAlerts(ctx context.Context, metrics *IntegrityMe
 				metrics.StateRootFailureRate, metrics.StateRootFailures, metrics.StateRootChecks),
 			Timestamp: time.Now(),
 			Metadata: map[string]interface{}{
-				"failure_rate":       metrics.StateRootFailureRate,
-				"failures":           metrics.StateRootFailures,
-				"total_checks":       metrics.StateRootChecks,
-				"last_error":         metrics.LastStateRootError,
+				"failure_rate": metrics.StateRootFailureRate,
+				"failures":     metrics.StateRootFailures,
+				"total_checks": metrics.StateRootChecks,
+				"last_error":   metrics.LastStateRootError,
 			},
 			Metrics: metrics,
 		})

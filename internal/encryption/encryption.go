@@ -55,7 +55,7 @@ type Engine struct {
 	mu         sync.RWMutex
 
 	// Key rotation support: map of version to key for backward compatibility
-	oldKeys    map[int][]byte
+	oldKeys map[int][]byte
 }
 
 // NewEngine creates a new encryption engine.
@@ -385,10 +385,10 @@ func (e *Engine) PurgeOldKeys() int {
 
 // EncryptedField represents an encrypted field with metadata.
 type EncryptedField struct {
-	Ciphertext string `json:"ciphertext"`
-	KeyVersion int    `json:"key_version"`
-	Algorithm  string `json:"algorithm"`
-	EncryptedAt int64 `json:"encrypted_at"`
+	Ciphertext  string `json:"ciphertext"`
+	KeyVersion  int    `json:"key_version"`
+	Algorithm   string `json:"algorithm"`
+	EncryptedAt int64  `json:"encrypted_at"`
 }
 
 // EncryptField encrypts a field and returns metadata.

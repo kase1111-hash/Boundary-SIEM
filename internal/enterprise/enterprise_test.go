@@ -566,4 +566,3 @@ func TestEnterpriseIntegration(t *testing.T) {
 		}
 	})
 }
-

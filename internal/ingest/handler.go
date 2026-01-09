@@ -262,11 +262,11 @@ func respondError(w http.ResponseWriter, status int, message string, requestID s
 
 // DreamingResponse represents the system's current activity state.
 type DreamingResponse struct {
-	Status      string         `json:"status"`
-	Activity    string         `json:"activity"`
-	Description string         `json:"description"`
+	Status      string          `json:"status"`
+	Activity    string          `json:"activity"`
+	Description string          `json:"description"`
 	Metrics     DreamingMetrics `json:"metrics"`
-	Timestamp   time.Time      `json:"timestamp"`
+	Timestamp   time.Time       `json:"timestamp"`
 }
 
 // DreamingMetrics contains the system's current operational metrics.

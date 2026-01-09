@@ -42,7 +42,7 @@ type AtomicTransaction struct {
 	startTime time.Time
 
 	// State management
-	preState   string // nftables ruleset before transaction
+	preState   string         // nftables ruleset before transaction
 	savepoints map[string]int // savepoint name -> command index
 
 	// Configuration
@@ -50,9 +50,9 @@ type AtomicTransaction struct {
 	logger *slog.Logger
 
 	// Paths
-	workDir     string
-	batchFile   string
-	backupFile  string
+	workDir      string
+	batchFile    string
+	backupFile   string
 	rollbackFile string
 }
 
@@ -590,13 +590,13 @@ type TransactionLog struct {
 
 // TransactionLogEntry is a single log entry.
 type TransactionLogEntry struct {
-	Timestamp   time.Time
-	Action      string // "begin", "commit", "rollback"
-	Commands    int
-	Duration    time.Duration
-	Checksum    string
-	Success     bool
-	Error       string
+	Timestamp time.Time
+	Action    string // "begin", "commit", "rollback"
+	Commands  int
+	Duration  time.Duration
+	Checksum  string
+	Success   bool
+	Error     string
 }
 
 // NewTransactionLog creates a new transaction log.

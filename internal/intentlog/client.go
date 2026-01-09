@@ -51,17 +51,17 @@ func NewClient(cfg ClientConfig) *Client {
 
 // ProseCommit represents a prose-based commit.
 type ProseCommit struct {
-	ID            string                 `json:"id"`
-	RepoID        string                 `json:"repo_id"`
-	Author        string                 `json:"author"`
-	Timestamp     time.Time              `json:"timestamp"`
-	Intent        string                 `json:"intent"`         // The prose explanation
-	SemanticHash  string                 `json:"semantic_hash"`  // LLM-derived semantic fingerprint
-	PreviousHash  string                 `json:"previous_hash"`
-	Signature     string                 `json:"signature"`
-	Classification string                `json:"classification"` // PUBLIC, INTERNAL, CONFIDENTIAL, SECRET, TOP_SECRET
-	Branch        string                 `json:"branch"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID             string                 `json:"id"`
+	RepoID         string                 `json:"repo_id"`
+	Author         string                 `json:"author"`
+	Timestamp      time.Time              `json:"timestamp"`
+	Intent         string                 `json:"intent"`        // The prose explanation
+	SemanticHash   string                 `json:"semantic_hash"` // LLM-derived semantic fingerprint
+	PreviousHash   string                 `json:"previous_hash"`
+	Signature      string                 `json:"signature"`
+	Classification string                 `json:"classification"` // PUBLIC, INTERNAL, CONFIDENTIAL, SECRET, TOP_SECRET
+	Branch         string                 `json:"branch"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // SemanticDiff represents a semantic diff between commits.
@@ -72,20 +72,20 @@ type SemanticDiff struct {
 	ToCommit     string    `json:"to_commit"`
 	GeneratedAt  time.Time `json:"generated_at"`
 	Summary      string    `json:"summary"`
-	ChangeType   string    `json:"change_type"` // refinement, contradiction, extension, retraction
+	ChangeType   string    `json:"change_type"`  // refinement, contradiction, extension, retraction
 	Significance float64   `json:"significance"` // 0-1
 }
 
 // BranchEvent represents a branch operation.
 type BranchEvent struct {
-	ID          string    `json:"id"`
-	RepoID      string    `json:"repo_id"`
-	Timestamp   time.Time `json:"timestamp"`
-	EventType   string    `json:"event_type"` // create, merge, delete, checkout
-	BranchName  string    `json:"branch_name"`
-	FromBranch  string    `json:"from_branch,omitempty"`
-	Author      string    `json:"author"`
-	Success     bool      `json:"success"`
+	ID         string    `json:"id"`
+	RepoID     string    `json:"repo_id"`
+	Timestamp  time.Time `json:"timestamp"`
+	EventType  string    `json:"event_type"` // create, merge, delete, checkout
+	BranchName string    `json:"branch_name"`
+	FromBranch string    `json:"from_branch,omitempty"`
+	Author     string    `json:"author"`
+	Success    bool      `json:"success"`
 }
 
 // ChainEvent represents a chain integrity event.
@@ -113,14 +113,14 @@ type ExportEvent struct {
 
 // ObservationEvent represents an MP-02 observation event.
 type ObservationEvent struct {
-	ID          string                 `json:"id"`
-	RepoID      string                 `json:"repo_id"`
-	Timestamp   time.Time              `json:"timestamp"`
-	ObserverID  string                 `json:"observer_id"`
-	SessionID   string                 `json:"session_id"`
-	EventType   string                 `json:"event_type"` // effort_signal, decision_point, milestone
-	Duration    time.Duration          `json:"duration"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	RepoID     string                 `json:"repo_id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	ObserverID string                 `json:"observer_id"`
+	SessionID  string                 `json:"session_id"`
+	EventType  string                 `json:"event_type"` // effort_signal, decision_point, milestone
+	Duration   time.Duration          `json:"duration"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // KeyEvent represents a cryptographic key event.

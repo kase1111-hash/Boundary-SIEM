@@ -21,18 +21,18 @@ import (
 type ThreatType string
 
 const (
-	ThreatSanctioned     ThreatType = "sanctioned"
-	ThreatExploit        ThreatType = "exploit"
-	ThreatScam           ThreatType = "scam"
-	ThreatMixer          ThreatType = "mixer"
-	ThreatRansomware     ThreatType = "ransomware"
-	ThreatDarknet        ThreatType = "darknet"
-	ThreatTerrorFinance  ThreatType = "terror_financing"
-	ThreatPhishing       ThreatType = "phishing"
-	ThreatRugPull        ThreatType = "rug_pull"
-	ThreatFlashLoan      ThreatType = "flash_loan_attack"
-	ThreatBridgeExploit  ThreatType = "bridge_exploit"
-	ThreatMEVBot         ThreatType = "mev_bot"
+	ThreatSanctioned    ThreatType = "sanctioned"
+	ThreatExploit       ThreatType = "exploit"
+	ThreatScam          ThreatType = "scam"
+	ThreatMixer         ThreatType = "mixer"
+	ThreatRansomware    ThreatType = "ransomware"
+	ThreatDarknet       ThreatType = "darknet"
+	ThreatTerrorFinance ThreatType = "terror_financing"
+	ThreatPhishing      ThreatType = "phishing"
+	ThreatRugPull       ThreatType = "rug_pull"
+	ThreatFlashLoan     ThreatType = "flash_loan_attack"
+	ThreatBridgeExploit ThreatType = "bridge_exploit"
+	ThreatMEVBot        ThreatType = "mev_bot"
 )
 
 // RiskLevel indicates the risk severity.
@@ -63,12 +63,12 @@ type ThreatIndicator struct {
 
 // ScreeningResult represents the result of address screening.
 type ScreeningResult struct {
-	Address     string             `json:"address"`
-	IsMatch     bool               `json:"is_match"`
-	Risk        RiskLevel          `json:"risk"`
-	Indicators  []*ThreatIndicator `json:"indicators,omitempty"`
-	ScreenedAt  time.Time          `json:"screened_at"`
-	TotalHits   int                `json:"total_hits"`
+	Address    string             `json:"address"`
+	IsMatch    bool               `json:"is_match"`
+	Risk       RiskLevel          `json:"risk"`
+	Indicators []*ThreatIndicator `json:"indicators,omitempty"`
+	ScreenedAt time.Time          `json:"screened_at"`
+	TotalHits  int                `json:"total_hits"`
 }
 
 // Alert represents a threat intelligence alert.
@@ -90,15 +90,15 @@ type AlertHandler func(context.Context, *Alert) error
 
 // IntelConfig configures the threat intelligence service.
 type IntelConfig struct {
-	EnableOFAC           bool
-	EnableChainalysis    bool
-	EnableCustomLists    bool
-	OFACUpdateInterval   time.Duration
-	CacheExpiry          time.Duration
-	ChainalysisAPIKey    string
-	ChainalysisAPIURL    string
-	CustomListURLs       []string
-	HighRiskThreshold    float64
+	EnableOFAC         bool
+	EnableChainalysis  bool
+	EnableCustomLists  bool
+	OFACUpdateInterval time.Duration
+	CacheExpiry        time.Duration
+	ChainalysisAPIKey  string
+	ChainalysisAPIURL  string
+	CustomListURLs     []string
+	HighRiskThreshold  float64
 }
 
 // DefaultIntelConfig returns default configuration.
@@ -127,13 +127,13 @@ type IntelService struct {
 	cacheExpiry    map[string]time.Time
 
 	// OFAC data
-	ofacAddresses map[string]*ThreatIndicator
+	ofacAddresses  map[string]*ThreatIndicator
 	ofacLastUpdate time.Time
 
 	// Statistics
-	totalScreenings   int64
-	positiveMatches   int64
-	lastUpdateTime    time.Time
+	totalScreenings int64
+	positiveMatches int64
+	lastUpdateTime  time.Time
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -583,12 +583,12 @@ func (s *IntelService) GetStats() map[string]interface{} {
 	defer s.mu.RUnlock()
 
 	return map[string]interface{}{
-		"total_screenings":   s.totalScreenings,
-		"positive_matches":   s.positiveMatches,
-		"indicator_count":    len(s.indicators),
-		"ofac_addresses":     len(s.ofacAddresses),
-		"cache_size":         len(s.screeningCache),
-		"ofac_last_update":   s.ofacLastUpdate,
+		"total_screenings": s.totalScreenings,
+		"positive_matches": s.positiveMatches,
+		"indicator_count":  len(s.indicators),
+		"ofac_addresses":   len(s.ofacAddresses),
+		"cache_size":       len(s.screeningCache),
+		"ofac_last_update": s.ofacLastUpdate,
 	}
 }
 
@@ -607,10 +607,10 @@ func (s *IntelService) NormalizeToEvent(result *ScreeningResult, tenantID string
 	}
 
 	metadata := map[string]interface{}{
-		"address":     result.Address,
-		"is_match":    result.IsMatch,
-		"risk_level":  string(result.Risk),
-		"total_hits":  result.TotalHits,
+		"address":    result.Address,
+		"is_match":   result.IsMatch,
+		"risk_level": string(result.Risk),
+		"total_hits": result.TotalHits,
 	}
 
 	if len(result.Indicators) > 0 {

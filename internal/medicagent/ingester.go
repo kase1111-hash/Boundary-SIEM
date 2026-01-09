@@ -34,14 +34,14 @@ type IngesterConfig struct {
 	BatchSize    int           `yaml:"batch_size"`
 
 	// Feature toggles - log all important info
-	IngestKillNotifications   bool `yaml:"ingest_kill_notifications"`
-	IngestRiskAssessments     bool `yaml:"ingest_risk_assessments"`
-	IngestResurrections       bool `yaml:"ingest_resurrections"`
-	IngestAnomalies           bool `yaml:"ingest_anomalies"`
+	IngestKillNotifications    bool `yaml:"ingest_kill_notifications"`
+	IngestRiskAssessments      bool `yaml:"ingest_risk_assessments"`
+	IngestResurrections        bool `yaml:"ingest_resurrections"`
+	IngestAnomalies            bool `yaml:"ingest_anomalies"`
 	IngestThresholdAdjustments bool `yaml:"ingest_threshold_adjustments"`
-	IngestRollbacks           bool `yaml:"ingest_rollbacks"`
-	IngestApprovals           bool `yaml:"ingest_approvals"`
-	IngestSmithIntegration    bool `yaml:"ingest_smith_integration"`
+	IngestRollbacks            bool `yaml:"ingest_rollbacks"`
+	IngestApprovals            bool `yaml:"ingest_approvals"`
+	IngestSmithIntegration     bool `yaml:"ingest_smith_integration"`
 
 	// Filtering
 	MinAnomalySeverity string `yaml:"min_anomaly_severity"`
@@ -50,17 +50,17 @@ type IngesterConfig struct {
 // DefaultIngesterConfig returns the default ingester configuration with all logging enabled.
 func DefaultIngesterConfig() IngesterConfig {
 	return IngesterConfig{
-		PollInterval:              30 * time.Second,
-		BatchSize:                 100,
-		IngestKillNotifications:   true,
-		IngestRiskAssessments:     true,
-		IngestResurrections:       true,
-		IngestAnomalies:           true,
+		PollInterval:               30 * time.Second,
+		BatchSize:                  100,
+		IngestKillNotifications:    true,
+		IngestRiskAssessments:      true,
+		IngestResurrections:        true,
+		IngestAnomalies:            true,
 		IngestThresholdAdjustments: true,
-		IngestRollbacks:           true,
-		IngestApprovals:           true,
-		IngestSmithIntegration:    true,
-		MinAnomalySeverity:        "low", // Log all anomalies
+		IngestRollbacks:            true,
+		IngestApprovals:            true,
+		IngestSmithIntegration:     true,
+		MinAnomalySeverity:         "low", // Log all anomalies
 	}
 }
 

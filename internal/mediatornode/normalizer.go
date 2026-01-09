@@ -66,13 +66,13 @@ func (n *Normalizer) NormalizeAlignment(alignment *Alignment) (*schema.Event, er
 		Severity: severity,
 
 		Metadata: map[string]any{
-			"mn_alignment_id":     alignment.ID,
-			"mn_offer_intent_id":  alignment.OfferIntentID,
+			"mn_alignment_id":      alignment.ID,
+			"mn_offer_intent_id":   alignment.OfferIntentID,
 			"mn_request_intent_id": alignment.RequestIntentID,
-			"mn_status":           alignment.Status,
-			"mn_confidence":       alignment.Confidence,
-			"mn_mediator_id":      alignment.MediatorID,
-			"mn_model_hash":       alignment.ModelHash,
+			"mn_status":            alignment.Status,
+			"mn_confidence":        alignment.Confidence,
+			"mn_mediator_id":       alignment.MediatorID,
+			"mn_model_hash":        alignment.ModelHash,
 		},
 	}
 
@@ -162,10 +162,10 @@ func (n *Normalizer) NormalizeSettlement(settlement *Settlement) (*schema.Event,
 		Severity: severity,
 
 		Metadata: map[string]any{
-			"mn_settlement_id":   settlement.ID,
-			"mn_negotiation_id":  settlement.NegotiationID,
-			"mn_status":          settlement.Status,
-			"mn_chain_entry_id":  settlement.ChainEntryID,
+			"mn_settlement_id":  settlement.ID,
+			"mn_negotiation_id": settlement.NegotiationID,
+			"mn_status":         settlement.Status,
+			"mn_chain_entry_id": settlement.ChainEntryID,
 		},
 	}
 
@@ -251,12 +251,12 @@ func (n *Normalizer) NormalizeReputationEvent(repEvent *ReputationEvent) (*schem
 		Severity: severity,
 
 		Metadata: map[string]any{
-			"mn_reputation_id":  repEvent.ID,
-			"mn_mediator_id":    repEvent.MediatorID,
-			"mn_change_type":    repEvent.ChangeType,
-			"mn_change_amount":  repEvent.Amount,
-			"mn_reason":         repEvent.Reason,
-			"mn_new_score":      repEvent.NewScore,
+			"mn_reputation_id": repEvent.ID,
+			"mn_mediator_id":   repEvent.MediatorID,
+			"mn_change_type":   repEvent.ChangeType,
+			"mn_change_amount": repEvent.Amount,
+			"mn_reason":        repEvent.Reason,
+			"mn_new_score":     repEvent.NewScore,
 		},
 	}
 

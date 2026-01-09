@@ -26,33 +26,33 @@ const (
 type LogType string
 
 const (
-	LogTypeAudit     LogType = "audit"
-	LogTypeFlow      LogType = "flow"
-	LogTypeAccess    LogType = "access"
-	LogTypeActivity  LogType = "activity"
-	LogTypeMetric    LogType = "metric"
-	LogTypeSecurity  LogType = "security"
+	LogTypeAudit    LogType = "audit"
+	LogTypeFlow     LogType = "flow"
+	LogTypeAccess   LogType = "access"
+	LogTypeActivity LogType = "activity"
+	LogTypeMetric   LogType = "metric"
+	LogTypeSecurity LogType = "security"
 )
 
 // CloudLog represents a parsed cloud log entry.
 type CloudLog struct {
-	Provider    Provider               `json:"provider"`
-	LogType     LogType                `json:"log_type"`
-	Timestamp   time.Time              `json:"timestamp"`
-	EventID     string                 `json:"event_id"`
-	EventName   string                 `json:"event_name"`
-	Region      string                 `json:"region"`
-	AccountID   string                 `json:"account_id"`
-	UserID      string                 `json:"user_id,omitempty"`
-	SourceIP    string                 `json:"source_ip,omitempty"`
-	UserAgent   string                 `json:"user_agent,omitempty"`
-	Resource    string                 `json:"resource,omitempty"`
-	Action      string                 `json:"action,omitempty"`
-	Result      string                 `json:"result,omitempty"`
-	ErrorCode   string                 `json:"error_code,omitempty"`
-	Severity    int                    `json:"severity"`
-	Raw         string                 `json:"raw,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	Provider  Provider               `json:"provider"`
+	LogType   LogType                `json:"log_type"`
+	Timestamp time.Time              `json:"timestamp"`
+	EventID   string                 `json:"event_id"`
+	EventName string                 `json:"event_name"`
+	Region    string                 `json:"region"`
+	AccountID string                 `json:"account_id"`
+	UserID    string                 `json:"user_id,omitempty"`
+	SourceIP  string                 `json:"source_ip,omitempty"`
+	UserAgent string                 `json:"user_agent,omitempty"`
+	Resource  string                 `json:"resource,omitempty"`
+	Action    string                 `json:"action,omitempty"`
+	Result    string                 `json:"result,omitempty"`
+	ErrorCode string                 `json:"error_code,omitempty"`
+	Severity  int                    `json:"severity"`
+	Raw       string                 `json:"raw,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // Parser parses cloud provider logs.

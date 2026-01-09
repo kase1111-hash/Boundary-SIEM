@@ -101,37 +101,37 @@ const (
 
 // ReportSection represents a report section.
 type ReportSection struct {
-	ID          string                 `json:"id"`
-	Title       string                 `json:"title"`
-	Description string                 `json:"description,omitempty"`
-	Order       int                    `json:"order"`
-	Type        SectionType            `json:"type"`
-	Content     interface{}            `json:"content"`
-	Charts      []ChartConfig          `json:"charts,omitempty"`
-	Tables      []TableConfig          `json:"tables,omitempty"`
-	Findings    []Finding              `json:"findings,omitempty"`
+	ID          string        `json:"id"`
+	Title       string        `json:"title"`
+	Description string        `json:"description,omitempty"`
+	Order       int           `json:"order"`
+	Type        SectionType   `json:"type"`
+	Content     interface{}   `json:"content"`
+	Charts      []ChartConfig `json:"charts,omitempty"`
+	Tables      []TableConfig `json:"tables,omitempty"`
+	Findings    []Finding     `json:"findings,omitempty"`
 }
 
 // SectionType defines section types.
 type SectionType string
 
 const (
-	SectionTypeText      SectionType = "text"
-	SectionTypeChart     SectionType = "chart"
-	SectionTypeTable     SectionType = "table"
-	SectionTypeMetrics   SectionType = "metrics"
-	SectionTypeFindings  SectionType = "findings"
-	SectionTypeControls  SectionType = "controls"
-	SectionTypeSummary   SectionType = "summary"
+	SectionTypeText     SectionType = "text"
+	SectionTypeChart    SectionType = "chart"
+	SectionTypeTable    SectionType = "table"
+	SectionTypeMetrics  SectionType = "metrics"
+	SectionTypeFindings SectionType = "findings"
+	SectionTypeControls SectionType = "controls"
+	SectionTypeSummary  SectionType = "summary"
 )
 
 // ChartConfig defines chart configuration.
 type ChartConfig struct {
-	Type   string      `json:"type"`
-	Title  string      `json:"title"`
-	Labels []string    `json:"labels"`
-	Data   []float64   `json:"data"`
-	Colors []string    `json:"colors,omitempty"`
+	Type   string    `json:"type"`
+	Title  string    `json:"title"`
+	Labels []string  `json:"labels"`
+	Data   []float64 `json:"data"`
+	Colors []string  `json:"colors,omitempty"`
 }
 
 // TableConfig defines table configuration.
@@ -155,13 +155,13 @@ type Finding struct {
 
 // ReportTemplate defines a report template.
 type ReportTemplate struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Description string          `json:"description"`
-	Type        ReportType      `json:"type"`
-	Sections    []TemplateSection `json:"sections"`
+	ID          string             `json:"id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	Type        ReportType         `json:"type"`
+	Sections    []TemplateSection  `json:"sections"`
 	Variables   []TemplateVariable `json:"variables,omitempty"`
-	Schedule    *Schedule       `json:"schedule,omitempty"`
+	Schedule    *Schedule          `json:"schedule,omitempty"`
 }
 
 // TemplateSection defines a template section.
@@ -184,37 +184,37 @@ type TemplateVariable struct {
 
 // Schedule defines report scheduling.
 type Schedule struct {
-	Enabled   bool     `json:"enabled"`
-	Frequency string   `json:"frequency"` // daily, weekly, monthly, quarterly
-	DayOfWeek int      `json:"day_of_week,omitempty"`
-	DayOfMonth int     `json:"day_of_month,omitempty"`
-	Hour      int      `json:"hour"`
+	Enabled    bool     `json:"enabled"`
+	Frequency  string   `json:"frequency"` // daily, weekly, monthly, quarterly
+	DayOfWeek  int      `json:"day_of_week,omitempty"`
+	DayOfMonth int      `json:"day_of_month,omitempty"`
+	Hour       int      `json:"hour"`
 	Recipients []string `json:"recipients"`
 }
 
 // ComplianceControl represents a compliance control.
 type ComplianceControl struct {
-	ID          string         `json:"id"`
-	Framework   string         `json:"framework"`
-	ControlID   string         `json:"control_id"`
-	Name        string         `json:"name"`
-	Description string         `json:"description"`
-	Category    string         `json:"category"`
-	Status      ControlStatus  `json:"status"`
-	Evidence    []Evidence     `json:"evidence"`
-	LastChecked time.Time      `json:"last_checked"`
-	Notes       string         `json:"notes,omitempty"`
+	ID          string        `json:"id"`
+	Framework   string        `json:"framework"`
+	ControlID   string        `json:"control_id"`
+	Name        string        `json:"name"`
+	Description string        `json:"description"`
+	Category    string        `json:"category"`
+	Status      ControlStatus `json:"status"`
+	Evidence    []Evidence    `json:"evidence"`
+	LastChecked time.Time     `json:"last_checked"`
+	Notes       string        `json:"notes,omitempty"`
 }
 
 // ControlStatus defines control status.
 type ControlStatus string
 
 const (
-	ControlStatusCompliant    ControlStatus = "compliant"
-	ControlStatusNonCompliant ControlStatus = "non_compliant"
-	ControlStatusPartial      ControlStatus = "partial"
+	ControlStatusCompliant     ControlStatus = "compliant"
+	ControlStatusNonCompliant  ControlStatus = "non_compliant"
+	ControlStatusPartial       ControlStatus = "partial"
 	ControlStatusNotApplicable ControlStatus = "not_applicable"
-	ControlStatusPending      ControlStatus = "pending"
+	ControlStatusPending       ControlStatus = "pending"
 )
 
 // Evidence represents compliance evidence.
@@ -705,25 +705,25 @@ func (s *ReportService) generateSections(template *ReportTemplate, start, end ti
 
 func (s *ReportService) generateSummaryContent(reportType ReportType, start, end time.Time) interface{} {
 	return map[string]interface{}{
-		"period_start":       start,
-		"period_end":         end,
-		"total_events":       1250000,
-		"total_alerts":       456,
-		"critical_incidents": 3,
-		"compliance_score":   94.5,
+		"period_start":         start,
+		"period_end":           end,
+		"total_events":         1250000,
+		"total_alerts":         456,
+		"critical_incidents":   3,
+		"compliance_score":     94.5,
 		"validators_monitored": 100,
-		"uptime_percentage":  99.97,
+		"uptime_percentage":    99.97,
 	}
 }
 
 func (s *ReportService) generateMetricsContent() interface{} {
 	return map[string]interface{}{
-		"events_per_second":     1250.5,
-		"mean_time_to_detect":   "2m 15s",
-		"mean_time_to_respond":  "8m 30s",
-		"false_positive_rate":   "2.3%",
-		"alerts_acknowledged":   98.5,
-		"rules_triggered":       156,
+		"events_per_second":    1250.5,
+		"mean_time_to_detect":  "2m 15s",
+		"mean_time_to_respond": "8m 30s",
+		"false_positive_rate":  "2.3%",
+		"alerts_acknowledged":  98.5,
+		"rules_triggered":      156,
 	}
 }
 
@@ -799,9 +799,9 @@ func (s *ReportService) generateFindings(reportType ReportType) []Finding {
 
 func (s *ReportService) generateTextContent(sectionID string) interface{} {
 	content := map[string]string{
-		"scope":        "This audit covers the security controls and processes of the Boundary SIEM platform for blockchain infrastructure monitoring.",
-		"methodology":  "The audit was conducted using a risk-based approach, examining evidence through document review, system testing, and personnel interviews.",
-		"overview":     "The organization maintains a robust security posture with comprehensive monitoring and incident response capabilities.",
+		"scope":       "This audit covers the security controls and processes of the Boundary SIEM platform for blockchain infrastructure monitoring.",
+		"methodology": "The audit was conducted using a risk-based approach, examining evidence through document review, system testing, and personnel interviews.",
+		"overview":    "The organization maintains a robust security posture with comprehensive monitoring and incident response capabilities.",
 	}
 	if text, ok := content[sectionID]; ok {
 		return text

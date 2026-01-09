@@ -34,14 +34,14 @@ type IngesterConfig struct {
 	BatchSize    int           `yaml:"batch_size"`
 
 	// Feature toggles - log all important info
-	IngestSessions      bool `yaml:"ingest_sessions"`
-	IngestCrashes       bool `yaml:"ingest_crashes"`
-	IngestMultiplayer   bool `yaml:"ingest_multiplayer"`
+	IngestSessions       bool `yaml:"ingest_sessions"`
+	IngestCrashes        bool `yaml:"ingest_crashes"`
+	IngestMultiplayer    bool `yaml:"ingest_multiplayer"`
 	IngestInputAnomalies bool `yaml:"ingest_input_anomalies"`
-	IngestSaveLoad      bool `yaml:"ingest_save_load"`
-	IngestPerformance   bool `yaml:"ingest_performance"`
-	IngestLeaderboard   bool `yaml:"ingest_leaderboard"`
-	IngestDifficulty    bool `yaml:"ingest_difficulty"`
+	IngestSaveLoad       bool `yaml:"ingest_save_load"`
+	IngestPerformance    bool `yaml:"ingest_performance"`
+	IngestLeaderboard    bool `yaml:"ingest_leaderboard"`
+	IngestDifficulty     bool `yaml:"ingest_difficulty"`
 
 	// Filtering
 	MinAnomalySeverity string `yaml:"min_anomaly_severity"`

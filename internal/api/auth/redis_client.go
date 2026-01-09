@@ -121,11 +121,11 @@ func (g *GoRedisClient) Close() error {
 
 // MockRedisClient is a mock implementation for testing.
 type MockRedisClient struct {
-	data    map[string][]byte
-	sets    map[string]map[string]bool
-	expiry  map[string]time.Time
-	mu      sync.RWMutex
-	closed  bool
+	data   map[string][]byte
+	sets   map[string]map[string]bool
+	expiry map[string]time.Time
+	mu     sync.RWMutex
+	closed bool
 }
 
 // NewMockRedisClient creates a new mock Redis client for testing.

@@ -110,7 +110,7 @@ func TestCalculateDerivedMetrics(t *testing.T) {
 
 func TestCalculateMajorityHead(t *testing.T) {
 	tests := []struct {
-		name     string
+		name      string
 		peerHeads map[string]uint64
 		expected  uint64
 	}{
@@ -212,10 +212,10 @@ func TestCheckFinality(t *testing.T) {
 	})
 
 	state := &SyncState{
-		HeadSlot:       200,
-		FinalizedSlot:  50,
-		FinalityDelay:  4, // Equals finality timeout threshold
-		Timestamp:      time.Now(),
+		HeadSlot:      200,
+		FinalizedSlot: 50,
+		FinalityDelay: 4, // Equals finality timeout threshold
+		Timestamp:     time.Now(),
 	}
 
 	monitor.checkFinality(ctx, state)
@@ -249,10 +249,10 @@ func TestCheckSyncProgress(t *testing.T) {
 	})
 
 	state := &SyncState{
-		IsSyncing:       true,
-		HeadUpdateRate:  0.3, // Below threshold of 0.5 slots/sec
-		SyncProgress:    75.0,
-		Timestamp:       time.Now(),
+		IsSyncing:      true,
+		HeadUpdateRate: 0.3, // Below threshold of 0.5 slots/sec
+		SyncProgress:   75.0,
+		Timestamp:      time.Now(),
 	}
 
 	monitor.checkSyncProgress(ctx, state)
@@ -487,8 +487,8 @@ func TestGetCurrentState(t *testing.T) {
 
 	// Set state
 	testState := &SyncState{
-		HeadSlot:    100,
-		Timestamp:   time.Now(),
+		HeadSlot:  100,
+		Timestamp: time.Now(),
 	}
 	monitor.mu.Lock()
 	monitor.currentState = testState
@@ -600,12 +600,12 @@ func TestNormalizeToEvent(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "sync-lag-critical",
-		Severity: "critical",
-		Title:    "Node Behind Network",
+		ID:          uuid.New(),
+		Type:        "sync-lag-critical",
+		Severity:    "critical",
+		Title:       "Node Behind Network",
 		Description: "Node is 150 slots behind",
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
 		State: &SyncState{
 			SyncLagSlots:    150,
 			HeadSlot:        1000,

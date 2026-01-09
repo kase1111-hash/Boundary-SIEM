@@ -11,12 +11,12 @@ func TestNormalizer_NormalizeEntry(t *testing.T) {
 	normalizer := NewNormalizer(DefaultNormalizerConfig())
 
 	tests := []struct {
-		name      string
-		entry     *Entry
-		eventType string
-		wantAction string
+		name         string
+		entry        *Entry
+		eventType    string
+		wantAction   string
 		wantSeverity int
-		wantOutcome schema.Outcome
+		wantOutcome  schema.Outcome
 	}{
 		{
 			name: "validated entry",

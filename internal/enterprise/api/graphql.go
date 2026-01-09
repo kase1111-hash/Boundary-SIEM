@@ -241,11 +241,11 @@ type Document struct {
 
 // Operation represents a GraphQL operation (query, mutation, subscription)
 type Operation struct {
-	Type          string // query, mutation, subscription
-	Name          string
-	Variables     []*VariableDefinition
-	Directives    []*Directive
-	SelectionSet  *SelectionSet
+	Type         string // query, mutation, subscription
+	Name         string
+	Variables    []*VariableDefinition
+	Directives   []*Directive
+	SelectionSet *SelectionSet
 }
 
 // VariableDefinition represents a variable definition
@@ -1096,10 +1096,10 @@ func (e *Executor) resolveEvents(ctx context.Context, args map[string]interface{
 			},
 			"target": "0x742d35Cc6634C0532925a3b844Bc9e7595f8E2c2",
 			"metadata": map[string]interface{}{
-				"chain":     "ethereum",
-				"block":     12345678 + i,
-				"gas_used":  21000,
-				"tx_type":   "transfer",
+				"chain":    "ethereum",
+				"block":    12345678 + i,
+				"gas_used": 21000,
+				"tx_type":  "transfer",
 			},
 		})
 	}
@@ -1221,11 +1221,11 @@ func (e *Executor) resolveIncidents(ctx context.Context, args map[string]interfa
 
 func (e *Executor) resolveComplianceScore(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	return map[string]interface{}{
-		"overall":    85.5,
+		"overall": 85.5,
 		"categories": map[string]interface{}{
-			"access_control": 90.0,
-			"data_security":  88.5,
-			"monitoring":     82.0,
+			"access_control":    90.0,
+			"data_security":     88.5,
+			"monitoring":        82.0,
 			"incident_response": 81.0,
 		},
 		"lastUpdated": time.Now().Format(time.RFC3339),
@@ -1235,19 +1235,19 @@ func (e *Executor) resolveComplianceScore(ctx context.Context, args map[string]i
 
 func (e *Executor) resolveThreatLevel(ctx context.Context, args map[string]interface{}) (interface{}, error) {
 	return map[string]interface{}{
-		"level":       "MODERATE",
-		"score":       45,
+		"level":         "MODERATE",
+		"score":         45,
 		"activeThreats": 3,
 		"indicators": []interface{}{
 			map[string]interface{}{
-				"type":   "malicious_address",
-				"count":  5,
-				"trend":  "stable",
+				"type":  "malicious_address",
+				"count": 5,
+				"trend": "stable",
 			},
 			map[string]interface{}{
-				"type":   "suspicious_pattern",
-				"count":  12,
-				"trend":  "increasing",
+				"type":  "suspicious_pattern",
+				"count": 12,
+				"trend": "increasing",
 			},
 		},
 		"lastUpdated": time.Now().Format(time.RFC3339),
@@ -1259,11 +1259,11 @@ func (e *Executor) resolveAcknowledgeAlert(ctx context.Context, args map[string]
 	comment, _ := args["comment"].(string)
 
 	return map[string]interface{}{
-		"id":         id,
-		"status":     "ACKNOWLEDGED",
-		"ackedAt":    time.Now().Format(time.RFC3339),
-		"ackedBy":    "current-user",
-		"comment":    comment,
+		"id":      id,
+		"status":  "ACKNOWLEDGED",
+		"ackedAt": time.Now().Format(time.RFC3339),
+		"ackedBy": "current-user",
+		"comment": comment,
 	}, nil
 }
 
@@ -1569,7 +1569,7 @@ func (e *Executor) calculateComplexity(ss *SelectionSet, depth int) (complexity,
 
 // Query sanitization
 var unsafePatterns = []*regexp.Regexp{
-	regexp.MustCompile(`__`),  // Introspection in some cases
+	regexp.MustCompile(`__`), // Introspection in some cases
 }
 
 // SanitizeQuery removes potentially dangerous patterns

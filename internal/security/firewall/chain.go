@@ -65,15 +65,15 @@ const (
 
 // ChainManager manages firewall chains with proper synchronization.
 type ChainManager struct {
-	mu           sync.RWMutex
-	chainLocks   map[string]*sync.Mutex // Per-chain locks
-	locksMu      sync.Mutex             // Protects chainLocks map
-	chains       map[string]*Chain
-	backend      Backend
-	config       *Config
-	logger       *slog.Logger
-	txMu         sync.Mutex // Transaction lock for atomic operations
-	pendingOps   []*ChainOperation
+	mu            sync.RWMutex
+	chainLocks    map[string]*sync.Mutex // Per-chain locks
+	locksMu       sync.Mutex             // Protects chainLocks map
+	chains        map[string]*Chain
+	backend       Backend
+	config        *Config
+	logger        *slog.Logger
+	txMu          sync.Mutex // Transaction lock for atomic operations
+	pendingOps    []*ChainOperation
 	inTransaction bool
 }
 
