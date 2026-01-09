@@ -81,11 +81,11 @@ type LedgerEntry struct {
 
 // MerkleProof represents a proof of entry inclusion.
 type MerkleProof struct {
-	EntryID   string   `json:"entry_id"`
-	Root      string   `json:"root"`
-	Path      []string `json:"path"`
-	Indices   []int    `json:"indices"`
-	Verified  bool     `json:"verified"`
+	EntryID   string    `json:"entry_id"`
+	Root      string    `json:"root"`
+	Path      []string  `json:"path"`
+	Indices   []int     `json:"indices"`
+	Verified  bool      `json:"verified"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
@@ -102,12 +102,12 @@ type SecurityEvent struct {
 
 // LedgerStats represents statistics about the ledger.
 type LedgerStats struct {
-	TotalEntries    int64     `json:"total_entries"`
-	TotalValue      float64   `json:"total_value"`
-	ActiveAgents    int       `json:"active_agents"`
-	RevokedEntries  int64     `json:"revoked_entries"`
-	LastEntryTime   time.Time `json:"last_entry_time"`
-	ChainIntegrity  bool      `json:"chain_integrity"`
+	TotalEntries   int64     `json:"total_entries"`
+	TotalValue     float64   `json:"total_value"`
+	ActiveAgents   int       `json:"active_agents"`
+	RevokedEntries int64     `json:"revoked_entries"`
+	LastEntryTime  time.Time `json:"last_entry_time"`
+	ChainIntegrity bool      `json:"chain_integrity"`
 }
 
 // HealthStatus represents the health of the Value Ledger service.

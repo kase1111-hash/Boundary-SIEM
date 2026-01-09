@@ -85,41 +85,41 @@ type RetentionPolicy struct {
 
 // EnforcementEvent represents an enforcement gate check.
 type EnforcementEvent struct {
-	ID           string                 `json:"id"`
-	Timestamp    time.Time              `json:"timestamp"`
-	ContractID   string                 `json:"contract_id"`
-	AgentID      string                 `json:"agent_id"`
-	GateType     string                 `json:"gate_type"` // memory_creation, abstraction, recall, export
-	Operation    string                 `json:"operation"`
-	Allowed      bool                   `json:"allowed"`
-	Reason       string                 `json:"reason"`
-	DataHash     string                 `json:"data_hash,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	ContractID string                 `json:"contract_id"`
+	AgentID    string                 `json:"agent_id"`
+	GateType   string                 `json:"gate_type"` // memory_creation, abstraction, recall, export
+	Operation  string                 `json:"operation"`
+	Allowed    bool                   `json:"allowed"`
+	Reason     string                 `json:"reason"`
+	DataHash   string                 `json:"data_hash,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // ContractStateChange represents a contract state transition.
 type ContractStateChange struct {
-	ID           string    `json:"id"`
-	ContractID   string    `json:"contract_id"`
-	Timestamp    time.Time `json:"timestamp"`
-	FromState    string    `json:"from_state"`
-	ToState      string    `json:"to_state"`
-	ChangedBy    string    `json:"changed_by"`
-	Reason       string    `json:"reason"`
-	AuditHash    string    `json:"audit_hash"`
+	ID         string    `json:"id"`
+	ContractID string    `json:"contract_id"`
+	Timestamp  time.Time `json:"timestamp"`
+	FromState  string    `json:"from_state"`
+	ToState    string    `json:"to_state"`
+	ChangedBy  string    `json:"changed_by"`
+	Reason     string    `json:"reason"`
+	AuditHash  string    `json:"audit_hash"`
 }
 
 // ViolationEvent represents a contract violation.
 type ViolationEvent struct {
-	ID           string                 `json:"id"`
-	Timestamp    time.Time              `json:"timestamp"`
-	ContractID   string                 `json:"contract_id"`
-	AgentID      string                 `json:"agent_id"`
-	ViolationType string                `json:"violation_type"`
-	Description  string                 `json:"description"`
-	Severity     string                 `json:"severity"`
-	Remediation  string                 `json:"remediation,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ID            string                 `json:"id"`
+	Timestamp     time.Time              `json:"timestamp"`
+	ContractID    string                 `json:"contract_id"`
+	AgentID       string                 `json:"agent_id"`
+	ViolationType string                 `json:"violation_type"`
+	Description   string                 `json:"description"`
+	Severity      string                 `json:"severity"`
+	Remediation   string                 `json:"remediation,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // ModuleStats represents statistics about the Learning Contracts module.

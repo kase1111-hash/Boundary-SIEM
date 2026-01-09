@@ -174,11 +174,11 @@ type SyslogForwarder struct {
 	logger *slog.Logger
 
 	// Connection state
-	conn          net.Conn
-	currentAddr   string
-	addrIndex     int
-	connected     atomic.Bool
-	reconnecting  atomic.Bool
+	conn         net.Conn
+	currentAddr  string
+	addrIndex    int
+	connected    atomic.Bool
+	reconnecting atomic.Bool
 
 	// Message buffer
 	buffer chan *AuditEntry
@@ -190,9 +190,9 @@ type SyslogForwarder struct {
 	wg     sync.WaitGroup
 
 	// Metrics
-	sent      uint64
-	dropped   uint64
-	errors    uint64
+	sent       uint64
+	dropped    uint64
+	errors     uint64
 	reconnects uint64
 }
 
@@ -216,11 +216,11 @@ func NewSyslogForwarder(config *SyslogConfig) (*SyslogForwarder, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	sf := &SyslogForwarder{
-		config:    config,
-		logger:    config.Logger,
-		buffer:    make(chan *AuditEntry, config.BufferSize),
-		ctx:       ctx,
-		cancel:    cancel,
+		config: config,
+		logger: config.Logger,
+		buffer: make(chan *AuditEntry, config.BufferSize),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
 	// Initial connection

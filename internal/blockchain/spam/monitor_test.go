@@ -395,12 +395,12 @@ func TestNormalizeToEvent(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "spam-txpool-saturation",
-		Severity: "high",
-		Title:    "Transaction Pool Saturation",
+		ID:          uuid.New(),
+		Type:        "spam-txpool-saturation",
+		Severity:    "high",
+		Title:       "Transaction Pool Saturation",
 		Description: "TX pool saturated",
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
 		Metadata: map[string]interface{}{
 			"txpool_percent": 85.0,
 		},
@@ -471,10 +471,10 @@ func TestAlertDeduplication(t *testing.T) {
 	})
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "test-alert",
-		Severity: "high",
-		Title:    "Test Alert",
+		ID:        uuid.New(),
+		Type:      "test-alert",
+		Severity:  "high",
+		Title:     "Test Alert",
 		Timestamp: time.Now(),
 	}
 

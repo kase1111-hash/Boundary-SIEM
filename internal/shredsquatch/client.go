@@ -51,59 +51,59 @@ func NewClient(cfg ClientConfig) *Client {
 
 // GameSession represents an active game session.
 type GameSession struct {
-	ID            string                 `json:"id"`
-	PlayerID      string                 `json:"player_id"`
-	StartedAt     time.Time              `json:"started_at"`
-	EndedAt       *time.Time             `json:"ended_at,omitempty"`
-	Status        string                 `json:"status"` // active, completed, crashed, abandoned
-	Platform      string                 `json:"platform"` // webgl, steam, itch
-	GameVersion   string                 `json:"game_version"`
-	Seed          int64                  `json:"terrain_seed"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID          string                 `json:"id"`
+	PlayerID    string                 `json:"player_id"`
+	StartedAt   time.Time              `json:"started_at"`
+	EndedAt     *time.Time             `json:"ended_at,omitempty"`
+	Status      string                 `json:"status"`   // active, completed, crashed, abandoned
+	Platform    string                 `json:"platform"` // webgl, steam, itch
+	GameVersion string                 `json:"game_version"`
+	Seed        int64                  `json:"terrain_seed"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // RunEvent represents a single descent/run.
 type RunEvent struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	EventType     string                 `json:"event_type"` // run_start, run_end, caught_by_sasquatch, crash
-	Distance      float64                `json:"distance"`
-	Score         int64                  `json:"score"`
-	TrickScore    int64                  `json:"trick_score"`
-	Duration      float64                `json:"duration_seconds"`
-	MaxSpeed      float64                `json:"max_speed"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	SessionID  string                 `json:"session_id"`
+	PlayerID   string                 `json:"player_id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	EventType  string                 `json:"event_type"` // run_start, run_end, caught_by_sasquatch, crash
+	Distance   float64                `json:"distance"`
+	Score      int64                  `json:"score"`
+	TrickScore int64                  `json:"trick_score"`
+	Duration   float64                `json:"duration_seconds"`
+	MaxSpeed   float64                `json:"max_speed"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // TrickEvent represents trick execution.
 type TrickEvent struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	TrickType     string                 `json:"trick_type"` // spin, grab, flip, combo, rail_grind
-	TrickName     string                 `json:"trick_name"`
-	Points        int64                  `json:"points"`
-	Multiplier    float64                `json:"multiplier"`
-	ComboLength   int                    `json:"combo_length"`
-	Landed        bool                   `json:"landed"`
-	AirTime       float64                `json:"air_time"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID          string                 `json:"id"`
+	SessionID   string                 `json:"session_id"`
+	PlayerID    string                 `json:"player_id"`
+	Timestamp   time.Time              `json:"timestamp"`
+	TrickType   string                 `json:"trick_type"` // spin, grab, flip, combo, rail_grind
+	TrickName   string                 `json:"trick_name"`
+	Points      int64                  `json:"points"`
+	Multiplier  float64                `json:"multiplier"`
+	ComboLength int                    `json:"combo_length"`
+	Landed      bool                   `json:"landed"`
+	AirTime     float64                `json:"air_time"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // InputAnomaly represents suspicious input patterns.
 type InputAnomaly struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	AnomalyType   string                 `json:"anomaly_type"` // rapid_input, impossible_trick, timing_exploit
-	Severity      string                 `json:"severity"`
-	InputPattern  string                 `json:"input_pattern"`
-	Confidence    float64                `json:"confidence"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID           string                 `json:"id"`
+	SessionID    string                 `json:"session_id"`
+	PlayerID     string                 `json:"player_id"`
+	Timestamp    time.Time              `json:"timestamp"`
+	AnomalyType  string                 `json:"anomaly_type"` // rapid_input, impossible_trick, timing_exploit
+	Severity     string                 `json:"severity"`
+	InputPattern string                 `json:"input_pattern"`
+	Confidence   float64                `json:"confidence"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // LeaderboardSubmission represents a score submission.
@@ -125,55 +125,55 @@ type LeaderboardSubmission struct {
 
 // PerformanceMetric represents game performance telemetry.
 type PerformanceMetric struct {
-	ID              string                 `json:"id"`
-	SessionID       string                 `json:"session_id"`
-	Timestamp       time.Time              `json:"timestamp"`
-	FrameRate       float64                `json:"frame_rate"`
-	MemoryUsage     int64                  `json:"memory_usage_mb"`
-	DrawCalls       int                    `json:"draw_calls"`
-	TerrainChunks   int                    `json:"terrain_chunks"`
-	ShaderCompile   bool                   `json:"shader_compile"`
-	Anomalies       []string               `json:"anomalies,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	ID            string                 `json:"id"`
+	SessionID     string                 `json:"session_id"`
+	Timestamp     time.Time              `json:"timestamp"`
+	FrameRate     float64                `json:"frame_rate"`
+	MemoryUsage   int64                  `json:"memory_usage_mb"`
+	DrawCalls     int                    `json:"draw_calls"`
+	TerrainChunks int                    `json:"terrain_chunks"`
+	ShaderCompile bool                   `json:"shader_compile"`
+	Anomalies     []string               `json:"anomalies,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // AssetEvent represents asset loading events.
 type AssetEvent struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	EventType     string                 `json:"event_type"` // load_start, load_complete, load_failed
-	AssetType     string                 `json:"asset_type"` // shader, terrain, model, audio
-	AssetName     string                 `json:"asset_name"`
-	LoadTime      float64                `json:"load_time_seconds"`
-	Success       bool                   `json:"success"`
-	ErrorMessage  string                 `json:"error_message,omitempty"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID           string                 `json:"id"`
+	SessionID    string                 `json:"session_id"`
+	Timestamp    time.Time              `json:"timestamp"`
+	EventType    string                 `json:"event_type"` // load_start, load_complete, load_failed
+	AssetType    string                 `json:"asset_type"` // shader, terrain, model, audio
+	AssetName    string                 `json:"asset_name"`
+	LoadTime     float64                `json:"load_time_seconds"`
+	Success      bool                   `json:"success"`
+	ErrorMessage string                 `json:"error_message,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // PowerupEvent represents powerup collection events.
 type PowerupEvent struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	PowerupType   string                 `json:"powerup_type"` // golden_board, speed_boost, repellent, shield
-	Effect        string                 `json:"effect"`
-	Duration      float64                `json:"duration_seconds"`
-	Location      map[string]float64     `json:"location"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID          string                 `json:"id"`
+	SessionID   string                 `json:"session_id"`
+	PlayerID    string                 `json:"player_id"`
+	Timestamp   time.Time              `json:"timestamp"`
+	PowerupType string                 `json:"powerup_type"` // golden_board, speed_boost, repellent, shield
+	Effect      string                 `json:"effect"`
+	Duration    float64                `json:"duration_seconds"`
+	Location    map[string]float64     `json:"location"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // SasquatchEvent represents Sasquatch AI events.
 type SasquatchEvent struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	EventType     string                 `json:"event_type"` // spawn, chase_start, caught, escaped, despawn
-	Distance      float64                `json:"distance_to_player"`
-	ChaseTime     float64                `json:"chase_time_seconds"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID        string                 `json:"id"`
+	SessionID string                 `json:"session_id"`
+	PlayerID  string                 `json:"player_id"`
+	Timestamp time.Time              `json:"timestamp"`
+	EventType string                 `json:"event_type"` // spawn, chase_start, caught, escaped, despawn
+	Distance  float64                `json:"distance_to_player"`
+	ChaseTime float64                `json:"chase_time_seconds"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // CollisionEvent represents collision events.
@@ -191,12 +191,12 @@ type CollisionEvent struct {
 
 // HealthStatus represents the health of the telemetry service.
 type HealthStatus struct {
-	Status          string    `json:"status"`
-	Ready           bool      `json:"ready"`
-	Live            bool      `json:"live"`
-	Version         string    `json:"version"`
-	ActiveSessions  int       `json:"active_sessions"`
-	Timestamp       time.Time `json:"timestamp"`
+	Status         string    `json:"status"`
+	Ready          bool      `json:"ready"`
+	Live           bool      `json:"live"`
+	Version        string    `json:"version"`
+	ActiveSessions int       `json:"active_sessions"`
+	Timestamp      time.Time `json:"timestamp"`
 }
 
 // GetHealth checks the health of the telemetry service.

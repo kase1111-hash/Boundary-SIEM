@@ -85,15 +85,15 @@ func (qw *QuarantineWriter) WriteBatch(ctx context.Context, entries []*Quarantin
 
 // QuarantinedEvent represents an event retrieved from quarantine.
 type QuarantinedEvent struct {
-	QuarantineID     uuid.UUID
-	QuarantinedAt    time.Time
-	RawEvent         string
-	SourceIP         string
-	SourceFormat     string
-	ValidationErrors []string
-	ErrorCode        string
+	QuarantineID      uuid.UUID
+	QuarantinedAt     time.Time
+	RawEvent          string
+	SourceIP          string
+	SourceFormat      string
+	ValidationErrors  []string
+	ErrorCode         string
 	ReprocessAttempts uint8
-	Reprocessed      bool
+	Reprocessed       bool
 }
 
 // GetPendingReprocess returns quarantined events that haven't been reprocessed.

@@ -35,8 +35,8 @@ func TestNewEngine(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "nil_config",
-			cfg:  nil,
+			name:    "nil_config",
+			cfg:     nil,
 			wantErr: true,
 		},
 		{

@@ -25,20 +25,20 @@ import (
 
 // Common errors.
 var (
-	ErrInvalidCommitment      = errors.New("invalid commitment")
-	ErrCommitmentMismatch     = errors.New("commitment verification failed")
-	ErrChainBroken            = errors.New("commitment chain broken")
-	ErrNoActiveTransition     = errors.New("no active mode transition")
-	ErrTransitionInProgress   = errors.New("mode transition already in progress")
-	ErrStateModified          = errors.New("state was modified during transition")
-	ErrPersistenceFailed      = errors.New("persistence verification failed")
-	ErrCorruptedState         = errors.New("persisted state is corrupted")
-	ErrConfirmationRequired   = errors.New("human confirmation required")
-	ErrConfirmationExpired    = errors.New("confirmation code expired")
-	ErrInvalidConfirmation    = errors.New("invalid confirmation code")
-	ErrTooManyAttempts        = errors.New("too many confirmation attempts")
-	ErrInsufficientApprovers  = errors.New("insufficient approvers for this transition")
-	ErrDuplicateApprover      = errors.New("approver has already approved this transition")
+	ErrInvalidCommitment     = errors.New("invalid commitment")
+	ErrCommitmentMismatch    = errors.New("commitment verification failed")
+	ErrChainBroken           = errors.New("commitment chain broken")
+	ErrNoActiveTransition    = errors.New("no active mode transition")
+	ErrTransitionInProgress  = errors.New("mode transition already in progress")
+	ErrStateModified         = errors.New("state was modified during transition")
+	ErrPersistenceFailed     = errors.New("persistence verification failed")
+	ErrCorruptedState        = errors.New("persisted state is corrupted")
+	ErrConfirmationRequired  = errors.New("human confirmation required")
+	ErrConfirmationExpired   = errors.New("confirmation code expired")
+	ErrInvalidConfirmation   = errors.New("invalid confirmation code")
+	ErrTooManyAttempts       = errors.New("too many confirmation attempts")
+	ErrInsufficientApprovers = errors.New("insufficient approvers for this transition")
+	ErrDuplicateApprover     = errors.New("approver has already approved this transition")
 )
 
 // SecurityMode represents a security mode.
@@ -81,11 +81,11 @@ type StateEntry struct {
 
 // State represents the system state to be committed.
 type State struct {
-	Mode       SecurityMode `json:"mode"`
-	Version    int          `json:"version"`
-	Entries    []StateEntry `json:"entries"`
-	Timestamp  time.Time    `json:"timestamp"`
-	Nonce      string       `json:"nonce"`
+	Mode      SecurityMode `json:"mode"`
+	Version   int          `json:"version"`
+	Entries   []StateEntry `json:"entries"`
+	Timestamp time.Time    `json:"timestamp"`
+	Nonce     string       `json:"nonce"`
 }
 
 // Hash computes the SHA-256 hash of the state.
@@ -116,16 +116,16 @@ func (s *State) Hash() string {
 
 // Commitment represents a cryptographic commitment to a state.
 type Commitment struct {
-	ID              string       `json:"id"`
-	StateHash       string       `json:"state_hash"`
-	PreviousHash    string       `json:"previous_hash,omitempty"`
-	Mode            SecurityMode `json:"mode"`
-	Version         int          `json:"version"`
-	Timestamp       time.Time    `json:"timestamp"`
-	Signature       string       `json:"signature"` // HMAC signature
-	MerkleRoot      string       `json:"merkle_root,omitempty"`
-	TransitionID    string       `json:"transition_id,omitempty"`
-	CommitmentType  string       `json:"commitment_type"` // "pre", "post", "checkpoint"
+	ID             string       `json:"id"`
+	StateHash      string       `json:"state_hash"`
+	PreviousHash   string       `json:"previous_hash,omitempty"`
+	Mode           SecurityMode `json:"mode"`
+	Version        int          `json:"version"`
+	Timestamp      time.Time    `json:"timestamp"`
+	Signature      string       `json:"signature"` // HMAC signature
+	MerkleRoot     string       `json:"merkle_root,omitempty"`
+	TransitionID   string       `json:"transition_id,omitempty"`
+	CommitmentType string       `json:"commitment_type"` // "pre", "post", "checkpoint"
 }
 
 // Verify verifies the commitment signature.
@@ -175,17 +175,17 @@ type ModeTransition struct {
 
 // TransitionConfirmation holds human confirmation state for a transition.
 type TransitionConfirmation struct {
-	Code           string             `json:"code"`                      // The confirmation code
-	CodeHash       string             `json:"code_hash"`                 // SHA-256 hash of the code
-	ExpiresAt      time.Time          `json:"expires_at"`                // When the code expires
-	CreatedAt      time.Time          `json:"created_at"`                // When the code was created
-	Attempts       int                `json:"attempts"`                  // Number of confirmation attempts
-	MaxAttempts    int                `json:"max_attempts"`              // Maximum allowed attempts
-	RequiredCount  int                `json:"required_count"`            // Number of approvers required
-	Approvers      []ApprovalRecord   `json:"approvers"`                 // List of approvers
-	Verified       bool               `json:"verified"`                  // Whether code was verified
-	VerifiedAt     *time.Time         `json:"verified_at,omitempty"`     // When verification succeeded
-	NotificationID string             `json:"notification_id,omitempty"` // ID for out-of-band notification
+	Code           string           `json:"code"`                      // The confirmation code
+	CodeHash       string           `json:"code_hash"`                 // SHA-256 hash of the code
+	ExpiresAt      time.Time        `json:"expires_at"`                // When the code expires
+	CreatedAt      time.Time        `json:"created_at"`                // When the code was created
+	Attempts       int              `json:"attempts"`                  // Number of confirmation attempts
+	MaxAttempts    int              `json:"max_attempts"`              // Maximum allowed attempts
+	RequiredCount  int              `json:"required_count"`            // Number of approvers required
+	Approvers      []ApprovalRecord `json:"approvers"`                 // List of approvers
+	Verified       bool             `json:"verified"`                  // Whether code was verified
+	VerifiedAt     *time.Time       `json:"verified_at,omitempty"`     // When verification succeeded
+	NotificationID string           `json:"notification_id,omitempty"` // ID for out-of-band notification
 }
 
 // ApprovalRecord records an individual approval.
@@ -1527,14 +1527,14 @@ func (h *Hasher) HashString(s string) string {
 
 // StateProof provides proof of state at a point in time.
 type StateProof struct {
-	StateHash   string            `json:"state_hash"`
-	MerkleRoot  string            `json:"merkle_root"`
-	MerklePath  []string          `json:"merkle_path,omitempty"`
-	Timestamp   time.Time         `json:"timestamp"`
-	Mode        SecurityMode      `json:"mode"`
-	Version     int               `json:"version"`
-	Signature   string            `json:"signature"`
-	Entries     map[string]string `json:"entries,omitempty"`
+	StateHash  string            `json:"state_hash"`
+	MerkleRoot string            `json:"merkle_root"`
+	MerklePath []string          `json:"merkle_path,omitempty"`
+	Timestamp  time.Time         `json:"timestamp"`
+	Mode       SecurityMode      `json:"mode"`
+	Version    int               `json:"version"`
+	Signature  string            `json:"signature"`
+	Entries    map[string]string `json:"entries,omitempty"`
 }
 
 // GenerateStateProof generates a proof of the current state.

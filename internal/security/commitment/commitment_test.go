@@ -1422,8 +1422,8 @@ func TestStateManager_MultiApproverConfirmation(t *testing.T) {
 
 func TestStateManager_CriticalModeRequiresMultiApproval(t *testing.T) {
 	config := testConfigWithConfirmation(t)
-	config.RequiredApprovers = 1        // Normal transitions need 1
-	config.CriticalModeThreshold = 2    // Lockdown (level 2) and above are critical
+	config.RequiredApprovers = 1     // Normal transitions need 1
+	config.CriticalModeThreshold = 2 // Lockdown (level 2) and above are critical
 	sm, err := NewStateManager(config, nil)
 	if err != nil {
 		t.Fatalf("NewStateManager() error = %v", err)

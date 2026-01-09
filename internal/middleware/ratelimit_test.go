@@ -472,12 +472,12 @@ func TestRateLimitMiddleware_Concurrent(t *testing.T) {
 // TestGetClientIP tests IP extraction logic.
 func TestGetClientIP(t *testing.T) {
 	tests := []struct {
-		name        string
-		remoteAddr  string
-		xff         string
-		xri         string
-		trustProxy  bool
-		expected    string
+		name       string
+		remoteAddr string
+		xff        string
+		xri        string
+		trustProxy bool
+		expected   string
 	}{
 		{
 			name:       "basic RemoteAddr",

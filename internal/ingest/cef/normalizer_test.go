@@ -220,7 +220,7 @@ func TestNormalizer_MapSeverity(t *testing.T) {
 		input    int
 		expected int
 	}{
-		{0, 1},   // Below minimum, should be 1
+		{0, 1}, // Below minimum, should be 1
 		{1, 1},
 		{5, 5},
 		{10, 10},
@@ -286,9 +286,9 @@ func TestNormalizer_ExtractTimestamp(t *testing.T) {
 	now := time.Now()
 
 	tests := []struct {
-		name       string
-		cef        *CEFEvent
-		checkFunc  func(t *testing.T, ts time.Time)
+		name      string
+		cef       *CEFEvent
+		checkFunc func(t *testing.T, ts time.Time)
 	}{
 		{
 			name: "uses rt extension",

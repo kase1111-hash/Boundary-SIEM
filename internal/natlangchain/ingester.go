@@ -31,21 +31,21 @@ type Ingester struct {
 // IngesterConfig holds configuration for the ingester.
 type IngesterConfig struct {
 	// Polling configuration
-	PollInterval       time.Duration `yaml:"poll_interval"`
-	BlockBatchSize     int           `yaml:"block_batch_size"`
-	EntryBatchSize     int           `yaml:"entry_batch_size"`
+	PollInterval   time.Duration `yaml:"poll_interval"`
+	BlockBatchSize int           `yaml:"block_batch_size"`
+	EntryBatchSize int           `yaml:"entry_batch_size"`
 
 	// Feature toggles
-	IngestEntries      bool `yaml:"ingest_entries"`
-	IngestBlocks       bool `yaml:"ingest_blocks"`
-	IngestDisputes     bool `yaml:"ingest_disputes"`
-	IngestContracts    bool `yaml:"ingest_contracts"`
-	IngestNegotiations bool `yaml:"ingest_negotiations"`
-	IngestValidation   bool `yaml:"ingest_validation"`
+	IngestEntries       bool `yaml:"ingest_entries"`
+	IngestBlocks        bool `yaml:"ingest_blocks"`
+	IngestDisputes      bool `yaml:"ingest_disputes"`
+	IngestContracts     bool `yaml:"ingest_contracts"`
+	IngestNegotiations  bool `yaml:"ingest_negotiations"`
+	IngestValidation    bool `yaml:"ingest_validation"`
 	IngestSemanticDrift bool `yaml:"ingest_semantic_drift"`
 
 	// Filtering
-	MinDriftSeverity   string `yaml:"min_drift_severity"`
+	MinDriftSeverity string `yaml:"min_drift_severity"`
 }
 
 // DefaultIngesterConfig returns the default ingester configuration.

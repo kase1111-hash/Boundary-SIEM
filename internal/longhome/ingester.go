@@ -46,9 +46,9 @@ type IngesterConfig struct {
 	IngestSignals        bool `yaml:"ingest_signals"`
 
 	// Filtering
-	CriticalBodyOnly     bool   `yaml:"critical_body_only"`
-	UnusualSignalsOnly   bool   `yaml:"unusual_signals_only"`
-	MinPhysicsSeverity   string `yaml:"min_physics_severity"`
+	CriticalBodyOnly   bool   `yaml:"critical_body_only"`
+	UnusualSignalsOnly bool   `yaml:"unusual_signals_only"`
+	MinPhysicsSeverity string `yaml:"min_physics_severity"`
 }
 
 // DefaultIngesterConfig returns the default ingester configuration with all logging enabled.

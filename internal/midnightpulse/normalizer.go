@@ -30,10 +30,10 @@ var ActionMappings = map[string]string{
 	"multiplayer.spectator_leave":     "mp.multiplayer.spectator_leave",
 
 	// Input anomalies
-	"anomaly.rapid_input":        "mp.anomaly.rapid_input",
+	"anomaly.rapid_input":         "mp.anomaly.rapid_input",
 	"anomaly.impossible_sequence": "mp.anomaly.impossible_sequence",
-	"anomaly.macro_detected":     "mp.anomaly.macro_detected",
-	"anomaly.timing_anomaly":     "mp.anomaly.timing_anomaly",
+	"anomaly.macro_detected":      "mp.anomaly.macro_detected",
+	"anomaly.timing_anomaly":      "mp.anomaly.timing_anomaly",
 
 	// Save/Load events
 	"saveload.save":       "mp.saveload.save",
@@ -126,11 +126,11 @@ func (n *Normalizer) NormalizeSession(session *PlayerSession, eventType string) 
 		},
 
 		Metadata: map[string]any{
-			"mp_session_id":    session.ID,
-			"mp_player_id":     session.PlayerID,
-			"mp_platform":      session.Platform,
-			"mp_game_version":  session.GameVersion,
-			"mp_duration":      session.Duration,
+			"mp_session_id":     session.ID,
+			"mp_player_id":      session.PlayerID,
+			"mp_platform":       session.Platform,
+			"mp_game_version":   session.GameVersion,
+			"mp_duration":       session.Duration,
 			"mp_session_status": session.Status,
 		},
 	}
@@ -214,12 +214,12 @@ func (n *Normalizer) NormalizeMultiplayer(mp *MultiplayerEvent) (*schema.Event, 
 		},
 
 		Metadata: map[string]any{
-			"mp_event_id":     mp.ID,
-			"mp_session_id":   mp.SessionID,
-			"mp_player_id":    mp.PlayerID,
-			"mp_event_type":   mp.EventType,
-			"mp_opponent_id":  mp.OpponentID,
-			"mp_outcome":      mp.Outcome,
+			"mp_event_id":    mp.ID,
+			"mp_session_id":  mp.SessionID,
+			"mp_player_id":   mp.PlayerID,
+			"mp_event_type":  mp.EventType,
+			"mp_opponent_id": mp.OpponentID,
+			"mp_outcome":     mp.Outcome,
 		},
 	}
 
@@ -314,14 +314,14 @@ func (n *Normalizer) NormalizeSaveLoad(sl *SaveLoadEvent) (*schema.Event, error)
 		},
 
 		Metadata: map[string]any{
-			"mp_event_id":     sl.ID,
-			"mp_session_id":   sl.SessionID,
-			"mp_player_id":    sl.PlayerID,
-			"mp_event_type":   sl.EventType,
-			"mp_data_size":    sl.DataSize,
-			"mp_checksum":     sl.Checksum,
-			"mp_valid":        sl.Valid,
-			"mp_error":        sl.ErrorMessage,
+			"mp_event_id":   sl.ID,
+			"mp_session_id": sl.SessionID,
+			"mp_player_id":  sl.PlayerID,
+			"mp_event_type": sl.EventType,
+			"mp_data_size":  sl.DataSize,
+			"mp_checksum":   sl.Checksum,
+			"mp_valid":      sl.Valid,
+			"mp_error":      sl.ErrorMessage,
 		},
 	}
 
@@ -466,13 +466,13 @@ func (n *Normalizer) NormalizeDifficulty(diff *DifficultyEvent) (*schema.Event, 
 		},
 
 		Metadata: map[string]any{
-			"mp_event_id":    diff.ID,
-			"mp_session_id":  diff.SessionID,
-			"mp_player_id":   diff.PlayerID,
-			"mp_event_type":  diff.EventType,
-			"mp_old_value":   diff.OldValue,
-			"mp_new_value":   diff.NewValue,
-			"mp_reason":      diff.Reason,
+			"mp_event_id":   diff.ID,
+			"mp_session_id": diff.SessionID,
+			"mp_player_id":  diff.PlayerID,
+			"mp_event_type": diff.EventType,
+			"mp_old_value":  diff.OldValue,
+			"mp_new_value":  diff.NewValue,
+			"mp_reason":     diff.Reason,
 		},
 	}
 

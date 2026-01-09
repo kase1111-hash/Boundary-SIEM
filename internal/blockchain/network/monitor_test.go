@@ -64,9 +64,9 @@ func TestAddPeer(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	peer := &PeerInfo{
-		ID:        "peer1",
-		IPAddress: "192.168.1.1",
-		Direction: "outbound",
+		ID:           "peer1",
+		IPAddress:    "192.168.1.1",
+		Direction:    "outbound",
 		QualityScore: 0.9,
 	}
 
@@ -131,22 +131,22 @@ func TestCollectMetrics(t *testing.T) {
 
 	// Add some peers
 	monitor.AddPeer(&PeerInfo{
-		ID:           "peer1",
-		Direction:    "inbound",
-		Country:      "US",
-		ASN:          12345,
-		QualityScore: 0.8,
-		BytesSent:    1000,
+		ID:            "peer1",
+		Direction:     "inbound",
+		Country:       "US",
+		ASN:           12345,
+		QualityScore:  0.8,
+		BytesSent:     1000,
 		BytesReceived: 2000,
 	})
 
 	monitor.AddPeer(&PeerInfo{
-		ID:           "peer2",
-		Direction:    "outbound",
-		Country:      "US",
-		ASN:          12345,
-		QualityScore: 0.9,
-		BytesSent:    3000,
+		ID:            "peer2",
+		Direction:     "outbound",
+		Country:       "US",
+		ASN:           12345,
+		QualityScore:  0.9,
+		BytesSent:     3000,
 		BytesReceived: 4000,
 	})
 
@@ -220,8 +220,8 @@ func TestCheckPeerCount(t *testing.T) {
 	})
 
 	metrics := &NetworkMetrics{
-		Timestamp:   time.Now(),
-		TotalPeers:  15, // Below critical threshold of 20
+		Timestamp:  time.Now(),
+		TotalPeers: 15, // Below critical threshold of 20
 	}
 
 	monitor.checkPeerCount(ctx, metrics)
@@ -256,11 +256,11 @@ func TestCheckPeerRatio(t *testing.T) {
 	})
 
 	metrics := &NetworkMetrics{
-		Timestamp:       time.Now(),
-		TotalPeers:      100,
-		InboundPeers:    10,  // 10%
-		OutboundPeers:   90,  // 90%
-		InboundPercent:  10.0, // Below 20% threshold
+		Timestamp:      time.Now(),
+		TotalPeers:     100,
+		InboundPeers:   10,   // 10%
+		OutboundPeers:  90,   // 90%
+		InboundPercent: 10.0, // Below 20% threshold
 	}
 
 	monitor.checkPeerRatio(ctx, metrics)
@@ -298,11 +298,11 @@ func TestCheckGeographicDiversity_EclipseAttack(t *testing.T) {
 	})
 
 	metrics := &NetworkMetrics{
-		Timestamp:      time.Now(),
-		TotalPeers:     100,
-		TopASN:         12345,
-		TopASNCount:    75,  // 75% from single ASN
-		TopASNPercent:  75.0, // Above eclipse threshold
+		Timestamp:     time.Now(),
+		TotalPeers:    100,
+		TopASN:        12345,
+		TopASNCount:   75,   // 75% from single ASN
+		TopASNPercent: 75.0, // Above eclipse threshold
 	}
 
 	monitor.checkGeographicDiversity(ctx, metrics)
@@ -620,17 +620,17 @@ func TestNormalizeToEvent(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "network-eclipse-attack-risk",
-		Severity: "critical",
-		Title:    "Eclipse Attack Risk",
+		ID:          uuid.New(),
+		Type:        "network-eclipse-attack-risk",
+		Severity:    "critical",
+		Title:       "Eclipse Attack Risk",
 		Description: "75% of peers from single ASN",
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
 		Metrics: &NetworkMetrics{
-			TotalPeers:    100,
-			InboundPeers:  30,
-			OutboundPeers: 70,
-			AvgQualityScore: 0.8,
+			TotalPeers:       100,
+			InboundPeers:     30,
+			OutboundPeers:    70,
+			AvgQualityScore:  0.8,
 			BandwidthPercent: 65.0,
 		},
 		Metadata: map[string]interface{}{

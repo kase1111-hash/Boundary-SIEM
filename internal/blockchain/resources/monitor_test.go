@@ -208,10 +208,10 @@ func TestCheckDiskAlerts(t *testing.T) {
 	})
 
 	metrics := &ResourceMetrics{
-		Timestamp:        time.Now(),
-		DiskUsedPercent:  96.0,
-		DiskUsedBytes:    960 * 1024 * 1024 * 1024,
-		DiskTotalBytes:   1000 * 1024 * 1024 * 1024,
+		Timestamp:         time.Now(),
+		DiskUsedPercent:   96.0,
+		DiskUsedBytes:     960 * 1024 * 1024 * 1024,
+		DiskTotalBytes:    1000 * 1024 * 1024 * 1024,
 		DiskDaysUntilFull: 2,
 	}
 
@@ -492,13 +492,13 @@ func TestNormalizeToEvent(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "resource-disk-space-critical",
-		Severity: SeverityCritical,
-		Resource: ResourceDisk,
-		Title:    "Disk Space Critical",
+		ID:          uuid.New(),
+		Type:        "resource-disk-space-critical",
+		Severity:    SeverityCritical,
+		Resource:    ResourceDisk,
+		Title:       "Disk Space Critical",
 		Description: "Disk usage at 95%",
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
 		Metrics: &ResourceMetrics{
 			DiskUsedPercent:   95.0,
 			MemoryUsedPercent: 50.0,

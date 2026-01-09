@@ -16,23 +16,23 @@ import (
 type StorageTier string
 
 const (
-	TierHot      StorageTier = "hot"       // Fast SSD, recent data
-	TierWarm     StorageTier = "warm"      // Standard storage, older data
-	TierCold     StorageTier = "cold"      // S3/object storage, archived
-	TierFrozen   StorageTier = "frozen"    // Glacier/deep archive
+	TierHot    StorageTier = "hot"    // Fast SSD, recent data
+	TierWarm   StorageTier = "warm"   // Standard storage, older data
+	TierCold   StorageTier = "cold"   // S3/object storage, archived
+	TierFrozen StorageTier = "frozen" // Glacier/deep archive
 )
 
 // RetentionPolicy defines data retention rules.
 type RetentionPolicy struct {
-	ID                      string          `json:"id"`
-	Name                    string          `json:"name"`
-	Description             string          `json:"description,omitempty"`
-	DataType                string          `json:"data_type"`
-	Enabled                 bool            `json:"enabled"`
-	Rules                   []RetentionRule `json:"rules"`
-	RequireBackupBeforePurge bool           `json:"require_backup_before_purge"` // Safety: require archive before delete
-	CreatedAt               time.Time       `json:"created_at"`
-	UpdatedAt               time.Time       `json:"updated_at"`
+	ID                       string          `json:"id"`
+	Name                     string          `json:"name"`
+	Description              string          `json:"description,omitempty"`
+	DataType                 string          `json:"data_type"`
+	Enabled                  bool            `json:"enabled"`
+	Rules                    []RetentionRule `json:"rules"`
+	RequireBackupBeforePurge bool            `json:"require_backup_before_purge"` // Safety: require archive before delete
+	CreatedAt                time.Time       `json:"created_at"`
+	UpdatedAt                time.Time       `json:"updated_at"`
 }
 
 // RetentionRule defines a single retention rule.
@@ -63,19 +63,19 @@ type ArchiveConfig struct {
 
 // ArchiveJob represents an archive job.
 type ArchiveJob struct {
-	ID            string        `json:"id"`
-	PolicyID      string        `json:"policy_id"`
-	Status        JobStatus     `json:"status"`
-	SourceTier    StorageTier   `json:"source_tier"`
-	TargetTier    StorageTier   `json:"target_tier"`
-	DataType      string        `json:"data_type"`
-	StartTime     time.Time     `json:"start_time"`
-	EndTime       *time.Time    `json:"end_time,omitempty"`
-	RecordsTotal  int64         `json:"records_total"`
-	RecordsMoved  int64         `json:"records_moved"`
-	BytesTotal    int64         `json:"bytes_total"`
-	BytesMoved    int64         `json:"bytes_moved"`
-	Error         string        `json:"error,omitempty"`
+	ID           string      `json:"id"`
+	PolicyID     string      `json:"policy_id"`
+	Status       JobStatus   `json:"status"`
+	SourceTier   StorageTier `json:"source_tier"`
+	TargetTier   StorageTier `json:"target_tier"`
+	DataType     string      `json:"data_type"`
+	StartTime    time.Time   `json:"start_time"`
+	EndTime      *time.Time  `json:"end_time,omitempty"`
+	RecordsTotal int64       `json:"records_total"`
+	RecordsMoved int64       `json:"records_moved"`
+	BytesTotal   int64       `json:"bytes_total"`
+	BytesMoved   int64       `json:"bytes_moved"`
+	Error        string      `json:"error,omitempty"`
 }
 
 // JobStatus defines job status.
@@ -91,14 +91,14 @@ const (
 
 // StorageStats represents storage statistics.
 type StorageStats struct {
-	Tier            StorageTier `json:"tier"`
-	TotalBytes      int64       `json:"total_bytes"`
-	UsedBytes       int64       `json:"used_bytes"`
-	AvailableBytes  int64       `json:"available_bytes"`
-	RecordCount     int64       `json:"record_count"`
-	OldestRecord    time.Time   `json:"oldest_record"`
-	NewestRecord    time.Time   `json:"newest_record"`
-	CompressionRatio float64    `json:"compression_ratio"`
+	Tier             StorageTier `json:"tier"`
+	TotalBytes       int64       `json:"total_bytes"`
+	UsedBytes        int64       `json:"used_bytes"`
+	AvailableBytes   int64       `json:"available_bytes"`
+	RecordCount      int64       `json:"record_count"`
+	OldestRecord     time.Time   `json:"oldest_record"`
+	NewestRecord     time.Time   `json:"newest_record"`
+	CompressionRatio float64     `json:"compression_ratio"`
 }
 
 // RetentionManager manages data retention.

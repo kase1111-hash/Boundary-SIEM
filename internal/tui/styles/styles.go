@@ -5,13 +5,13 @@ import "github.com/charmbracelet/lipgloss"
 
 var (
 	// Colors
-	Primary      = lipgloss.Color("#7C3AED")
-	Secondary    = lipgloss.Color("#10B981")
-	Warning      = lipgloss.Color("#F59E0B")
-	Error        = lipgloss.Color("#EF4444")
-	MutedColor   = lipgloss.Color("#6B7280")
-	White        = lipgloss.Color("#FFFFFF")
-	Dark         = lipgloss.Color("#1F2937")
+	Primary    = lipgloss.Color("#7C3AED")
+	Secondary  = lipgloss.Color("#10B981")
+	Warning    = lipgloss.Color("#F59E0B")
+	Error      = lipgloss.Color("#EF4444")
+	MutedColor = lipgloss.Color("#6B7280")
+	White      = lipgloss.Color("#FFFFFF")
+	Dark       = lipgloss.Color("#1F2937")
 
 	// Muted text style
 	Muted = lipgloss.NewStyle().Foreground(MutedColor)

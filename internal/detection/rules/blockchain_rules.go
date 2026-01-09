@@ -47,8 +47,8 @@ func GetDeFiRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "contract.liquidity.removed"},
 				{Field: "metadata.value_usd", Operator: "gte", Value: float64(100000)},
 			},
-			GroupBy: []string{"metadata.pool"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"metadata.pool"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -68,8 +68,8 @@ func GetDeFiRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "oracle.price_deviation"},
 				{Field: "metadata.deviation_percent", Operator: "gte", Value: float64(10)},
 			},
-			GroupBy: []string{"metadata.oracle"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"metadata.oracle"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -83,8 +83,8 @@ func GetDeFiRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.lending.liquidation"},
 			},
-			GroupBy: []string{"metadata.protocol"},
-			Window:  30 * time.Minute,
+			GroupBy:   []string{"metadata.protocol"},
+			Window:    30 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 10, Operator: "gte"},
 		},
 		{
@@ -99,8 +99,8 @@ func GetDeFiRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "contract.vault.withdraw"},
 				{Field: "metadata.value_usd", Operator: "gte", Value: float64(500000)},
 			},
-			GroupBy: []string{"metadata.vault"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.vault"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -119,8 +119,8 @@ func GetDeFiRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "stablecoin.depeg"},
 			},
-			GroupBy: []string{"metadata.token"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"metadata.token"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -134,8 +134,8 @@ func GetDeFiRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.paused"},
 			},
-			GroupBy: []string{"metadata.contract"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.contract"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -155,8 +155,8 @@ func GetDeFiRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "bridge.deposit"},
 				{Field: "metadata.value_usd", Operator: "gte", Value: float64(1000000)},
 			},
-			GroupBy: []string{"metadata.bridge"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.bridge"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 	}
@@ -176,8 +176,8 @@ func GetExchangeRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "exchange.withdrawal"},
 			},
-			GroupBy: []string{"metadata.exchange"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.exchange"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 100, Operator: "gte"},
 		},
 		{
@@ -192,8 +192,8 @@ func GetExchangeRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "wallet.low_balance"},
 				{Field: "metadata.wallet_type", Operator: "eq", Value: "hot"},
 			},
-			GroupBy: []string{"metadata.wallet"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"metadata.wallet"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -212,8 +212,8 @@ func GetExchangeRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "exchange.spoofing"},
 			},
-			GroupBy: []string{"metadata.pair"},
-			Window:  10 * time.Minute,
+			GroupBy:   []string{"metadata.pair"},
+			Window:    10 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -253,8 +253,8 @@ func GetExchangeRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "exchange.trade"},
 				{Field: "metadata.self_trade", Operator: "eq", Value: true},
 			},
-			GroupBy: []string{"metadata.trader"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.trader"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 10, Operator: "gte"},
 		},
 		{
@@ -268,8 +268,8 @@ func GetExchangeRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "wallet.cold.transfer"},
 			},
-			GroupBy: []string{"metadata.wallet"},
-			Window:  24 * time.Hour,
+			GroupBy:   []string{"metadata.wallet"},
+			Window:    24 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 	}
@@ -294,8 +294,8 @@ func GetValidatorRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.slashing_detected"},
 			},
-			GroupBy: []string{"metadata.validator_index"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.validator_index"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -309,8 +309,8 @@ func GetValidatorRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.double_vote"},
 			},
-			GroupBy: []string{"metadata.validator_index"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"metadata.validator_index"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -324,8 +324,8 @@ func GetValidatorRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.surround_vote"},
 			},
-			GroupBy: []string{"metadata.validator_index"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"metadata.validator_index"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -339,8 +339,8 @@ func GetValidatorRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.attestation_missed"},
 			},
-			GroupBy: []string{"metadata.validator_index"},
-			Window:  30 * time.Minute,
+			GroupBy:   []string{"metadata.validator_index"},
+			Window:    30 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 3, Operator: "gte"},
 		},
 		{
@@ -354,8 +354,8 @@ func GetValidatorRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.proposal_missed"},
 			},
-			GroupBy: []string{"metadata.validator_index"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.validator_index"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -369,8 +369,8 @@ func GetValidatorRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.sync_committee_missed"},
 			},
-			GroupBy: []string{"metadata.validator_index"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.validator_index"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 3, Operator: "gte"},
 		},
 		{
@@ -384,8 +384,8 @@ func GetValidatorRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "validator.attestation_missed"},
 			},
-			GroupBy: []string{"metadata.validator_index"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.validator_index"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 10, Operator: "gte"},
 		},
 		{
@@ -399,8 +399,8 @@ func GetValidatorRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.exited"},
 			},
-			GroupBy: []string{"metadata.validator_index"},
-			Window:  24 * time.Hour,
+			GroupBy:   []string{"metadata.validator_index"},
+			Window:    24 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -414,8 +414,8 @@ func GetValidatorRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "validator.attestation_missed"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  10 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    10 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 5, Operator: "gte"},
 		},
 		{
@@ -430,8 +430,8 @@ func GetValidatorRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "validator.balance_decreased"},
 				{Field: "metadata.decrease_reason", Operator: "eq", Value: "slashing"},
 			},
-			GroupBy: []string{"metadata.validator_index"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.validator_index"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 	}
@@ -451,8 +451,8 @@ func GetConsensusRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "beacon.sync_failed"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  10 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    10 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 3, Operator: "gte"},
 		},
 		{
@@ -466,8 +466,8 @@ func GetConsensusRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "beacon.finality_delayed"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -481,8 +481,8 @@ func GetConsensusRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "beacon.fork_detected"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -497,8 +497,8 @@ func GetConsensusRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "block.reorg"},
 				{Field: "metadata.reorg_depth", Operator: "gte", Value: float64(6)},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  30 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    30 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -512,8 +512,8 @@ func GetConsensusRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "peer.low_count"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  10 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    10 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 3, Operator: "gte"},
 		},
 		{
@@ -527,8 +527,8 @@ func GetConsensusRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "beacon.execution_disconnected"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -542,8 +542,8 @@ func GetConsensusRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "block.production_failed"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"source.host"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -557,8 +557,8 @@ func GetConsensusRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "block.invalid"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  30 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    30 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 5, Operator: "gte"},
 		},
 	}
@@ -579,8 +579,8 @@ func GetTransactionRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "tx.transfer"},
 				{Field: "metadata.value_eth", Operator: "gte", Value: float64(1000)},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.from"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -595,8 +595,8 @@ func GetTransactionRules() []*correlation.Rule {
 				{Field: "action", Operator: "contains", Value: "tx."},
 				{Field: "metadata.gas_price_gwei", Operator: "gte", Value: float64(500)},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"metadata.from"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -610,8 +610,8 @@ func GetTransactionRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "tx."},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"metadata.from"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 50, Operator: "gte"},
 		},
 		{
@@ -626,8 +626,8 @@ func GetTransactionRules() []*correlation.Rule {
 				{Field: "action", Operator: "contains", Value: "tx."},
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"metadata.from"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 10, Operator: "gte"},
 		},
 		{
@@ -641,8 +641,8 @@ func GetTransactionRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.contract_deploy"},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.from"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -656,8 +656,8 @@ func GetTransactionRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.selfdestruct"},
 			},
-			GroupBy: []string{"metadata.contract"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.contract"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -671,8 +671,8 @@ func GetTransactionRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.nonce_gap"},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  30 * time.Minute,
+			GroupBy:   []string{"metadata.from"},
+			Window:    30 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -686,8 +686,8 @@ func GetTransactionRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.bridge_deposit"},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.from"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 	}
@@ -707,8 +707,8 @@ func GetContractRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.ownership.transferred"},
 			},
-			GroupBy: []string{"metadata.contract"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.contract"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -722,8 +722,8 @@ func GetContractRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.proxy.upgraded"},
 			},
-			GroupBy: []string{"metadata.contract"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.contract"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -738,8 +738,8 @@ func GetContractRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "contract.erc20.transfer"},
 				{Field: "severity", Operator: "gte", Value: 6},
 			},
-			GroupBy: []string{"metadata.contract"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.contract"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -753,8 +753,8 @@ func GetContractRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.erc721.transfer"},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  10 * time.Minute,
+			GroupBy:   []string{"metadata.from"},
+			Window:    10 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 20, Operator: "gte"},
 		},
 		{
@@ -769,8 +769,8 @@ func GetContractRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "contract.erc20.approval"},
 				{Field: "metadata.value", Operator: "eq", Value: "0"},
 			},
-			GroupBy: []string{"metadata.owner"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.owner"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -785,8 +785,8 @@ func GetContractRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "contract.erc20.approval"},
 				{Field: "metadata.unlimited", Operator: "eq", Value: true},
 			},
-			GroupBy: []string{"metadata.owner"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.owner"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -800,8 +800,8 @@ func GetContractRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.governance.proposal_created"},
 			},
-			GroupBy: []string{"metadata.contract"},
-			Window:  24 * time.Hour,
+			GroupBy:   []string{"metadata.contract"},
+			Window:    24 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -815,8 +815,8 @@ func GetContractRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.flash_loan"},
 			},
-			GroupBy: []string{"metadata.borrower"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.borrower"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -830,8 +830,8 @@ func GetContractRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.timelock.bypass"},
 			},
-			GroupBy: []string{"metadata.contract"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.contract"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -850,8 +850,8 @@ func GetContractRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "contract.call.recursive"},
 			},
-			GroupBy: []string{"metadata.contract"},
-			Window:  1 * time.Minute,
+			GroupBy:   []string{"metadata.contract"},
+			Window:    1 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 3, Operator: "gte"},
 		},
 	}
@@ -871,8 +871,8 @@ func GetMEVRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.sandwich"},
 			},
-			GroupBy: []string{"metadata.attacker"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"metadata.attacker"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -887,8 +887,8 @@ func GetMEVRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "tx.mev"},
 				{Field: "metadata.mev_type", Operator: "eq", Value: "frontrun"},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"metadata.from"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -903,8 +903,8 @@ func GetMEVRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "tx.mev"},
 				{Field: "metadata.mev_type", Operator: "eq", Value: "backrun"},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"metadata.from"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -918,8 +918,8 @@ func GetMEVRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.arbitrage"},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.from"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -934,8 +934,8 @@ func GetMEVRules() []*correlation.Rule {
 				{Field: "action", Operator: "contains", Value: "tx."},
 				{Field: "metadata.mev_profit_eth", Operator: "gte", Value: float64(10)},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.from"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -949,8 +949,8 @@ func GetMEVRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.jit_liquidity"},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"metadata.from"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -964,8 +964,8 @@ func GetMEVRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.bundle"},
 			},
-			GroupBy: []string{"metadata.builder"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.builder"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -979,8 +979,8 @@ func GetMEVRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "tx.liquidation"},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.from"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 5, Operator: "gte"},
 		},
 	}
@@ -1001,8 +1001,8 @@ func GetInfrastructureRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "metric.cpu.usage"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(90)},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 3, Operator: "gte"},
 		},
 		{
@@ -1017,8 +1017,8 @@ func GetInfrastructureRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "metric.memory.usage"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(95)},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  2 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    2 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 2, Operator: "gte"},
 		},
 		{
@@ -1033,8 +1033,8 @@ func GetInfrastructureRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "metric.disk.usage"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(95)},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1048,8 +1048,8 @@ func GetInfrastructureRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "metric.network.error"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 100, Operator: "gte"},
 		},
 		{
@@ -1069,8 +1069,8 @@ func GetInfrastructureRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "metric.connection.count"},
 				{Field: "metadata.value", Operator: "gte", Value: float64(10000)},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  1 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    1 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1084,8 +1084,8 @@ func GetInfrastructureRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "process.crashed"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  10 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    10 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1100,8 +1100,8 @@ func GetInfrastructureRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "metric.latency.database"},
 				{Field: "metadata.value_ms", Operator: "gte", Value: float64(1000)},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 10, Operator: "gte"},
 		},
 		{
@@ -1116,8 +1116,8 @@ func GetInfrastructureRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "cert.expiring"},
 				{Field: "metadata.days_remaining", Operator: "lte", Value: float64(30)},
 			},
-			GroupBy: []string{"metadata.domain"},
-			Window:  24 * time.Hour,
+			GroupBy:   []string{"metadata.domain"},
+			Window:    24 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 	}
@@ -1142,8 +1142,8 @@ func GetSecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "rpc.admin"},
 			},
-			GroupBy: []string{"actor.ip"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"actor.ip"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1182,8 +1182,8 @@ func GetSecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "contains", Value: "rpc."},
 			},
-			GroupBy: []string{"actor.ip"},
-			Window:  1 * time.Minute,
+			GroupBy:   []string{"actor.ip"},
+			Window:    1 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 100, Operator: "gte"},
 		},
 		{
@@ -1202,8 +1202,8 @@ func GetSecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "auth.failed"},
 			},
-			GroupBy: []string{"actor.ip"},
-			Window:  10 * time.Minute,
+			GroupBy:   []string{"actor.ip"},
+			Window:    10 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 10, Operator: "gte"},
 		},
 		{
@@ -1222,8 +1222,8 @@ func GetSecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.export"},
 			},
-			GroupBy: []string{"target"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"target"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1237,8 +1237,8 @@ func GetSecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.sign"},
 			},
-			GroupBy: []string{"target"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"target"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 500, Operator: "gte"},
 		},
 		{
@@ -1257,8 +1257,8 @@ func GetSecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "auth.privilege_escalation"},
 			},
-			GroupBy: []string{"actor.id"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"actor.id"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1277,8 +1277,8 @@ func GetSecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "process.suspicious"},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1297,8 +1297,8 @@ func GetSecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "ssh.failed"},
 			},
-			GroupBy: []string{"actor.ip"},
-			Window:  5 * time.Minute,
+			GroupBy:   []string{"actor.ip"},
+			Window:    5 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 20, Operator: "gte"},
 		},
 		{
@@ -1312,8 +1312,8 @@ func GetSecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "firewall.rule_changed"},
 			},
-			GroupBy: []string{"actor.id"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"actor.id"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 	}
@@ -1335,8 +1335,8 @@ func GetComplianceRules() []*correlation.Rule {
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 				{Field: "metadata.risk_level", Operator: "eq", Value: "critical"},
 			},
-			GroupBy: []string{"target"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"target"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1351,8 +1351,8 @@ func GetComplianceRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "threat.screening"},
 				{Field: "metadata.threat_types", Operator: "contains", Value: "mixer"},
 			},
-			GroupBy: []string{"target"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"target"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1367,8 +1367,8 @@ func GetComplianceRules() []*correlation.Rule {
 				{Field: "action", Operator: "contains", Value: "tx."},
 				{Field: "metadata.value_usd", Operator: "gte", Value: float64(10000)},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  24 * time.Hour,
+			GroupBy:   []string{"metadata.from"},
+			Window:    24 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1384,8 +1384,8 @@ func GetComplianceRules() []*correlation.Rule {
 				{Field: "metadata.value_usd", Operator: "gte", Value: float64(8000)},
 				{Field: "metadata.value_usd", Operator: "lt", Value: float64(10000)},
 			},
-			GroupBy: []string{"metadata.from"},
-			Window:  24 * time.Hour,
+			GroupBy:   []string{"metadata.from"},
+			Window:    24 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 3, Operator: "gte"},
 		},
 		{
@@ -1400,8 +1400,8 @@ func GetComplianceRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "threat.screening"},
 				{Field: "metadata.high_risk_jurisdiction", Operator: "eq", Value: true},
 			},
-			GroupBy: []string{"target"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"target"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1416,8 +1416,8 @@ func GetComplianceRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "threat.screening"},
 				{Field: "metadata.threat_types", Operator: "contains", Value: "ransomware"},
 			},
-			GroupBy: []string{"target"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"target"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 	}
@@ -1437,8 +1437,8 @@ func GetKeyManagementRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.export"},
 			},
-			GroupBy: []string{"target"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"target"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1452,8 +1452,8 @@ func GetKeyManagementRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.import"},
 			},
-			GroupBy: []string{"target"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"target"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1467,8 +1467,8 @@ func GetKeyManagementRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.rotate"},
 			},
-			GroupBy: []string{"target"},
-			Window:  24 * time.Hour,
+			GroupBy:   []string{"target"},
+			Window:    24 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1482,8 +1482,8 @@ func GetKeyManagementRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "key.revoke"},
 			},
-			GroupBy: []string{"target"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"target"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1498,8 +1498,8 @@ func GetKeyManagementRules() []*correlation.Rule {
 				{Field: "action", Operator: "contains", Value: "key."},
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 			},
-			GroupBy: []string{"actor.id"},
-			Window:  10 * time.Minute,
+			GroupBy:   []string{"actor.id"},
+			Window:    10 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 5, Operator: "gte"},
 		},
 		{
@@ -1514,8 +1514,8 @@ func GetKeyManagementRules() []*correlation.Rule {
 				{Field: "metadata.key_type", Operator: "eq", Value: "validator"},
 				{Field: "action", Operator: "in", Values: []string{"key.access", "key.sign"}},
 			},
-			GroupBy: []string{"target", "actor.id"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"target", "actor.id"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1529,8 +1529,8 @@ func GetKeyManagementRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "metadata.key_type", Operator: "eq", Value: "withdrawal"},
 			},
-			GroupBy: []string{"target"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"target"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1572,8 +1572,8 @@ func GetCloudSecurityRules() []*correlation.Rule {
 					"policy.attach", "policy.detach", "gcp.setiampolicy",
 				}},
 			},
-			GroupBy: []string{"metadata.account_id"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.account_id"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1593,8 +1593,8 @@ func GetCloudSecurityRules() []*correlation.Rule {
 				{Field: "outcome", Operator: "eq", Value: "failure"},
 				{Field: "metadata.error_code", Operator: "contains", Value: "Unauthorized"},
 			},
-			GroupBy: []string{"actor.id"},
-			Window:  10 * time.Minute,
+			GroupBy:   []string{"actor.id"},
+			Window:    10 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 5, Operator: "gte"},
 		},
 		{
@@ -1609,8 +1609,8 @@ func GetCloudSecurityRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "resource.delete"},
 				{Field: "outcome", Operator: "eq", Value: "success"},
 			},
-			GroupBy: []string{"metadata.account_id"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"metadata.account_id"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1631,8 +1631,8 @@ func GetCloudSecurityRules() []*correlation.Rule {
 					"StopLogging", "DeleteTrail", "UpdateTrail",
 				}},
 			},
-			GroupBy: []string{"metadata.account_id"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.account_id"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1649,8 +1649,8 @@ func GetCloudSecurityRules() []*correlation.Rule {
 					"RevokeSecurityGroupIngress", "RevokeSecurityGroupEgress",
 				}},
 			},
-			GroupBy: []string{"metadata.account_id"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"metadata.account_id"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1665,8 +1665,8 @@ func GetCloudSecurityRules() []*correlation.Rule {
 				{Field: "action", Operator: "contains", Value: "cloud."},
 				{Field: "metadata.new_region", Operator: "eq", Value: true},
 			},
-			GroupBy: []string{"metadata.account_id", "metadata.region"},
-			Window:  24 * time.Hour,
+			GroupBy:   []string{"metadata.account_id", "metadata.region"},
+			Window:    24 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 	}
@@ -1717,8 +1717,8 @@ func GetNetworkRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "network.outbound"},
 				{Field: "metadata.threat_intel_match", Operator: "eq", Value: true},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1738,8 +1738,8 @@ func GetNetworkRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "dns.query"},
 				{Field: "metadata.query_length", Operator: "gte", Value: float64(100)},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  15 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    15 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 10, Operator: "gte"},
 		},
 		{
@@ -1754,8 +1754,8 @@ func GetNetworkRules() []*correlation.Rule {
 				{Field: "action", Operator: "eq", Value: "network.p2p"},
 				{Field: "metadata.peers_connected", Operator: "gte", Value: float64(200)},
 			},
-			GroupBy: []string{"source.host"},
-			Window:  30 * time.Minute,
+			GroupBy:   []string{"source.host"},
+			Window:    30 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 	}
@@ -1796,8 +1796,8 @@ func GetAPISecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "api.graphql.introspection"},
 			},
-			GroupBy: []string{"actor.ip"},
-			Window:  1 * time.Hour,
+			GroupBy:   []string{"actor.ip"},
+			Window:    1 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
@@ -1811,8 +1811,8 @@ func GetAPISecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "api.websocket.message"},
 			},
-			GroupBy: []string{"actor.ip"},
-			Window:  1 * time.Minute,
+			GroupBy:   []string{"actor.ip"},
+			Window:    1 * time.Minute,
 			Threshold: &correlation.ThresholdConfig{Count: 1000, Operator: "gte"},
 		},
 		{
@@ -1826,8 +1826,8 @@ func GetAPISecurityRules() []*correlation.Rule {
 			EventConditions: []correlation.Condition{
 				{Field: "action", Operator: "eq", Value: "api.deprecated"},
 			},
-			GroupBy: []string{"metadata.endpoint"},
-			Window:  24 * time.Hour,
+			GroupBy:   []string{"metadata.endpoint"},
+			Window:    24 * time.Hour,
 			Threshold: &correlation.ThresholdConfig{Count: 10, Operator: "gte"},
 		},
 	}

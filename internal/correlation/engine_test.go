@@ -13,10 +13,10 @@ import (
 
 func TestCondition_Match(t *testing.T) {
 	tests := []struct {
-		name       string
-		condition  Condition
-		value      any
-		expected   bool
+		name      string
+		condition Condition
+		value     any
+		expected  bool
 	}{
 		{
 			name:      "eq string match",

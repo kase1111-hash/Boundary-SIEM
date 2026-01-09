@@ -31,13 +31,13 @@ const (
 
 // Config configures the unified blockchain monitor.
 type Config struct {
-	Network          NetworkType
-	EnableValidator  bool
-	EnableMempool    bool
-	EnableContracts  bool
-	ValidatorConfig  validator.MonitorConfig
-	MempoolConfig    mempool.MonitorConfig
-	ContractConfig   contracts.MonitorConfig
+	Network         NetworkType
+	EnableValidator bool
+	EnableMempool   bool
+	EnableContracts bool
+	ValidatorConfig validator.MonitorConfig
+	MempoolConfig   mempool.MonitorConfig
+	ContractConfig  contracts.MonitorConfig
 }
 
 // DefaultConfig returns default configuration for Ethereum.
@@ -58,11 +58,11 @@ type Monitor struct {
 	config Config
 
 	// Sub-monitors
-	gethParser     *ethereum.GethParser
+	gethParser      *ethereum.GethParser
 	consensusParser *consensus.Parser
-	validatorMon   *validator.Monitor
-	mempoolMon     *mempool.Monitor
-	contractMon    *contracts.Monitor
+	validatorMon    *validator.Monitor
+	mempoolMon      *mempool.Monitor
+	contractMon     *contracts.Monitor
 
 	// Event processing
 	eventCh  chan *schema.Event

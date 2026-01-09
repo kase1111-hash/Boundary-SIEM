@@ -32,15 +32,15 @@ type StorageMetrics struct {
 	StorageDaysToLimit int
 
 	// Transaction pool
-	TxPoolSize         int
-	TxPoolSizePercent  float64
-	TxPoolMaxSize      int
+	TxPoolSize        int
+	TxPoolSizePercent float64
+	TxPoolMaxSize     int
 
 	// Spam detection
-	SpamTxCount1h      int
-	SpamTxRate         float64
-	TopSpammerAddress  string
-	TopSpammerTxCount  int
+	SpamTxCount1h     int
+	SpamTxRate        float64
+	TopSpammerAddress string
+	TopSpammerTxCount int
 
 	// DOS indicators
 	DOSPatternDetected bool
@@ -50,19 +50,19 @@ type StorageMetrics struct {
 // MonitorConfig contains configuration for the spam monitor.
 type MonitorConfig struct {
 	// Transaction spam thresholds
-	TxRateThreshold       float64       // Tx/sec from single address
-	TxPoolFullThreshold   float64       // Percentage
-	SpamWindowDuration    time.Duration
+	TxRateThreshold     float64 // Tx/sec from single address
+	TxPoolFullThreshold float64 // Percentage
+	SpamWindowDuration  time.Duration
 
 	// Storage bloat thresholds
-	StorageGrowthThreshold float64       // GB/day
-	StorageAlertLeadDays   int          // Alert N days before limit
+	StorageGrowthThreshold float64 // GB/day
+	StorageAlertLeadDays   int     // Alert N days before limit
 	MaxStorageGB           float64
 
 	// DOS detection
-	DOSTxRateThreshold    float64       // Global tx/sec
-	DOSBurstSize          int          // Burst transaction count
-	DOSBurstWindow        time.Duration
+	DOSTxRateThreshold float64 // Global tx/sec
+	DOSBurstSize       int     // Burst transaction count
+	DOSBurstWindow     time.Duration
 
 	// Monitoring
 	CheckInterval    time.Duration
@@ -72,20 +72,20 @@ type MonitorConfig struct {
 // DefaultMonitorConfig returns default configuration.
 func DefaultMonitorConfig() MonitorConfig {
 	return MonitorConfig{
-		TxRateThreshold:        10.0,             // 10 tx/sec from single address
-		TxPoolFullThreshold:    80.0,             // 80% full
-		SpamWindowDuration:     1 * time.Minute,
+		TxRateThreshold:     10.0, // 10 tx/sec from single address
+		TxPoolFullThreshold: 80.0, // 80% full
+		SpamWindowDuration:  1 * time.Minute,
 
-		StorageGrowthThreshold: 50.0,             // 50 GB/day
-		StorageAlertLeadDays:   7,               // 7 days before limit
-		MaxStorageGB:           1000.0,          // 1 TB limit
+		StorageGrowthThreshold: 50.0,   // 50 GB/day
+		StorageAlertLeadDays:   7,      // 7 days before limit
+		MaxStorageGB:           1000.0, // 1 TB limit
 
-		DOSTxRateThreshold:     1000.0,          // 1000 tx/sec globally
-		DOSBurstSize:           10000,           // 10k transactions
-		DOSBurstWindow:         1 * time.Minute,
+		DOSTxRateThreshold: 1000.0, // 1000 tx/sec globally
+		DOSBurstSize:       10000,  // 10k transactions
+		DOSBurstWindow:     1 * time.Minute,
 
-		CheckInterval:          30 * time.Second,
-		MetricsRetention:       24 * time.Hour,
+		CheckInterval:    30 * time.Second,
+		MetricsRetention: 24 * time.Hour,
 	}
 }
 
@@ -221,7 +221,7 @@ func (m *Monitor) CollectMetrics() *StorageMetrics {
 			// Assume samples are taken at check interval
 			timeDiff := time.Duration(len(m.storageHistory)-1) * m.config.CheckInterval
 			if timeDiff > 0 {
-				gbPerDay := float64(bytesGrowth) / (1024*1024*1024) / timeDiff.Hours() * 24
+				gbPerDay := float64(bytesGrowth) / (1024 * 1024 * 1024) / timeDiff.Hours() * 24
 				metrics.StorageGrowthRate = gbPerDay
 
 				// Calculate days to limit
@@ -442,10 +442,10 @@ func (m *Monitor) checkSpamAlerts(ctx context.Context, metrics *StorageMetrics) 
 					metrics.TopSpammerAddress[:10]+"...", metrics.TopSpammerTxCount, txPerSec, m.config.TxRateThreshold),
 				Timestamp: time.Now(),
 				Metadata: map[string]interface{}{
-					"address":         metrics.TopSpammerAddress,
-					"tx_count":        metrics.TopSpammerTxCount,
-					"tx_rate":         txPerSec,
-					"threshold":       m.config.TxRateThreshold,
+					"address":   metrics.TopSpammerAddress,
+					"tx_count":  metrics.TopSpammerTxCount,
+					"tx_rate":   txPerSec,
+					"threshold": m.config.TxRateThreshold,
 				},
 				Metrics: metrics,
 			})
@@ -529,10 +529,10 @@ func (m *Monitor) GetStats() map[string]interface{} {
 	defer m.mu.RUnlock()
 
 	stats := map[string]interface{}{
-		"storage_samples":  len(m.storageHistory),
-		"metrics_count":    len(m.metricsHistory),
-		"tx_pool_size":     m.currentTxPoolSize,
-		"storage_gb":       m.currentStorageGB,
+		"storage_samples": len(m.storageHistory),
+		"metrics_count":   len(m.metricsHistory),
+		"tx_pool_size":    m.currentTxPoolSize,
+		"storage_gb":      m.currentStorageGB,
 	}
 
 	if m.lastMetrics != nil {

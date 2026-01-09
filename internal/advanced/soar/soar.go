@@ -13,10 +13,10 @@ import (
 type WorkflowStatus string
 
 const (
-	WorkflowStatusDraft     WorkflowStatus = "draft"
-	WorkflowStatusActive    WorkflowStatus = "active"
-	WorkflowStatusPaused    WorkflowStatus = "paused"
-	WorkflowStatusDisabled  WorkflowStatus = "disabled"
+	WorkflowStatusDraft    WorkflowStatus = "draft"
+	WorkflowStatusActive   WorkflowStatus = "active"
+	WorkflowStatusPaused   WorkflowStatus = "paused"
+	WorkflowStatusDisabled WorkflowStatus = "disabled"
 )
 
 // ExecutionStatus represents the status of a workflow execution
@@ -35,15 +35,15 @@ const (
 type StepType string
 
 const (
-	StepTypeAction      StepType = "action"
-	StepTypeCondition   StepType = "condition"
-	StepTypeParallel    StepType = "parallel"
-	StepTypeLoop        StepType = "loop"
-	StepTypeDelay       StepType = "delay"
-	StepTypeApproval    StepType = "approval"
+	StepTypeAction       StepType = "action"
+	StepTypeCondition    StepType = "condition"
+	StepTypeParallel     StepType = "parallel"
+	StepTypeLoop         StepType = "loop"
+	StepTypeDelay        StepType = "delay"
+	StepTypeApproval     StepType = "approval"
 	StepTypeNotification StepType = "notification"
-	StepTypeIntegration StepType = "integration"
-	StepTypeScript      StepType = "script"
+	StepTypeIntegration  StepType = "integration"
+	StepTypeScript       StepType = "script"
 )
 
 // Workflow represents an automation workflow
@@ -99,30 +99,30 @@ type ScheduleConfig struct {
 
 // EventConfig represents event trigger configuration
 type EventConfig struct {
-	EventType string   `json:"event_type"`
-	Sources   []string `json:"sources"`
+	EventType string                 `json:"event_type"`
+	Sources   []string               `json:"sources"`
 	Filters   map[string]interface{} `json:"filters"`
 }
 
 // Step represents a workflow step
 type Step struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Type        StepType               `json:"type"`
-	Action      *ActionConfig          `json:"action,omitempty"`
-	Condition   *ConditionConfig       `json:"condition,omitempty"`
-	Parallel    *ParallelConfig        `json:"parallel,omitempty"`
-	Loop        *LoopConfig            `json:"loop,omitempty"`
-	Delay       *DelayConfig           `json:"delay,omitempty"`
-	Approval    *ApprovalConfig        `json:"approval,omitempty"`
-	Notification *NotificationConfig   `json:"notification,omitempty"`
-	Integration *IntegrationConfig     `json:"integration,omitempty"`
-	Script      *ScriptConfig          `json:"script,omitempty"`
-	NextSteps   []string               `json:"next_steps"`
-	OnError     string                 `json:"on_error,omitempty"`
-	Timeout     time.Duration          `json:"timeout"`
-	Retries     int                    `json:"retries"`
-	Metadata    map[string]interface{} `json:"metadata"`
+	ID           string                 `json:"id"`
+	Name         string                 `json:"name"`
+	Type         StepType               `json:"type"`
+	Action       *ActionConfig          `json:"action,omitempty"`
+	Condition    *ConditionConfig       `json:"condition,omitempty"`
+	Parallel     *ParallelConfig        `json:"parallel,omitempty"`
+	Loop         *LoopConfig            `json:"loop,omitempty"`
+	Delay        *DelayConfig           `json:"delay,omitempty"`
+	Approval     *ApprovalConfig        `json:"approval,omitempty"`
+	Notification *NotificationConfig    `json:"notification,omitempty"`
+	Integration  *IntegrationConfig     `json:"integration,omitempty"`
+	Script       *ScriptConfig          `json:"script,omitempty"`
+	NextSteps    []string               `json:"next_steps"`
+	OnError      string                 `json:"on_error,omitempty"`
+	Timeout      time.Duration          `json:"timeout"`
+	Retries      int                    `json:"retries"`
+	Metadata     map[string]interface{} `json:"metadata"`
 }
 
 // ActionConfig represents action step configuration
@@ -134,8 +134,8 @@ type ActionConfig struct {
 
 // ConditionConfig represents condition step configuration
 type ConditionConfig struct {
-	Expression string   `json:"expression"`
-	TrueBranch []string `json:"true_branch"`
+	Expression  string   `json:"expression"`
+	TrueBranch  []string `json:"true_branch"`
 	FalseBranch []string `json:"false_branch"`
 }
 
@@ -149,10 +149,10 @@ type ParallelConfig struct {
 
 // LoopConfig represents loop step configuration
 type LoopConfig struct {
-	Collection string `json:"collection"`
-	Iterator   string `json:"iterator"`
-	Steps      []Step `json:"steps"`
-	MaxIterations int  `json:"max_iterations"`
+	Collection    string `json:"collection"`
+	Iterator      string `json:"iterator"`
+	Steps         []Step `json:"steps"`
+	MaxIterations int    `json:"max_iterations"`
 }
 
 // DelayConfig represents delay step configuration
@@ -163,10 +163,10 @@ type DelayConfig struct {
 
 // ApprovalConfig represents approval step configuration
 type ApprovalConfig struct {
-	Approvers    []string      `json:"approvers"`
-	RequiredCount int          `json:"required_count"`
-	Timeout      time.Duration `json:"timeout"`
-	Message      string        `json:"message"`
+	Approvers     []string      `json:"approvers"`
+	RequiredCount int           `json:"required_count"`
+	Timeout       time.Duration `json:"timeout"`
+	Message       string        `json:"message"`
 }
 
 // NotificationConfig represents notification step configuration
@@ -190,7 +190,7 @@ type IntegrationConfig struct {
 
 // AuthConfig represents authentication configuration
 type AuthConfig struct {
-	Type        string `json:"type"`
+	Type         string `json:"type"`
 	CredentialID string `json:"credential_id"`
 }
 
@@ -246,11 +246,11 @@ type Integration struct {
 
 // IntegrationAction represents an action available from an integration
 type IntegrationAction struct {
-	ID          string                 `json:"id"`
-	Name        string                 `json:"name"`
-	Description string                 `json:"description"`
-	Parameters  []ActionParameter      `json:"parameters"`
-	Outputs     []string               `json:"outputs"`
+	ID          string            `json:"id"`
+	Name        string            `json:"name"`
+	Description string            `json:"description"`
+	Parameters  []ActionParameter `json:"parameters"`
+	Outputs     []string          `json:"outputs"`
 }
 
 // ActionParameter represents a parameter for an action
@@ -323,9 +323,9 @@ func (e *Engine) loadBuiltInWorkflows() {
 						ActionType: "enrich",
 						Target:     "transaction",
 						Parameters: map[string]interface{}{
-							"fetch_trace":   true,
-							"check_labels":  true,
-							"risk_scoring":  true,
+							"fetch_trace":  true,
+							"check_labels": true,
+							"risk_scoring": true,
 						},
 					},
 					NextSteps: []string{"step-2"},
@@ -345,9 +345,9 @@ func (e *Engine) loadBuiltInWorkflows() {
 					Name: "High Risk - Notify SOC",
 					Type: StepTypeNotification,
 					Notification: &NotificationConfig{
-						Channels:   []string{"slack", "pagerduty"},
-						Template:   "high_risk_transaction",
-						Priority:   "high",
+						Channels: []string{"slack", "pagerduty"},
+						Template: "high_risk_transaction",
+						Priority: "high",
 					},
 					NextSteps: []string{"step-4"},
 				},
@@ -490,9 +490,9 @@ func (e *Engine) loadBuiltInWorkflows() {
 					Name: "Critical - Validator Compromised",
 					Type: StepTypeNotification,
 					Notification: &NotificationConfig{
-						Channels:   []string{"pagerduty"},
-						Template:   "validator_compromised",
-						Priority:   "critical",
+						Channels: []string{"pagerduty"},
+						Template: "validator_compromised",
+						Priority: "critical",
 					},
 				},
 				{
@@ -500,9 +500,9 @@ func (e *Engine) loadBuiltInWorkflows() {
 					Name: "Warning - Validator Performance",
 					Type: StepTypeNotification,
 					Notification: &NotificationConfig{
-						Channels:   []string{"slack"},
-						Template:   "validator_warning",
-						Priority:   "medium",
+						Channels: []string{"slack"},
+						Template: "validator_warning",
+						Priority: "medium",
 					},
 				},
 			},

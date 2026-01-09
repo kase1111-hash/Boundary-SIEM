@@ -51,31 +51,31 @@ func NewClient(cfg ClientConfig) *Client {
 
 // Memory represents a stored memory.
 type Memory struct {
-	ID              string                 `json:"id"`
-	ProfileID       string                 `json:"profile_id"`
-	Classification  int                    `json:"classification"` // 0-5 security level
-	CreatedAt       time.Time              `json:"created_at"`
-	LastAccessedAt  *time.Time             `json:"last_accessed_at,omitempty"`
-	ExpiresAt       *time.Time             `json:"expires_at,omitempty"`
-	ContentHash     string                 `json:"content_hash"`
-	EncryptionType  string                 `json:"encryption_type"`
-	Tags            []string               `json:"tags,omitempty"`
-	ChainAnchorID   string                 `json:"chain_anchor_id,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	ID             string                 `json:"id"`
+	ProfileID      string                 `json:"profile_id"`
+	Classification int                    `json:"classification"` // 0-5 security level
+	CreatedAt      time.Time              `json:"created_at"`
+	LastAccessedAt *time.Time             `json:"last_accessed_at,omitempty"`
+	ExpiresAt      *time.Time             `json:"expires_at,omitempty"`
+	ContentHash    string                 `json:"content_hash"`
+	EncryptionType string                 `json:"encryption_type"`
+	Tags           []string               `json:"tags,omitempty"`
+	ChainAnchorID  string                 `json:"chain_anchor_id,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // AccessEvent represents a memory access event.
 type AccessEvent struct {
-	ID              string                 `json:"id"`
-	Timestamp       time.Time              `json:"timestamp"`
-	MemoryID        string                 `json:"memory_id"`
-	ProfileID       string                 `json:"profile_id"`
-	AccessType      string                 `json:"access_type"` // store, recall, update, delete
-	Classification  int                    `json:"classification"`
-	Authorized      bool                   `json:"authorized"`
-	DenialReason    string                 `json:"denial_reason,omitempty"`
-	SourceIP        string                 `json:"source_ip,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	ID             string                 `json:"id"`
+	Timestamp      time.Time              `json:"timestamp"`
+	MemoryID       string                 `json:"memory_id"`
+	ProfileID      string                 `json:"profile_id"`
+	AccessType     string                 `json:"access_type"` // store, recall, update, delete
+	Classification int                    `json:"classification"`
+	Authorized     bool                   `json:"authorized"`
+	DenialReason   string                 `json:"denial_reason,omitempty"`
+	SourceIP       string                 `json:"source_ip,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // IntegrityEvent represents a chain integrity verification event.
@@ -102,13 +102,13 @@ type LockdownEvent struct {
 
 // SuccessionEvent represents a succession/heir access event.
 type SuccessionEvent struct {
-	ID           string    `json:"id"`
-	Timestamp    time.Time `json:"timestamp"`
-	ProfileID    string    `json:"profile_id"`
-	HeirID       string    `json:"heir_id"`
-	EventType    string    `json:"event_type"` // access_granted, access_denied, key_released
-	Authorized   bool      `json:"authorized"`
-	Reason       string    `json:"reason,omitempty"`
+	ID         string    `json:"id"`
+	Timestamp  time.Time `json:"timestamp"`
+	ProfileID  string    `json:"profile_id"`
+	HeirID     string    `json:"heir_id"`
+	EventType  string    `json:"event_type"` // access_granted, access_denied, key_released
+	Authorized bool      `json:"authorized"`
+	Reason     string    `json:"reason,omitempty"`
 }
 
 // BackupEvent represents a backup/restore event.
@@ -125,23 +125,23 @@ type BackupEvent struct {
 
 // PhysicalTokenEvent represents FIDO2/hardware token events.
 type PhysicalTokenEvent struct {
-	ID          string    `json:"id"`
-	Timestamp   time.Time `json:"timestamp"`
-	ProfileID   string    `json:"profile_id"`
-	TokenType   string    `json:"token_type"` // fido2, yubikey, totp
-	EventType   string    `json:"event_type"` // registered, verified, failed, revoked
-	TokenID     string    `json:"token_id"`
-	Success     bool      `json:"success"`
+	ID        string    `json:"id"`
+	Timestamp time.Time `json:"timestamp"`
+	ProfileID string    `json:"profile_id"`
+	TokenType string    `json:"token_type"` // fido2, yubikey, totp
+	EventType string    `json:"event_type"` // registered, verified, failed, revoked
+	TokenID   string    `json:"token_id"`
+	Success   bool      `json:"success"`
 }
 
 // VaultStats represents statistics about the vault.
 type VaultStats struct {
-	TotalMemories      int64     `json:"total_memories"`
-	TotalProfiles      int       `json:"total_profiles"`
-	HighClassMemories  int64     `json:"high_class_memories"` // Level 4-5
-	ChainIntegrity     bool      `json:"chain_integrity"`
-	LastAccessTime     time.Time `json:"last_access_time"`
-	LockdownActive     bool      `json:"lockdown_active"`
+	TotalMemories     int64     `json:"total_memories"`
+	TotalProfiles     int       `json:"total_profiles"`
+	HighClassMemories int64     `json:"high_class_memories"` // Level 4-5
+	ChainIntegrity    bool      `json:"chain_integrity"`
+	LastAccessTime    time.Time `json:"last_access_time"`
+	LockdownActive    bool      `json:"lockdown_active"`
 }
 
 // HealthStatus represents the health of the Memory Vault service.

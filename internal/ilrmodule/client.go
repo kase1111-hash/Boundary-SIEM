@@ -51,20 +51,20 @@ func NewClient(cfg ClientConfig) *Client {
 
 // Dispute represents an IP dispute in the ILR-Module.
 type Dispute struct {
-	ID              string                 `json:"id"`
-	ChainID         string                 `json:"chain_id"`
-	FiledAt         time.Time              `json:"filed_at"`
-	Claimant        string                 `json:"claimant"`
-	Respondent      string                 `json:"respondent"`
-	Subject         string                 `json:"subject"`
-	DisputeType     string                 `json:"dispute_type"` // licensing, infringement, attribution, royalty
-	Status          string                 `json:"status"`       // open, mediation, arbitration, resolved, dismissed
-	Severity        string                 `json:"severity"`     // low, medium, high, critical
-	StakeAmount     float64                `json:"stake_amount"`
-	EvidenceHashes  []string               `json:"evidence_hashes"`
-	Resolution      *Resolution            `json:"resolution,omitempty"`
-	L3BatchID       string                 `json:"l3_batch_id,omitempty"`
-	Metadata        map[string]interface{} `json:"metadata,omitempty"`
+	ID             string                 `json:"id"`
+	ChainID        string                 `json:"chain_id"`
+	FiledAt        time.Time              `json:"filed_at"`
+	Claimant       string                 `json:"claimant"`
+	Respondent     string                 `json:"respondent"`
+	Subject        string                 `json:"subject"`
+	DisputeType    string                 `json:"dispute_type"` // licensing, infringement, attribution, royalty
+	Status         string                 `json:"status"`       // open, mediation, arbitration, resolved, dismissed
+	Severity       string                 `json:"severity"`     // low, medium, high, critical
+	StakeAmount    float64                `json:"stake_amount"`
+	EvidenceHashes []string               `json:"evidence_hashes"`
+	Resolution     *Resolution            `json:"resolution,omitempty"`
+	L3BatchID      string                 `json:"l3_batch_id,omitempty"`
+	Metadata       map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // Resolution represents a dispute resolution.
@@ -92,14 +92,14 @@ type Proposal struct {
 
 // ComplianceEvent represents a compliance check event.
 type ComplianceEvent struct {
-	ID          string                 `json:"id"`
-	Timestamp   time.Time              `json:"timestamp"`
-	EventType   string                 `json:"event_type"`
-	DisputeID   string                 `json:"dispute_id,omitempty"`
-	Actor       string                 `json:"actor"`
-	Passed      bool                   `json:"passed"`
-	Details     string                 `json:"details"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	ID        string                 `json:"id"`
+	Timestamp time.Time              `json:"timestamp"`
+	EventType string                 `json:"event_type"`
+	DisputeID string                 `json:"dispute_id,omitempty"`
+	Actor     string                 `json:"actor"`
+	Passed    bool                   `json:"passed"`
+	Details   string                 `json:"details"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // L3BatchEvent represents a Layer 3 batch processing event.

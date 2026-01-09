@@ -35,34 +35,34 @@ const (
 type Role string
 
 const (
-	RoleAdmin       Role = "admin"
-	RoleAnalyst     Role = "analyst"
-	RoleViewer      Role = "viewer"
-	RoleCompliance  Role = "compliance"
-	RoleOperator    Role = "operator"
-	RoleAuditor     Role = "auditor"
-	RoleAPIClient   Role = "api_client"
+	RoleAdmin      Role = "admin"
+	RoleAnalyst    Role = "analyst"
+	RoleViewer     Role = "viewer"
+	RoleCompliance Role = "compliance"
+	RoleOperator   Role = "operator"
+	RoleAuditor    Role = "auditor"
+	RoleAPIClient  Role = "api_client"
 )
 
 // Permission defines granular permissions.
 type Permission string
 
 const (
-	PermissionRead          Permission = "read"
-	PermissionWrite         Permission = "write"
-	PermissionDelete        Permission = "delete"
-	PermissionAdmin         Permission = "admin"
-	PermissionViewAlerts    Permission = "view_alerts"
-	PermissionAckAlerts     Permission = "ack_alerts"
-	PermissionManageRules   Permission = "manage_rules"
-	PermissionViewEvents    Permission = "view_events"
-	PermissionExportData    Permission = "export_data"
-	PermissionManageUsers   Permission = "manage_users"
-	PermissionViewReports   Permission = "view_reports"
-	PermissionCreateReports Permission = "create_reports"
-	PermissionManageTenants Permission = "manage_tenants"
-	PermissionViewAuditLog  Permission = "view_audit_log"
-	PermissionManageKeys    Permission = "manage_keys"
+	PermissionRead           Permission = "read"
+	PermissionWrite          Permission = "write"
+	PermissionDelete         Permission = "delete"
+	PermissionAdmin          Permission = "admin"
+	PermissionViewAlerts     Permission = "view_alerts"
+	PermissionAckAlerts      Permission = "ack_alerts"
+	PermissionManageRules    Permission = "manage_rules"
+	PermissionViewEvents     Permission = "view_events"
+	PermissionExportData     Permission = "export_data"
+	PermissionManageUsers    Permission = "manage_users"
+	PermissionViewReports    Permission = "view_reports"
+	PermissionCreateReports  Permission = "create_reports"
+	PermissionManageTenants  Permission = "manage_tenants"
+	PermissionViewAuditLog   Permission = "view_audit_log"
+	PermissionManageKeys     Permission = "manage_keys"
 	PermissionViewCompliance Permission = "view_compliance"
 )
 
@@ -83,55 +83,55 @@ type User struct {
 	LastLoginAt           time.Time         `json:"last_login_at"`
 	Disabled              bool              `json:"disabled"`
 	MFAEnabled            bool              `json:"mfa_enabled"`
-	FailedLogins          int               `json:"-"` // Track failed login attempts
-	LockedUntil           *time.Time        `json:"-"` // Account lockout time
+	FailedLogins          int               `json:"-"`                       // Track failed login attempts
+	LockedUntil           *time.Time        `json:"-"`                       // Account lockout time
 	RequirePasswordChange bool              `json:"require_password_change"` // Force password change on next login
 }
 
 // Tenant represents an organization/tenant for multi-tenancy.
 type Tenant struct {
-	ID          string    `json:"id"`
-	Name        string    `json:"name"`
-	Description string    `json:"description,omitempty"`
-	Domain      string    `json:"domain,omitempty"`
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	Domain      string          `json:"domain,omitempty"`
 	Settings    *TenantSettings `json:"settings"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
-	Disabled    bool      `json:"disabled"`
+	CreatedAt   time.Time       `json:"created_at"`
+	UpdatedAt   time.Time       `json:"updated_at"`
+	Disabled    bool            `json:"disabled"`
 }
 
 // TenantSettings contains tenant-specific settings.
 type TenantSettings struct {
-	MaxUsers            int               `json:"max_users"`
-	MaxEventsPerDay     int64             `json:"max_events_per_day"`
-	RetentionDays       int               `json:"retention_days"`
-	AllowedProviders    []AuthProvider    `json:"allowed_providers"`
-	RequireMFA          bool              `json:"require_mfa"`
-	IPWhitelist         []string          `json:"ip_whitelist,omitempty"`
-	Features            map[string]bool   `json:"features"`
-	CustomBranding      *BrandingSettings `json:"custom_branding,omitempty"`
+	MaxUsers         int               `json:"max_users"`
+	MaxEventsPerDay  int64             `json:"max_events_per_day"`
+	RetentionDays    int               `json:"retention_days"`
+	AllowedProviders []AuthProvider    `json:"allowed_providers"`
+	RequireMFA       bool              `json:"require_mfa"`
+	IPWhitelist      []string          `json:"ip_whitelist,omitempty"`
+	Features         map[string]bool   `json:"features"`
+	CustomBranding   *BrandingSettings `json:"custom_branding,omitempty"`
 }
 
 // BrandingSettings contains custom branding options.
 type BrandingSettings struct {
-	LogoURL       string `json:"logo_url,omitempty"`
-	PrimaryColor  string `json:"primary_color,omitempty"`
-	CompanyName   string `json:"company_name,omitempty"`
+	LogoURL      string `json:"logo_url,omitempty"`
+	PrimaryColor string `json:"primary_color,omitempty"`
+	CompanyName  string `json:"company_name,omitempty"`
 }
 
 // Session represents an authenticated session.
 type Session struct {
-	ID           string    `json:"id"`
-	UserID       string    `json:"user_id"`
-	TenantID     string    `json:"tenant_id"`
-	Token        string    `json:"token"`
-	RefreshToken string    `json:"refresh_token,omitempty"`
+	ID           string       `json:"id"`
+	UserID       string       `json:"user_id"`
+	TenantID     string       `json:"tenant_id"`
+	Token        string       `json:"token"`
+	RefreshToken string       `json:"refresh_token,omitempty"`
 	Provider     AuthProvider `json:"provider"`
-	IPAddress    string    `json:"ip_address"`
-	UserAgent    string    `json:"user_agent"`
-	CreatedAt    time.Time `json:"created_at"`
-	ExpiresAt    time.Time `json:"expires_at"`
-	LastActiveAt time.Time `json:"last_active_at"`
+	IPAddress    string       `json:"ip_address"`
+	UserAgent    string       `json:"user_agent"`
+	CreatedAt    time.Time    `json:"created_at"`
+	ExpiresAt    time.Time    `json:"expires_at"`
+	LastActiveAt time.Time    `json:"last_active_at"`
 }
 
 // AuditLogEntry represents an audit log entry.
@@ -181,14 +181,14 @@ const (
 
 // OAuthConfig holds OAuth provider configuration.
 type OAuthConfig struct {
-	Provider      string   `json:"provider"`
-	ClientID      string   `json:"client_id"`
-	ClientSecret  string   `json:"client_secret"`
-	AuthURL       string   `json:"auth_url"`
-	TokenURL      string   `json:"token_url"`
-	UserInfoURL   string   `json:"userinfo_url"`
-	RedirectURL   string   `json:"redirect_url"`
-	Scopes        []string `json:"scopes"`
+	Provider       string   `json:"provider"`
+	ClientID       string   `json:"client_id"`
+	ClientSecret   string   `json:"client_secret"`
+	AuthURL        string   `json:"auth_url"`
+	TokenURL       string   `json:"token_url"`
+	UserInfoURL    string   `json:"userinfo_url"`
+	RedirectURL    string   `json:"redirect_url"`
+	Scopes         []string `json:"scopes"`
 	AllowedDomains []string `json:"allowed_domains,omitempty"`
 }
 
@@ -219,11 +219,11 @@ type AuthService struct {
 
 // Config holds auth service configuration.
 type Config struct {
-	SessionTTL        time.Duration
-	RefreshTokenTTL   time.Duration
+	SessionTTL         time.Duration
+	RefreshTokenTTL    time.Duration
 	MaxSessionsPerUser int
-	RequireMFA        bool
-	PasswordPolicy    *PasswordPolicy
+	RequireMFA         bool
+	PasswordPolicy     *PasswordPolicy
 }
 
 // PasswordPolicy defines password requirements.
@@ -316,11 +316,11 @@ func (s *AuthService) initDefaultTenant() {
 		Name:        "Default Organization",
 		Description: "Default tenant for single-tenant deployments",
 		Settings: &TenantSettings{
-			MaxUsers:        100,
-			MaxEventsPerDay: 10000000,
-			RetentionDays:   90,
+			MaxUsers:         100,
+			MaxEventsPerDay:  10000000,
+			RetentionDays:    90,
 			AllowedProviders: []AuthProvider{AuthProviderLocal, AuthProviderOAuth, AuthProviderSAML},
-			RequireMFA:      false,
+			RequireMFA:       false,
 			Features: map[string]bool{
 				"blockchain_monitoring": true,
 				"compliance_reports":    true,
@@ -795,13 +795,13 @@ func (e *AuthError) Error() string {
 
 // Common authentication errors
 var (
-	ErrUserNotFound      = &AuthError{Code: "USER_NOT_FOUND", Message: "invalid username or password"}
-	ErrInvalidPassword   = &AuthError{Code: "INVALID_PASSWORD", Message: "invalid username or password"}
-	ErrUserDisabled      = &AuthError{Code: "USER_DISABLED", Message: "user account is disabled"}
-	ErrAccountLocked     = &AuthError{Code: "ACCOUNT_LOCKED", Message: "account is temporarily locked due to too many failed attempts"}
-	ErrTenantMismatch    = &AuthError{Code: "TENANT_MISMATCH", Message: "user not authorized for this tenant"}
-	ErrPasswordRequired  = &AuthError{Code: "PASSWORD_REQUIRED", Message: "password is required"}
-	ErrUsernameRequired  = &AuthError{Code: "USERNAME_REQUIRED", Message: "username is required"}
+	ErrUserNotFound     = &AuthError{Code: "USER_NOT_FOUND", Message: "invalid username or password"}
+	ErrInvalidPassword  = &AuthError{Code: "INVALID_PASSWORD", Message: "invalid username or password"}
+	ErrUserDisabled     = &AuthError{Code: "USER_DISABLED", Message: "user account is disabled"}
+	ErrAccountLocked    = &AuthError{Code: "ACCOUNT_LOCKED", Message: "account is temporarily locked due to too many failed attempts"}
+	ErrTenantMismatch   = &AuthError{Code: "TENANT_MISMATCH", Message: "user not authorized for this tenant"}
+	ErrPasswordRequired = &AuthError{Code: "PASSWORD_REQUIRED", Message: "password is required"}
+	ErrUsernameRequired = &AuthError{Code: "USERNAME_REQUIRED", Message: "username is required"}
 )
 
 const (

@@ -118,13 +118,13 @@ func (n *Normalizer) NormalizeNegotiationEvent(event *NegotiationEvent) (*schema
 			Name: "rra-agent",
 		},
 		Metadata: map[string]any{
-			"rra_event_id":       event.ID,
-			"rra_agent_id":       event.AgentID,
-			"rra_counterparty":   event.CounterpartyID,
-			"rra_event_type":     event.EventType,
-			"rra_offer_amount":   event.OfferAmount,
-			"rra_license_terms":  event.LicenseTerms,
-			"rra_llm_model":      event.LLMModel,
+			"rra_event_id":      event.ID,
+			"rra_agent_id":      event.AgentID,
+			"rra_counterparty":  event.CounterpartyID,
+			"rra_event_type":    event.EventType,
+			"rra_offer_amount":  event.OfferAmount,
+			"rra_license_terms": event.LicenseTerms,
+			"rra_llm_model":     event.LLMModel,
 		},
 	}, nil
 }

@@ -22,9 +22,9 @@ func DetectionRules() []correlation.Rule {
 				},
 			},
 			Threshold: &correlation.ThresholdConfig{
-				Count:    1,
-				Window:   300, // 5 minutes
-				GroupBy:  []string{"metadata.nlc_entry_id"},
+				Count:   1,
+				Window:  300, // 5 minutes
+				GroupBy: []string{"metadata.nlc_entry_id"},
 			},
 			Actions: []correlation.Action{
 				{Type: "alert", Config: map[string]any{"priority": "critical"}},

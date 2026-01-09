@@ -25,13 +25,13 @@ import (
 
 // Common errors.
 var (
-	ErrLoggerClosed       = errors.New("audit logger is closed")
-	ErrTamperDetected     = errors.New("audit log tampering detected")
-	ErrChainBroken        = errors.New("audit chain integrity broken")
-	ErrSequenceGap        = errors.New("sequence gap detected in audit log")
-	ErrInvalidSignature   = errors.New("invalid audit entry signature")
-	ErrTimestampAnomaly   = errors.New("timestamp anomaly detected")
-	ErrChecksumMismatch   = errors.New("file checksum mismatch")
+	ErrLoggerClosed     = errors.New("audit logger is closed")
+	ErrTamperDetected   = errors.New("audit log tampering detected")
+	ErrChainBroken      = errors.New("audit chain integrity broken")
+	ErrSequenceGap      = errors.New("sequence gap detected in audit log")
+	ErrInvalidSignature = errors.New("invalid audit entry signature")
+	ErrTimestampAnomaly = errors.New("timestamp anomaly detected")
+	ErrChecksumMismatch = errors.New("file checksum mismatch")
 )
 
 // EventType represents the type of audit event.
@@ -76,10 +76,10 @@ const (
 	EventWatchdogAlert  EventType = "system.watchdog.alert"
 
 	// Audit events
-	EventAuditRotate   EventType = "audit.rotate"
-	EventAuditVerify   EventType = "audit.verify"
-	EventAuditTamper   EventType = "audit.tamper.detected"
-	EventAuditExport   EventType = "audit.export"
+	EventAuditRotate EventType = "audit.rotate"
+	EventAuditVerify EventType = "audit.verify"
+	EventAuditTamper EventType = "audit.tamper.detected"
+	EventAuditExport EventType = "audit.export"
 )
 
 // Severity represents the severity level of an audit event.
@@ -241,7 +241,7 @@ func DefaultAuditLoggerConfig() *AuditLoggerConfig {
 	return &AuditLoggerConfig{
 		LogPath:        "/var/log/boundary-siem/audit",
 		MaxFileSize:    100 * 1024 * 1024, // 100MB
-		MaxFiles:       90,                 // 90 days
+		MaxFiles:       90,                // 90 days
 		FlushInterval:  1 * time.Second,
 		VerifyInterval: 5 * time.Minute,
 		BufferSize:     1000,
@@ -555,7 +555,6 @@ type AuditEvent struct {
 	Success    bool
 	Error      string
 }
-
 
 // generateEntryID generates a unique entry ID.
 func generateEntryID() string {

@@ -51,54 +51,54 @@ func NewClient(cfg ClientConfig) *Client {
 
 // GameSession represents an active game session.
 type GameSession struct {
-	ID            string                 `json:"id"`
-	PlayerID      string                 `json:"player_id"`
-	StartedAt     time.Time              `json:"started_at"`
-	EndedAt       *time.Time             `json:"ended_at,omitempty"`
-	GameState     string                 `json:"game_state"` // menu, planning, descent, resolution, credits
-	MountainID    string                 `json:"mountain_id"`
-	Difficulty    string                 `json:"difficulty"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	PlayerID   string                 `json:"player_id"`
+	StartedAt  time.Time              `json:"started_at"`
+	EndedAt    *time.Time             `json:"ended_at,omitempty"`
+	GameState  string                 `json:"game_state"` // menu, planning, descent, resolution, credits
+	MountainID string                 `json:"mountain_id"`
+	Difficulty string                 `json:"difficulty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // StateTransition represents a game or player state change.
 type StateTransition struct {
-	ID           string                 `json:"id"`
-	SessionID    string                 `json:"session_id"`
-	PlayerID     string                 `json:"player_id"`
-	Timestamp    time.Time              `json:"timestamp"`
-	StateType    string                 `json:"state_type"` // game_state, movement_state, slide_state
-	FromState    string                 `json:"from_state"`
-	ToState      string                 `json:"to_state"`
-	Trigger      string                 `json:"trigger,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ID        string                 `json:"id"`
+	SessionID string                 `json:"session_id"`
+	PlayerID  string                 `json:"player_id"`
+	Timestamp time.Time              `json:"timestamp"`
+	StateType string                 `json:"state_type"` // game_state, movement_state, slide_state
+	FromState string                 `json:"from_state"`
+	ToState   string                 `json:"to_state"`
+	Trigger   string                 `json:"trigger,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // FatalEvent represents a death/fatal event sequence.
 type FatalEvent struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	Phase         string                 `json:"phase"` // trigger, descent, impact, fade, aftermath
-	Cause         string                 `json:"cause"` // fall, hypothermia, exhaustion, slide_uncontrolled
-	Altitude      float64                `json:"altitude"`
-	Duration      float64                `json:"duration_seconds"`
-	ReplayData    string                 `json:"replay_data,omitempty"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	SessionID  string                 `json:"session_id"`
+	PlayerID   string                 `json:"player_id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	Phase      string                 `json:"phase"` // trigger, descent, impact, fade, aftermath
+	Cause      string                 `json:"cause"` // fall, hypothermia, exhaustion, slide_uncontrolled
+	Altitude   float64                `json:"altitude"`
+	Duration   float64                `json:"duration_seconds"`
+	ReplayData string                 `json:"replay_data,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // SlideEvent represents sliding mechanic events.
 type SlideEvent struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	EventType     string                 `json:"event_type"` // slide_start, control_change, slide_end, control_lost
-	ControlLevel  string                 `json:"control_level"` // controlled, slipping, sliding, tumbling, lost
-	Velocity      float64                `json:"velocity"`
-	TerrainType   string                 `json:"terrain_type"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID           string                 `json:"id"`
+	SessionID    string                 `json:"session_id"`
+	PlayerID     string                 `json:"player_id"`
+	Timestamp    time.Time              `json:"timestamp"`
+	EventType    string                 `json:"event_type"`    // slide_start, control_change, slide_end, control_lost
+	ControlLevel string                 `json:"control_level"` // controlled, slipping, sliding, tumbling, lost
+	Velocity     float64                `json:"velocity"`
+	TerrainType  string                 `json:"terrain_type"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // RopeEvent represents rope system events.
@@ -116,81 +116,81 @@ type RopeEvent struct {
 
 // BodyCondition represents player body state tracking.
 type BodyCondition struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	Fatigue       float64                `json:"fatigue"`
-	ColdExposure  float64                `json:"cold_exposure"`
-	Injuries      []string               `json:"injuries,omitempty"`
-	Hydration     float64                `json:"hydration"`
-	Altitude      float64                `json:"altitude"`
-	HeartRate     int                    `json:"heart_rate"`
-	Critical      bool                   `json:"critical"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID           string                 `json:"id"`
+	SessionID    string                 `json:"session_id"`
+	PlayerID     string                 `json:"player_id"`
+	Timestamp    time.Time              `json:"timestamp"`
+	Fatigue      float64                `json:"fatigue"`
+	ColdExposure float64                `json:"cold_exposure"`
+	Injuries     []string               `json:"injuries,omitempty"`
+	Hydration    float64                `json:"hydration"`
+	Altitude     float64                `json:"altitude"`
+	HeartRate    int                    `json:"heart_rate"`
+	Critical     bool                   `json:"critical"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // InputValidation represents player input validation events.
 type InputValidation struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	ActionType    string                 `json:"action_type"` // slide, rappel, climb, jump
-	InputValid    bool                   `json:"input_valid"`
-	RiskLevel     string                 `json:"risk_level"` // low, medium, high, critical
-	Anomalies     []string               `json:"anomalies,omitempty"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	SessionID  string                 `json:"session_id"`
+	PlayerID   string                 `json:"player_id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	ActionType string                 `json:"action_type"` // slide, rappel, climb, jump
+	InputValid bool                   `json:"input_valid"`
+	RiskLevel  string                 `json:"risk_level"` // low, medium, high, critical
+	Anomalies  []string               `json:"anomalies,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // SaveEvent represents save/load operations.
 type SaveEvent struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	EventType     string                 `json:"event_type"` // save, load, checkpoint, auto_save
-	DataHash      string                 `json:"data_hash"`
-	DataSize      int64                  `json:"data_size"`
-	Valid         bool                   `json:"valid"`
-	Modified      bool                   `json:"modified"` // Save file was modified externally
-	ErrorMessage  string                 `json:"error_message,omitempty"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID           string                 `json:"id"`
+	SessionID    string                 `json:"session_id"`
+	PlayerID     string                 `json:"player_id"`
+	Timestamp    time.Time              `json:"timestamp"`
+	EventType    string                 `json:"event_type"` // save, load, checkpoint, auto_save
+	DataHash     string                 `json:"data_hash"`
+	DataSize     int64                  `json:"data_size"`
+	Valid        bool                   `json:"valid"`
+	Modified     bool                   `json:"modified"` // Save file was modified externally
+	ErrorMessage string                 `json:"error_message,omitempty"`
+	Metadata     map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // PhysicsAnomaly represents physics system anomalies.
 type PhysicsAnomaly struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	PlayerID      string                 `json:"player_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	AnomalyType   string                 `json:"anomaly_type"` // velocity_violation, terrain_clip, impossible_position
-	Expected      float64                `json:"expected_value"`
-	Actual        float64                `json:"actual_value"`
-	Severity      string                 `json:"severity"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID          string                 `json:"id"`
+	SessionID   string                 `json:"session_id"`
+	PlayerID    string                 `json:"player_id"`
+	Timestamp   time.Time              `json:"timestamp"`
+	AnomalyType string                 `json:"anomaly_type"` // velocity_violation, terrain_clip, impossible_position
+	Expected    float64                `json:"expected_value"`
+	Actual      float64                `json:"actual_value"`
+	Severity    string                 `json:"severity"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // EventBusSignal represents sampled event bus signals.
 type EventBusSignal struct {
-	ID            string                 `json:"id"`
-	SessionID     string                 `json:"session_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	SignalName    string                 `json:"signal_name"`
-	EmitterType   string                 `json:"emitter_type"`
-	Parameters    map[string]interface{} `json:"parameters,omitempty"`
-	Unusual       bool                   `json:"unusual"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID          string                 `json:"id"`
+	SessionID   string                 `json:"session_id"`
+	Timestamp   time.Time              `json:"timestamp"`
+	SignalName  string                 `json:"signal_name"`
+	EmitterType string                 `json:"emitter_type"`
+	Parameters  map[string]interface{} `json:"parameters,omitempty"`
+	Unusual     bool                   `json:"unusual"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // HealthStatus represents the health of the telemetry service.
 type HealthStatus struct {
-	Status          string    `json:"status"`
-	Ready           bool      `json:"ready"`
-	Live            bool      `json:"live"`
-	Version         string    `json:"version"`
-	ActiveSessions  int       `json:"active_sessions"`
-	Timestamp       time.Time `json:"timestamp"`
+	Status         string    `json:"status"`
+	Ready          bool      `json:"ready"`
+	Live           bool      `json:"live"`
+	Version        string    `json:"version"`
+	ActiveSessions int       `json:"active_sessions"`
+	Timestamp      time.Time `json:"timestamp"`
 }
 
 // GetHealth checks the health of the telemetry service.

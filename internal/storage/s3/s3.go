@@ -468,10 +468,10 @@ func (c *Client) Exists(ctx context.Context, key string) (bool, error) {
 
 // CopyInput contains parameters for copying an object.
 type CopyInput struct {
-	SourceKey      string
-	DestKey        string
-	StorageClass   string
-	DeleteSource   bool
+	SourceKey    string
+	DestKey      string
+	StorageClass string
+	DeleteSource bool
 }
 
 // Copy copies an object within S3.
@@ -513,9 +513,9 @@ func (c *Client) Copy(ctx context.Context, input *CopyInput) error {
 
 // RestoreInput contains parameters for restoring an archived object.
 type RestoreInput struct {
-	Key           string
-	Days          int    // Number of days to keep restored copy
-	Tier          string // Standard, Bulk, Expedited
+	Key  string
+	Days int    // Number of days to keep restored copy
+	Tier string // Standard, Bulk, Expedited
 }
 
 // Restore initiates restoration of an archived object.
@@ -576,10 +576,10 @@ func (c *Client) GetMetrics() Metrics {
 
 // HealthStatus represents the health of the S3 client.
 type HealthStatus struct {
-	Healthy       bool          `json:"healthy"`
-	BucketExists  bool          `json:"bucket_exists"`
-	Latency       time.Duration `json:"latency"`
-	Error         string        `json:"error,omitempty"`
+	Healthy      bool          `json:"healthy"`
+	BucketExists bool          `json:"bucket_exists"`
+	Latency      time.Duration `json:"latency"`
+	Error        string        `json:"error,omitempty"`
 }
 
 // HealthCheck verifies connectivity to S3.

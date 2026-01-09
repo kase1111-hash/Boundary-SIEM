@@ -34,13 +34,13 @@ type IngesterConfig struct {
 	BatchSize    int           `yaml:"batch_size"`
 
 	// Feature toggles - log all important info by default
-	IngestIntents     bool `yaml:"ingest_intents"`
-	IngestTriggers    bool `yaml:"ingest_triggers"`
-	IngestExecutions  bool `yaml:"ingest_executions"`
-	IngestIPTokens    bool `yaml:"ingest_ip_tokens"`
-	IngestSunset      bool `yaml:"ingest_sunset"`
-	IngestOracles     bool `yaml:"ingest_oracles"`
-	IngestSecurity    bool `yaml:"ingest_security"`
+	IngestIntents    bool `yaml:"ingest_intents"`
+	IngestTriggers   bool `yaml:"ingest_triggers"`
+	IngestExecutions bool `yaml:"ingest_executions"`
+	IngestIPTokens   bool `yaml:"ingest_ip_tokens"`
+	IngestSunset     bool `yaml:"ingest_sunset"`
+	IngestOracles    bool `yaml:"ingest_oracles"`
+	IngestSecurity   bool `yaml:"ingest_security"`
 
 	// Filtering
 	MinSecuritySeverity string `yaml:"min_security_severity"`

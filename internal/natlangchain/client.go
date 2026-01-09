@@ -23,12 +23,12 @@ type Client struct {
 
 // ClientConfig holds configuration for the NatLangChain client.
 type ClientConfig struct {
-	BaseURL        string        `yaml:"base_url"`
-	APIKey         string        `yaml:"api_key"`
-	ChainID        string        `yaml:"chain_id"`
-	Timeout        time.Duration `yaml:"timeout"`
-	MaxRetries     int           `yaml:"max_retries"`
-	RetryBackoff   time.Duration `yaml:"retry_backoff"`
+	BaseURL      string        `yaml:"base_url"`
+	APIKey       string        `yaml:"api_key"`
+	ChainID      string        `yaml:"chain_id"`
+	Timeout      time.Duration `yaml:"timeout"`
+	MaxRetries   int           `yaml:"max_retries"`
+	RetryBackoff time.Duration `yaml:"retry_backoff"`
 }
 
 // DefaultClientConfig returns the default client configuration.
@@ -87,17 +87,17 @@ type Block struct {
 
 // Dispute represents a dispute filed in NatLangChain.
 type Dispute struct {
-	ID             string                 `json:"id"`
-	EntryID        string                 `json:"entry_id"`
-	FiledBy        string                 `json:"filed_by"`
-	FiledAt        time.Time              `json:"filed_at"`
-	Reason         string                 `json:"reason"`
-	Status         string                 `json:"status"` // open, resolved, escalated, dismissed
-	Evidence       []string               `json:"evidence,omitempty"`
-	Resolution     string                 `json:"resolution,omitempty"`
-	ResolvedAt     *time.Time             `json:"resolved_at,omitempty"`
-	ResolvedBy     string                 `json:"resolved_by,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	EntryID    string                 `json:"entry_id"`
+	FiledBy    string                 `json:"filed_by"`
+	FiledAt    time.Time              `json:"filed_at"`
+	Reason     string                 `json:"reason"`
+	Status     string                 `json:"status"` // open, resolved, escalated, dismissed
+	Evidence   []string               `json:"evidence,omitempty"`
+	Resolution string                 `json:"resolution,omitempty"`
+	ResolvedAt *time.Time             `json:"resolved_at,omitempty"`
+	ResolvedBy string                 `json:"resolved_by,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // Contract represents a smart contract in NatLangChain.
@@ -164,10 +164,10 @@ type ChainStats struct {
 
 // HealthStatus represents the health of the NatLangChain node.
 type HealthStatus struct {
-	Status    string `json:"status"`
-	Ready     bool   `json:"ready"`
-	Live      bool   `json:"live"`
-	Version   string `json:"version"`
+	Status    string    `json:"status"`
+	Ready     bool      `json:"ready"`
+	Live      bool      `json:"live"`
+	Version   string    `json:"version"`
 	Timestamp time.Time `json:"timestamp"`
 }
 

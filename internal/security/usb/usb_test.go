@@ -196,8 +196,8 @@ func createMockSysfs(t *testing.T) string {
 		t.Fatalf("failed to create hub dir: %v", err)
 	}
 
-	writeFile(t, hub, "idVendor", "1d6b")  // Linux Foundation
-	writeFile(t, hub, "idProduct", "0002") // Root Hub
+	writeFile(t, hub, "idVendor", "1d6b")   // Linux Foundation
+	writeFile(t, hub, "idProduct", "0002")  // Root Hub
 	writeFile(t, hub, "bDeviceClass", "09") // Hub
 	writeFile(t, hub, "busnum", "1")
 	writeFile(t, hub, "devnum", "1")
@@ -211,8 +211,8 @@ func createMockSysfs(t *testing.T) string {
 		t.Fatalf("failed to create storage dir: %v", err)
 	}
 
-	writeFile(t, storage, "idVendor", "0781")  // SanDisk
-	writeFile(t, storage, "idProduct", "5567") // USB Flash Drive
+	writeFile(t, storage, "idVendor", "0781")   // SanDisk
+	writeFile(t, storage, "idProduct", "5567")  // USB Flash Drive
 	writeFile(t, storage, "bDeviceClass", "08") // Mass Storage
 	writeFile(t, storage, "busnum", "2")
 	writeFile(t, storage, "devnum", "1")

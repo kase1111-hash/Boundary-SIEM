@@ -41,10 +41,10 @@ type Metric struct {
 
 // Threshold defines an alerting threshold.
 type Threshold struct {
-	Metric   string  `json:"metric"`
-	Operator string  `json:"operator"` // gt, gte, lt, lte, eq
-	Value    float64 `json:"value"`
-	Severity string  `json:"severity"`
+	Metric   string        `json:"metric"`
+	Operator string        `json:"operator"` // gt, gte, lt, lte, eq
+	Value    float64       `json:"value"`
+	Severity string        `json:"severity"`
 	Duration time.Duration `json:"duration"` // How long threshold must be exceeded
 }
 
@@ -235,9 +235,9 @@ func (c *Collector) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"metric_types":       len(c.metrics),
-		"total_data_points":  totalMetrics,
-		"active_breaches":    len(c.thresholdBreaches),
+		"metric_types":          len(c.metrics),
+		"total_data_points":     totalMetrics,
+		"active_breaches":       len(c.thresholdBreaches),
 		"configured_thresholds": len(c.config.Thresholds),
 	}
 }

@@ -72,14 +72,14 @@ func (c Capability) String() string {
 
 // PrivilegeState captures the current privilege state of the process.
 type PrivilegeState struct {
-	UID         int           `json:"uid"`
-	GID         int           `json:"gid"`
-	EUID        int           `json:"euid"`
-	EGID        int           `json:"egid"`
-	Groups      []int         `json:"groups"`
+	UID          int          `json:"uid"`
+	GID          int          `json:"gid"`
+	EUID         int          `json:"euid"`
+	EGID         int          `json:"egid"`
+	Groups       []int        `json:"groups"`
 	Capabilities []Capability `json:"capabilities"`
-	CapturedAt  time.Time     `json:"captured_at"`
-	NoNewPrivs  bool          `json:"no_new_privs"`
+	CapturedAt   time.Time    `json:"captured_at"`
+	NoNewPrivs   bool         `json:"no_new_privs"`
 }
 
 // String returns a string representation of the privilege state.
@@ -109,12 +109,12 @@ func (ps *PrivilegeState) HasCapability(cap Capability) bool {
 
 // Requirement defines a privilege requirement for an operation.
 type Requirement struct {
-	Name            string       `json:"name"`
-	RequireRoot     bool         `json:"require_root"`
-	RequiredCaps    []Capability `json:"required_caps"`
-	AllowedUIDs     []int        `json:"allowed_uids,omitempty"`
-	AllowedGIDs     []int        `json:"allowed_gids,omitempty"`
-	RequireNoNewPrivs bool       `json:"require_no_new_privs"`
+	Name              string       `json:"name"`
+	RequireRoot       bool         `json:"require_root"`
+	RequiredCaps      []Capability `json:"required_caps"`
+	AllowedUIDs       []int        `json:"allowed_uids,omitempty"`
+	AllowedGIDs       []int        `json:"allowed_gids,omitempty"`
+	RequireNoNewPrivs bool         `json:"require_no_new_privs"`
 }
 
 // Verifier handles privilege verification before operations.
@@ -167,14 +167,14 @@ func DefaultVerifierConfig() *VerifierConfig {
 
 // VerificationResult records the outcome of a verification.
 type VerificationResult struct {
-	Operation    string        `json:"operation"`
-	Timestamp    time.Time     `json:"timestamp"`
-	Success      bool          `json:"success"`
-	State        *PrivilegeState `json:"state"`
-	Required     *Requirement  `json:"required,omitempty"`
-	Error        string        `json:"error,omitempty"`
-	CallerFile   string        `json:"caller_file,omitempty"`
-	CallerLine   int           `json:"caller_line,omitempty"`
+	Operation  string          `json:"operation"`
+	Timestamp  time.Time       `json:"timestamp"`
+	Success    bool            `json:"success"`
+	State      *PrivilegeState `json:"state"`
+	Required   *Requirement    `json:"required,omitempty"`
+	Error      string          `json:"error,omitempty"`
+	CallerFile string          `json:"caller_file,omitempty"`
+	CallerLine int             `json:"caller_line,omitempty"`
 }
 
 // NewVerifier creates a new privilege verifier.

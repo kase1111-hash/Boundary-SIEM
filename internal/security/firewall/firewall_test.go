@@ -336,11 +336,11 @@ func TestManager_BlockIP_InvalidIP(t *testing.T) {
 
 func TestIPValidation(t *testing.T) {
 	tests := []struct {
-		name     string
-		ip       string
-		isValid  bool
-		isIPv4   bool
-		isIPv6   bool
+		name       string
+		ip         string
+		isValid    bool
+		isIPv4     bool
+		isIPv6     bool
 		isLoopback bool
 	}{
 		{"valid IPv4", "192.168.1.1", true, true, false, false},

@@ -17,20 +17,20 @@ type SecurityHeadersConfig struct {
 
 	// HSTS (HTTP Strict Transport Security)
 	HSTSEnabled           bool
-	HSTSMaxAge            int    // Max age in seconds (default: 31536000 = 1 year)
-	HSTSIncludeSubdomains bool   // Include subdomains
-	HSTSPreload           bool   // Allow preload
+	HSTSMaxAge            int  // Max age in seconds (default: 31536000 = 1 year)
+	HSTSIncludeSubdomains bool // Include subdomains
+	HSTSPreload           bool // Allow preload
 
 	// CSP (Content Security Policy)
-	CSPEnabled       bool
-	CSPDefaultSrc    []string // default-src directive
-	CSPScriptSrc     []string // script-src directive
-	CSPStyleSrc      []string // style-src directive
-	CSPImgSrc        []string // img-src directive
-	CSPFontSrc       []string // font-src directive
-	CSPConnectSrc    []string // connect-src directive
+	CSPEnabled        bool
+	CSPDefaultSrc     []string // default-src directive
+	CSPScriptSrc      []string // script-src directive
+	CSPStyleSrc       []string // style-src directive
+	CSPImgSrc         []string // img-src directive
+	CSPFontSrc        []string // font-src directive
+	CSPConnectSrc     []string // connect-src directive
 	CSPFrameAncestors []string // frame-ancestors directive
-	CSPReportOnly    bool     // Report-only mode (doesn't enforce)
+	CSPReportOnly     bool     // Report-only mode (doesn't enforce)
 
 	// Frame Options
 	FrameOptionsEnabled bool
@@ -251,36 +251,36 @@ func NewSecurityHeadersMiddleware(cfg *config.Config, logger *slog.Logger) func(
 
 	// Convert config.SecurityHeadersConfig to middleware.SecurityHeadersConfig
 	middlewareCfg := SecurityHeadersConfig{
-		Enabled:                   cfg.SecurityHeaders.Enabled,
-		HSTSEnabled:               cfg.SecurityHeaders.HSTSEnabled,
-		HSTSMaxAge:                cfg.SecurityHeaders.HSTSMaxAge,
-		HSTSIncludeSubdomains:     cfg.SecurityHeaders.HSTSIncludeSubdomains,
-		HSTSPreload:               cfg.SecurityHeaders.HSTSPreload,
-		CSPEnabled:                cfg.SecurityHeaders.CSPEnabled,
-		CSPDefaultSrc:             cfg.SecurityHeaders.CSPDefaultSrc,
-		CSPScriptSrc:              cfg.SecurityHeaders.CSPScriptSrc,
-		CSPStyleSrc:               cfg.SecurityHeaders.CSPStyleSrc,
-		CSPImgSrc:                 cfg.SecurityHeaders.CSPImgSrc,
-		CSPFontSrc:                cfg.SecurityHeaders.CSPFontSrc,
-		CSPConnectSrc:             cfg.SecurityHeaders.CSPConnectSrc,
-		CSPFrameAncestors:         cfg.SecurityHeaders.CSPFrameAncestors,
-		CSPReportOnly:             cfg.SecurityHeaders.CSPReportOnly,
-		FrameOptionsEnabled:       cfg.SecurityHeaders.FrameOptionsEnabled,
-		FrameOptionsValue:         cfg.SecurityHeaders.FrameOptionsValue,
-		ContentTypeOptionsEnabled: cfg.SecurityHeaders.ContentTypeOptionsEnabled,
-		XSSProtectionEnabled:      cfg.SecurityHeaders.XSSProtectionEnabled,
-		XSSProtectionValue:        cfg.SecurityHeaders.XSSProtectionValue,
-		ReferrerPolicyEnabled:     cfg.SecurityHeaders.ReferrerPolicyEnabled,
-		ReferrerPolicyValue:       cfg.SecurityHeaders.ReferrerPolicyValue,
-		PermissionsPolicyEnabled:  cfg.SecurityHeaders.PermissionsPolicyEnabled,
-		PermissionsPolicyValue:    cfg.SecurityHeaders.PermissionsPolicyValue,
+		Enabled:                          cfg.SecurityHeaders.Enabled,
+		HSTSEnabled:                      cfg.SecurityHeaders.HSTSEnabled,
+		HSTSMaxAge:                       cfg.SecurityHeaders.HSTSMaxAge,
+		HSTSIncludeSubdomains:            cfg.SecurityHeaders.HSTSIncludeSubdomains,
+		HSTSPreload:                      cfg.SecurityHeaders.HSTSPreload,
+		CSPEnabled:                       cfg.SecurityHeaders.CSPEnabled,
+		CSPDefaultSrc:                    cfg.SecurityHeaders.CSPDefaultSrc,
+		CSPScriptSrc:                     cfg.SecurityHeaders.CSPScriptSrc,
+		CSPStyleSrc:                      cfg.SecurityHeaders.CSPStyleSrc,
+		CSPImgSrc:                        cfg.SecurityHeaders.CSPImgSrc,
+		CSPFontSrc:                       cfg.SecurityHeaders.CSPFontSrc,
+		CSPConnectSrc:                    cfg.SecurityHeaders.CSPConnectSrc,
+		CSPFrameAncestors:                cfg.SecurityHeaders.CSPFrameAncestors,
+		CSPReportOnly:                    cfg.SecurityHeaders.CSPReportOnly,
+		FrameOptionsEnabled:              cfg.SecurityHeaders.FrameOptionsEnabled,
+		FrameOptionsValue:                cfg.SecurityHeaders.FrameOptionsValue,
+		ContentTypeOptionsEnabled:        cfg.SecurityHeaders.ContentTypeOptionsEnabled,
+		XSSProtectionEnabled:             cfg.SecurityHeaders.XSSProtectionEnabled,
+		XSSProtectionValue:               cfg.SecurityHeaders.XSSProtectionValue,
+		ReferrerPolicyEnabled:            cfg.SecurityHeaders.ReferrerPolicyEnabled,
+		ReferrerPolicyValue:              cfg.SecurityHeaders.ReferrerPolicyValue,
+		PermissionsPolicyEnabled:         cfg.SecurityHeaders.PermissionsPolicyEnabled,
+		PermissionsPolicyValue:           cfg.SecurityHeaders.PermissionsPolicyValue,
 		CrossOriginOpenerPolicyEnabled:   cfg.SecurityHeaders.CrossOriginOpenerPolicyEnabled,
 		CrossOriginOpenerPolicyValue:     cfg.SecurityHeaders.CrossOriginOpenerPolicyValue,
 		CrossOriginEmbedderPolicyEnabled: cfg.SecurityHeaders.CrossOriginEmbedderPolicyEnabled,
 		CrossOriginEmbedderPolicyValue:   cfg.SecurityHeaders.CrossOriginEmbedderPolicyValue,
 		CrossOriginResourcePolicyEnabled: cfg.SecurityHeaders.CrossOriginResourcePolicyEnabled,
 		CrossOriginResourcePolicyValue:   cfg.SecurityHeaders.CrossOriginResourcePolicyValue,
-		CustomHeaders:                     cfg.SecurityHeaders.CustomHeaders,
+		CustomHeaders:                    cfg.SecurityHeaders.CustomHeaders,
 	}
 
 	return SecurityHeadersMiddleware(middlewareCfg, logger)

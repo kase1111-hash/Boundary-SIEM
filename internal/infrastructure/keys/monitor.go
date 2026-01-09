@@ -31,39 +31,39 @@ const (
 type OperationType string
 
 const (
-	OpSign           OperationType = "sign"
-	OpVerify         OperationType = "verify"
-	OpEncrypt        OperationType = "encrypt"
-	OpDecrypt        OperationType = "decrypt"
-	OpGenerate       OperationType = "generate"
-	OpImport         OperationType = "import"
-	OpExport         OperationType = "export"
-	OpRotate         OperationType = "rotate"
-	OpRevoke         OperationType = "revoke"
-	OpAccess         OperationType = "access"
+	OpSign     OperationType = "sign"
+	OpVerify   OperationType = "verify"
+	OpEncrypt  OperationType = "encrypt"
+	OpDecrypt  OperationType = "decrypt"
+	OpGenerate OperationType = "generate"
+	OpImport   OperationType = "import"
+	OpExport   OperationType = "export"
+	OpRotate   OperationType = "rotate"
+	OpRevoke   OperationType = "revoke"
+	OpAccess   OperationType = "access"
 )
 
 // KeyOperation represents a cryptographic key operation.
 type KeyOperation struct {
-	ID          string                 `json:"id"`
-	Timestamp   time.Time              `json:"timestamp"`
-	KeyID       string                 `json:"key_id"`
-	KeyType     KeyType                `json:"key_type"`
-	Operation   OperationType          `json:"operation"`
-	Source      string                 `json:"source"` // HSM, Vault, Software
-	Actor       string                 `json:"actor"`
-	SourceIP    string                 `json:"source_ip,omitempty"`
-	Success     bool                   `json:"success"`
-	ErrorCode   string                 `json:"error_code,omitempty"`
-	DataSize    int64                  `json:"data_size,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	ID        string                 `json:"id"`
+	Timestamp time.Time              `json:"timestamp"`
+	KeyID     string                 `json:"key_id"`
+	KeyType   KeyType                `json:"key_type"`
+	Operation OperationType          `json:"operation"`
+	Source    string                 `json:"source"` // HSM, Vault, Software
+	Actor     string                 `json:"actor"`
+	SourceIP  string                 `json:"source_ip,omitempty"`
+	Success   bool                   `json:"success"`
+	ErrorCode string                 `json:"error_code,omitempty"`
+	DataSize  int64                  `json:"data_size,omitempty"`
+	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // VaultAuditLog represents a HashiCorp Vault audit log entry.
 type VaultAuditLog struct {
-	Time      time.Time `json:"time"`
-	Type      string    `json:"type"`
-	Auth      struct {
+	Time time.Time `json:"time"`
+	Type string    `json:"type"`
+	Auth struct {
 		ClientToken   string            `json:"client_token"`
 		Accessor      string            `json:"accessor"`
 		DisplayName   string            `json:"display_name"`
@@ -73,13 +73,13 @@ type VaultAuditLog struct {
 		EntityID      string            `json:"entity_id"`
 	} `json:"auth"`
 	Request struct {
-		ID           string                 `json:"id"`
-		Operation    string                 `json:"operation"`
-		ClientToken  string                 `json:"client_token"`
-		Path         string                 `json:"path"`
-		Data         map[string]interface{} `json:"data"`
-		RemoteAddr   string                 `json:"remote_address"`
-		WrapTTL      int                    `json:"wrap_ttl"`
+		ID          string                 `json:"id"`
+		Operation   string                 `json:"operation"`
+		ClientToken string                 `json:"client_token"`
+		Path        string                 `json:"path"`
+		Data        map[string]interface{} `json:"data"`
+		RemoteAddr  string                 `json:"remote_address"`
+		WrapTTL     int                    `json:"wrap_ttl"`
 	} `json:"request"`
 	Response struct {
 		Data map[string]interface{} `json:"data"`
@@ -89,15 +89,15 @@ type VaultAuditLog struct {
 
 // HSMLog represents an HSM audit log entry.
 type HSMLog struct {
-	Timestamp   time.Time `json:"timestamp"`
-	SessionID   string    `json:"session_id"`
-	UserID      string    `json:"user_id"`
-	Operation   string    `json:"operation"`
-	KeyHandle   string    `json:"key_handle"`
-	KeyLabel    string    `json:"key_label"`
-	Mechanism   string    `json:"mechanism"`
-	Result      int       `json:"result"`
-	SourceIP    string    `json:"source_ip"`
+	Timestamp time.Time `json:"timestamp"`
+	SessionID string    `json:"session_id"`
+	UserID    string    `json:"user_id"`
+	Operation string    `json:"operation"`
+	KeyHandle string    `json:"key_handle"`
+	KeyLabel  string    `json:"key_label"`
+	Mechanism string    `json:"mechanism"`
+	Result    int       `json:"result"`
+	SourceIP  string    `json:"source_ip"`
 }
 
 // Alert represents a key management alert.
@@ -119,21 +119,21 @@ type AlertHandler func(context.Context, *Alert) error
 
 // SigningPattern represents detected signing patterns.
 type SigningPattern struct {
-	KeyID           string        `json:"key_id"`
-	AverageRate     float64       `json:"average_rate"` // signings per minute
-	PeakRate        float64       `json:"peak_rate"`
-	TotalSignings   int64         `json:"total_signings"`
-	LastSigning     time.Time     `json:"last_signing"`
-	UniqueActors    int           `json:"unique_actors"`
-	TypicalTimeSlot string        `json:"typical_time_slot"` // "business_hours", "24x7", etc.
-	Anomalies       int           `json:"anomalies"`
+	KeyID           string    `json:"key_id"`
+	AverageRate     float64   `json:"average_rate"` // signings per minute
+	PeakRate        float64   `json:"peak_rate"`
+	TotalSignings   int64     `json:"total_signings"`
+	LastSigning     time.Time `json:"last_signing"`
+	UniqueActors    int       `json:"unique_actors"`
+	TypicalTimeSlot string    `json:"typical_time_slot"` // "business_hours", "24x7", etc.
+	Anomalies       int       `json:"anomalies"`
 }
 
 // MonitorConfig configures the key management monitor.
 type MonitorConfig struct {
 	EnablePatternAnalysis  bool
 	EnableAnomalyDetection bool
-	SigningRateThreshold   float64       // signings per minute
+	SigningRateThreshold   float64 // signings per minute
 	AnomalyWindow          time.Duration
 	SensitiveOperations    []OperationType
 	HighRiskKeyTypes       []KeyType
@@ -168,10 +168,10 @@ type Monitor struct {
 	patterns map[string]*SigningPattern
 
 	// Statistics
-	totalOperations    int64
-	sensitiveOps       int64
-	failedOperations   int64
-	anomaliesDetected  int64
+	totalOperations   int64
+	sensitiveOps      int64
+	failedOperations  int64
+	anomaliesDetected int64
 }
 
 // NewMonitor creates a new key management monitor.

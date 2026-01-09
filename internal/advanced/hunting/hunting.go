@@ -13,12 +13,12 @@ import (
 type HuntType string
 
 const (
-	HuntTypeHypothesis   HuntType = "hypothesis"
-	HuntTypeIOC          HuntType = "ioc"
-	HuntTypeAnomaly      HuntType = "anomaly"
-	HuntTypeBehavioral   HuntType = "behavioral"
-	HuntTypeTransaction  HuntType = "transaction"
-	HuntTypeWallet       HuntType = "wallet"
+	HuntTypeHypothesis    HuntType = "hypothesis"
+	HuntTypeIOC           HuntType = "ioc"
+	HuntTypeAnomaly       HuntType = "anomaly"
+	HuntTypeBehavioral    HuntType = "behavioral"
+	HuntTypeTransaction   HuntType = "transaction"
+	HuntTypeWallet        HuntType = "wallet"
 	HuntTypeSmartContract HuntType = "smart_contract"
 )
 
@@ -26,11 +26,11 @@ const (
 type HuntStatus string
 
 const (
-	HuntStatusDraft      HuntStatus = "draft"
-	HuntStatusActive     HuntStatus = "active"
-	HuntStatusPaused     HuntStatus = "paused"
-	HuntStatusCompleted  HuntStatus = "completed"
-	HuntStatusArchived   HuntStatus = "archived"
+	HuntStatusDraft     HuntStatus = "draft"
+	HuntStatusActive    HuntStatus = "active"
+	HuntStatusPaused    HuntStatus = "paused"
+	HuntStatusCompleted HuntStatus = "completed"
+	HuntStatusArchived  HuntStatus = "archived"
 )
 
 // Hunt represents a threat hunting investigation
@@ -71,12 +71,12 @@ type HuntQuery struct {
 type QueryType string
 
 const (
-	QueryTypeSQL      QueryType = "sql"
-	QueryTypeKQL      QueryType = "kql"
-	QueryTypeLucene   QueryType = "lucene"
-	QueryTypeYARA     QueryType = "yara"
-	QueryTypeSigma    QueryType = "sigma"
-	QueryTypeCustom   QueryType = "custom"
+	QueryTypeSQL    QueryType = "sql"
+	QueryTypeKQL    QueryType = "kql"
+	QueryTypeLucene QueryType = "lucene"
+	QueryTypeYARA   QueryType = "yara"
+	QueryTypeSigma  QueryType = "sigma"
+	QueryTypeCustom QueryType = "custom"
 )
 
 // TimeRange represents a time range for queries
@@ -88,10 +88,10 @@ type TimeRange struct {
 
 // QueryResults represents results from a hunt query
 type QueryResults struct {
-	TotalHits   int64                    `json:"total_hits"`
-	Records     []map[string]interface{} `json:"records"`
-	Aggregations map[string]interface{}  `json:"aggregations,omitempty"`
-	ExecutionMs int64                    `json:"execution_ms"`
+	TotalHits    int64                    `json:"total_hits"`
+	Records      []map[string]interface{} `json:"records"`
+	Aggregations map[string]interface{}   `json:"aggregations,omitempty"`
+	ExecutionMs  int64                    `json:"execution_ms"`
 }
 
 // Finding represents a finding from a hunt
@@ -112,13 +112,13 @@ type Finding struct {
 
 // Evidence represents evidence supporting a finding
 type Evidence struct {
-	ID          string                 `json:"id"`
-	Type        string                 `json:"type"`
-	Source      string                 `json:"source"`
-	Data        interface{}            `json:"data"`
-	Hash        string                 `json:"hash"`
-	CapturedAt  time.Time              `json:"captured_at"`
-	Metadata    map[string]interface{} `json:"metadata"`
+	ID         string                 `json:"id"`
+	Type       string                 `json:"type"`
+	Source     string                 `json:"source"`
+	Data       interface{}            `json:"data"`
+	Hash       string                 `json:"hash"`
+	CapturedAt time.Time              `json:"captured_at"`
+	Metadata   map[string]interface{} `json:"metadata"`
 }
 
 // Indicator represents an indicator of compromise

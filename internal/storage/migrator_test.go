@@ -21,8 +21,8 @@ func TestSplitStatements(t *testing.T) {
 			expected: []string{"CREATE TABLE a (id INT)", "CREATE TABLE b (id INT)"},
 		},
 		{
-			name: "statement with semicolon in string",
-			sql:  "INSERT INTO t VALUES ('hello; world')",
+			name:     "statement with semicolon in string",
+			sql:      "INSERT INTO t VALUES ('hello; world')",
 			expected: []string{"INSERT INTO t VALUES ('hello; world')"},
 		},
 		{

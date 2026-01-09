@@ -502,12 +502,12 @@ func TestNormalizeToEvent(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "consensus-low-participation",
-		Severity: "high",
-		Title:    "Low Validator Participation",
+		ID:          uuid.New(),
+		Type:        "consensus-low-participation",
+		Severity:    "high",
+		Title:       "Low Validator Participation",
 		Description: "Participation rate low",
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
 		Metadata: map[string]interface{}{
 			"participation_rate": 90.0,
 		},
@@ -578,10 +578,10 @@ func TestAlertDeduplication(t *testing.T) {
 	})
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "test-alert",
-		Severity: "high",
-		Title:    "Test Alert",
+		ID:        uuid.New(),
+		Type:      "test-alert",
+		Severity:  "high",
+		Title:     "Test Alert",
 		Timestamp: time.Now(),
 	}
 

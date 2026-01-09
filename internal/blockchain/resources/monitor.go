@@ -21,10 +21,10 @@ import (
 type ResourceType string
 
 const (
-	ResourceDisk        ResourceType = "disk"
-	ResourceMemory      ResourceType = "memory"
-	ResourceCPU         ResourceType = "cpu"
-	ResourceDBConnPool  ResourceType = "db_connections"
+	ResourceDisk         ResourceType = "disk"
+	ResourceMemory       ResourceType = "memory"
+	ResourceCPU          ResourceType = "cpu"
+	ResourceDBConnPool   ResourceType = "db_connections"
 	ResourcePeerConnPool ResourceType = "peer_connections"
 )
 
@@ -57,18 +57,18 @@ type ResourceMetrics struct {
 	MemoryLeakDetected bool    `json:"memory_leak_detected"`
 
 	// CPU metrics
-	CPUUsedPercent     float64       `json:"cpu_used_percent"`
-	CPUCores           int           `json:"cpu_cores"`
-	CPUSustainedHigh   bool          `json:"cpu_sustained_high"`
-	CPUHighDuration    time.Duration `json:"cpu_high_duration"`
+	CPUUsedPercent   float64       `json:"cpu_used_percent"`
+	CPUCores         int           `json:"cpu_cores"`
+	CPUSustainedHigh bool          `json:"cpu_sustained_high"`
+	CPUHighDuration  time.Duration `json:"cpu_high_duration"`
 
 	// Connection pool metrics
-	DBConnectionsUsed  int     `json:"db_connections_used"`
-	DBConnectionsMax   int     `json:"db_connections_max"`
+	DBConnectionsUsed    int     `json:"db_connections_used"`
+	DBConnectionsMax     int     `json:"db_connections_max"`
 	DBConnectionsPercent float64 `json:"db_connections_percent"`
 
-	PeerConnectionsUsed int     `json:"peer_connections_used"`
-	PeerConnectionsMax  int     `json:"peer_connections_max"`
+	PeerConnectionsUsed    int     `json:"peer_connections_used"`
+	PeerConnectionsMax     int     `json:"peer_connections_max"`
 	PeerConnectionsPercent float64 `json:"peer_connections_percent"`
 }
 
@@ -91,17 +91,17 @@ type AlertHandler func(context.Context, *Alert) error
 // MonitorConfig configures the resource monitor.
 type MonitorConfig struct {
 	// Disk monitoring
-	DataDirPath        string  // Path to monitor for disk usage
-	DiskThreshold      float64 // Percent (default: 85%)
-	DiskCritical       float64 // Percent (default: 95%)
-	DiskAlertLeadDays  int     // Days before full to alert (default: 7)
+	DataDirPath       string  // Path to monitor for disk usage
+	DiskThreshold     float64 // Percent (default: 85%)
+	DiskCritical      float64 // Percent (default: 95%)
+	DiskAlertLeadDays int     // Days before full to alert (default: 7)
 
 	// Memory monitoring
-	MemoryThreshold       float64       // Percent (default: 90%)
-	MemoryCritical        float64       // Percent (default: 95%)
-	MemoryLeakDetection   bool          // Enable leak detection
-	MemoryLeakThreshold   float64       // MB/hour growth to trigger leak alert (default: 1000)
-	MemoryLeakSampleCount int           // Samples needed to confirm leak (default: 6)
+	MemoryThreshold       float64 // Percent (default: 90%)
+	MemoryCritical        float64 // Percent (default: 95%)
+	MemoryLeakDetection   bool    // Enable leak detection
+	MemoryLeakThreshold   float64 // MB/hour growth to trigger leak alert (default: 1000)
+	MemoryLeakSampleCount int     // Samples needed to confirm leak (default: 6)
 
 	// CPU monitoring
 	CPUThreshold         float64       // Percent (default: 85%)
@@ -109,17 +109,17 @@ type MonitorConfig struct {
 	CPUPersistencePeriod time.Duration // Duration of high CPU before alert (default: 15 min)
 
 	// Connection pool monitoring
-	MaxDBConnections         int     // Maximum DB connections
-	DBConnectionWarning      float64 // Percent (default: 80%)
-	DBConnectionCritical     float64 // Percent (default: 90%)
-	MaxPeerConnections       int     // Maximum peer connections
-	PeerConnectionWarning    float64 // Percent (default: 90%)
-	PeerConnectionCritical   float64 // Percent (default: 95%)
+	MaxDBConnections       int     // Maximum DB connections
+	DBConnectionWarning    float64 // Percent (default: 80%)
+	DBConnectionCritical   float64 // Percent (default: 90%)
+	MaxPeerConnections     int     // Maximum peer connections
+	PeerConnectionWarning  float64 // Percent (default: 90%)
+	PeerConnectionCritical float64 // Percent (default: 95%)
 
 	// Monitoring intervals
-	CheckInterval        time.Duration // How often to check resources (default: 1 min)
-	MetricsRetention     int           // Number of historical metrics to keep (default: 1440 = 24h at 1min)
-	CleanupInterval      time.Duration // How often to clean old data (default: 1 hour)
+	CheckInterval    time.Duration // How often to check resources (default: 1 min)
+	MetricsRetention int           // Number of historical metrics to keep (default: 1440 = 24h at 1min)
+	CleanupInterval  time.Duration // How often to clean old data (default: 1 hour)
 }
 
 // DefaultMonitorConfig returns default configuration.
@@ -738,7 +738,7 @@ func (m *Monitor) GetStats() map[string]interface{} {
 	defer m.mu.RUnlock()
 
 	stats := map[string]interface{}{
-		"metrics_count": len(m.metricsHistory),
+		"metrics_count":  len(m.metricsHistory),
 		"check_interval": m.config.CheckInterval.String(),
 	}
 

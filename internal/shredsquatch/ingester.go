@@ -34,16 +34,16 @@ type IngesterConfig struct {
 	BatchSize    int           `yaml:"batch_size"`
 
 	// Feature toggles - log all important info
-	IngestSessions      bool `yaml:"ingest_sessions"`
-	IngestRuns          bool `yaml:"ingest_runs"`
-	IngestTricks        bool `yaml:"ingest_tricks"`
-	IngestAnomalies     bool `yaml:"ingest_anomalies"`
-	IngestLeaderboard   bool `yaml:"ingest_leaderboard"`
-	IngestPerformance   bool `yaml:"ingest_performance"`
-	IngestAssets        bool `yaml:"ingest_assets"`
-	IngestPowerups      bool `yaml:"ingest_powerups"`
-	IngestSasquatch     bool `yaml:"ingest_sasquatch"`
-	IngestCollisions    bool `yaml:"ingest_collisions"`
+	IngestSessions    bool `yaml:"ingest_sessions"`
+	IngestRuns        bool `yaml:"ingest_runs"`
+	IngestTricks      bool `yaml:"ingest_tricks"`
+	IngestAnomalies   bool `yaml:"ingest_anomalies"`
+	IngestLeaderboard bool `yaml:"ingest_leaderboard"`
+	IngestPerformance bool `yaml:"ingest_performance"`
+	IngestAssets      bool `yaml:"ingest_assets"`
+	IngestPowerups    bool `yaml:"ingest_powerups"`
+	IngestSasquatch   bool `yaml:"ingest_sasquatch"`
+	IngestCollisions  bool `yaml:"ingest_collisions"`
 
 	// Filtering
 	MinAnomalySeverity string `yaml:"min_anomaly_severity"`

@@ -99,17 +99,17 @@ func DefaultConfig() *Config {
 
 // Watchdog provides systemd watchdog integration.
 type Watchdog struct {
-	mu           sync.RWMutex
-	config       *Config
-	logger       *slog.Logger
-	conn         net.Conn
-	ctx          context.Context
-	cancel       context.CancelFunc
-	healthy      atomic.Bool
-	lastHealth   *Health
-	checkers     []HealthChecker
+	mu            sync.RWMutex
+	config        *Config
+	logger        *slog.Logger
+	conn          net.Conn
+	ctx           context.Context
+	cancel        context.CancelFunc
+	healthy       atomic.Bool
+	lastHealth    *Health
+	checkers      []HealthChecker
 	onStateChange func(health *Health)
-	started      atomic.Bool
+	started       atomic.Bool
 }
 
 // New creates a new watchdog instance.
@@ -381,12 +381,12 @@ func (w *Watchdog) IsEnabled() bool {
 
 // SignalHandler handles OS signals for graceful shutdown.
 type SignalHandler struct {
-	watchdog    *Watchdog
-	logger      *slog.Logger
-	onShutdown  func()
-	onReload    func()
-	ctx         context.Context
-	cancel      context.CancelFunc
+	watchdog   *Watchdog
+	logger     *slog.Logger
+	onShutdown func()
+	onReload   func()
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // NewSignalHandler creates a new signal handler.

@@ -17,40 +17,40 @@ import (
 type PlaybookType string
 
 const (
-	PlaybookValidator     PlaybookType = "validator"
-	PlaybookTransaction   PlaybookType = "transaction"
+	PlaybookValidator      PlaybookType = "validator"
+	PlaybookTransaction    PlaybookType = "transaction"
 	PlaybookInfrastructure PlaybookType = "infrastructure"
-	PlaybookSecurity      PlaybookType = "security"
-	PlaybookCompliance    PlaybookType = "compliance"
+	PlaybookSecurity       PlaybookType = "security"
+	PlaybookCompliance     PlaybookType = "compliance"
 )
 
 // ActionType represents types of automated actions.
 type ActionType string
 
 const (
-	ActionAlert        ActionType = "alert"
-	ActionNotify       ActionType = "notify"
-	ActionEscalate     ActionType = "escalate"
-	ActionBlock        ActionType = "block"
-	ActionIsolate      ActionType = "isolate"
-	ActionRestart      ActionType = "restart"
-	ActionSnapshot     ActionType = "snapshot"
-	ActionForensics    ActionType = "forensics"
-	ActionRunbook      ActionType = "runbook"
-	ActionWebhook      ActionType = "webhook"
-	ActionScript       ActionType = "script"
-	ActionTicket       ActionType = "ticket"
+	ActionAlert     ActionType = "alert"
+	ActionNotify    ActionType = "notify"
+	ActionEscalate  ActionType = "escalate"
+	ActionBlock     ActionType = "block"
+	ActionIsolate   ActionType = "isolate"
+	ActionRestart   ActionType = "restart"
+	ActionSnapshot  ActionType = "snapshot"
+	ActionForensics ActionType = "forensics"
+	ActionRunbook   ActionType = "runbook"
+	ActionWebhook   ActionType = "webhook"
+	ActionScript    ActionType = "script"
+	ActionTicket    ActionType = "ticket"
 )
 
 // ActionStatus tracks action execution status.
 type ActionStatus string
 
 const (
-	StatusPending    ActionStatus = "pending"
-	StatusRunning    ActionStatus = "running"
-	StatusCompleted  ActionStatus = "completed"
-	StatusFailed     ActionStatus = "failed"
-	StatusSkipped    ActionStatus = "skipped"
+	StatusPending   ActionStatus = "pending"
+	StatusRunning   ActionStatus = "running"
+	StatusCompleted ActionStatus = "completed"
+	StatusFailed    ActionStatus = "failed"
+	StatusSkipped   ActionStatus = "skipped"
 )
 
 // Severity levels for incident classification.
@@ -100,15 +100,15 @@ type Trigger struct {
 
 // Escalation defines escalation rules.
 type Escalation struct {
-	Enabled     bool          `json:"enabled"`
-	Timeout     time.Duration `json:"timeout"`
-	Levels      []EscLevel    `json:"levels"`
+	Enabled bool          `json:"enabled"`
+	Timeout time.Duration `json:"timeout"`
+	Levels  []EscLevel    `json:"levels"`
 }
 
 // EscLevel represents an escalation level.
 type EscLevel struct {
-	Level    int      `json:"level"`
-	Contacts []string `json:"contacts"`
+	Level    int           `json:"level"`
+	Contacts []string      `json:"contacts"`
 	Timeout  time.Duration `json:"timeout"`
 }
 
@@ -490,12 +490,12 @@ func (e *Engine) GetStats() map[string]interface{} {
 	}
 
 	return map[string]interface{}{
-		"playbook_count":    len(e.playbooks),
-		"executor_count":    len(e.executors),
-		"total_incidents":   len(e.incidents),
-		"completed":         completed,
-		"failed":            failed,
-		"pending":           pending,
+		"playbook_count":  len(e.playbooks),
+		"executor_count":  len(e.executors),
+		"total_incidents": len(e.incidents),
+		"completed":       completed,
+		"failed":          failed,
+		"pending":         pending,
 	}
 }
 

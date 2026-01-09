@@ -241,8 +241,8 @@ func TestHuntExport(t *testing.T) {
 func TestForensicsToolkitCreation(t *testing.T) {
 	cfg := forensics.Config{
 		MaxConcurrentAnalyses: 3,
-		TraceDepth:           10,
-		ClusterMinConfidence: 0.7,
+		TraceDepth:            10,
+		ClusterMinConfidence:  0.7,
 	}
 
 	toolkit := forensics.NewToolkit(cfg, nil)
@@ -600,9 +600,9 @@ func TestWorkflowTrigger(t *testing.T) {
 	}
 
 	triggerData := map[string]interface{}{
-		"alert_id":     "alert-123",
-		"tx_hash":      "0xabc...",
-		"risk_score":   85.5,
+		"alert_id":   "alert-123",
+		"tx_hash":    "0xabc...",
+		"risk_score": 85.5,
 	}
 
 	exec, err := engine.TriggerWorkflow(ctx, "wf-001", triggerData)
@@ -635,12 +635,12 @@ func TestIntegrations(t *testing.T) {
 	}
 
 	expectedTypes := map[string]int{
-		"notification":  1, // Slack
-		"alerting":      1, // PagerDuty
-		"ticketing":     1, // Jira
-		"threat_intel":  2, // Chainalysis, Elliptic
-		"storage":       1, // S3
-		"blockchain":    2, // TheGraph, Tenderly
+		"notification": 1, // Slack
+		"alerting":     1, // PagerDuty
+		"ticketing":    1, // Jira
+		"threat_intel": 2, // Chainalysis, Elliptic
+		"storage":      1, // S3
+		"blockchain":   2, // TheGraph, Tenderly
 	}
 
 	for typ, count := range expectedTypes {

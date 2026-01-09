@@ -26,11 +26,11 @@ const (
 
 // Common errors for immutable log operations.
 var (
-	ErrChattrNotFound     = errors.New("chattr command not found")
-	ErrLsattrNotFound     = errors.New("lsattr command not found")
-	ErrInsufficientCaps   = errors.New("insufficient capabilities for immutable attributes")
+	ErrChattrNotFound      = errors.New("chattr command not found")
+	ErrLsattrNotFound      = errors.New("lsattr command not found")
+	ErrInsufficientCaps    = errors.New("insufficient capabilities for immutable attributes")
 	ErrFilesystemNoSupport = errors.New("filesystem does not support immutable attributes")
-	ErrImmutableActive    = errors.New("file has immutable attribute set")
+	ErrImmutableActive     = errors.New("file has immutable attribute set")
 )
 
 // ImmutableConfig configures immutable log behavior.

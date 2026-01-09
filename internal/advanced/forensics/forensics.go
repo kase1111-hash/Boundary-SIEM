@@ -34,23 +34,23 @@ const (
 
 // Case represents a forensics investigation case
 type Case struct {
-	ID           string                 `json:"id"`
-	Title        string                 `json:"title"`
-	Description  string                 `json:"description"`
-	Status       CaseStatus             `json:"status"`
-	Priority     CasePriority           `json:"priority"`
-	AssignedTo   string                 `json:"assigned_to"`
-	CreatedBy    string                 `json:"created_by"`
-	Incidents    []string               `json:"incident_ids"`
-	Artifacts    []Artifact             `json:"artifacts"`
-	Timeline     []TimelineEntry        `json:"timeline"`
-	Notes        []Note                 `json:"notes"`
-	Chains       []ChainAnalysis        `json:"chain_analyses"`
-	Tags         []string               `json:"tags"`
-	CreatedAt    time.Time              `json:"created_at"`
-	UpdatedAt    time.Time              `json:"updated_at"`
-	ClosedAt     *time.Time             `json:"closed_at,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata"`
+	ID          string                 `json:"id"`
+	Title       string                 `json:"title"`
+	Description string                 `json:"description"`
+	Status      CaseStatus             `json:"status"`
+	Priority    CasePriority           `json:"priority"`
+	AssignedTo  string                 `json:"assigned_to"`
+	CreatedBy   string                 `json:"created_by"`
+	Incidents   []string               `json:"incident_ids"`
+	Artifacts   []Artifact             `json:"artifacts"`
+	Timeline    []TimelineEntry        `json:"timeline"`
+	Notes       []Note                 `json:"notes"`
+	Chains      []ChainAnalysis        `json:"chain_analyses"`
+	Tags        []string               `json:"tags"`
+	CreatedAt   time.Time              `json:"created_at"`
+	UpdatedAt   time.Time              `json:"updated_at"`
+	ClosedAt    *time.Time             `json:"closed_at,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata"`
 }
 
 // Artifact represents a piece of evidence
@@ -75,18 +75,18 @@ type Artifact struct {
 type ArtifactType string
 
 const (
-	ArtifactTypeTransaction     ArtifactType = "transaction"
-	ArtifactTypeBlock           ArtifactType = "block"
-	ArtifactTypeContract        ArtifactType = "contract"
-	ArtifactTypeBytecode        ArtifactType = "bytecode"
-	ArtifactTypeLog             ArtifactType = "log"
-	ArtifactTypeTrace           ArtifactType = "trace"
-	ArtifactTypeWallet          ArtifactType = "wallet"
-	ArtifactTypeMempool         ArtifactType = "mempool"
-	ArtifactTypeSignature       ArtifactType = "signature"
-	ArtifactTypeStateSnapshot   ArtifactType = "state_snapshot"
-	ArtifactTypeScreenshot      ArtifactType = "screenshot"
-	ArtifactTypeDocument        ArtifactType = "document"
+	ArtifactTypeTransaction   ArtifactType = "transaction"
+	ArtifactTypeBlock         ArtifactType = "block"
+	ArtifactTypeContract      ArtifactType = "contract"
+	ArtifactTypeBytecode      ArtifactType = "bytecode"
+	ArtifactTypeLog           ArtifactType = "log"
+	ArtifactTypeTrace         ArtifactType = "trace"
+	ArtifactTypeWallet        ArtifactType = "wallet"
+	ArtifactTypeMempool       ArtifactType = "mempool"
+	ArtifactTypeSignature     ArtifactType = "signature"
+	ArtifactTypeStateSnapshot ArtifactType = "state_snapshot"
+	ArtifactTypeScreenshot    ArtifactType = "screenshot"
+	ArtifactTypeDocument      ArtifactType = "document"
 )
 
 // TimelineEntry represents an entry in the case timeline
@@ -113,26 +113,26 @@ type Note struct {
 
 // ChainAnalysis represents blockchain-specific analysis
 type ChainAnalysis struct {
-	ID             string            `json:"id"`
-	ChainID        string            `json:"chain_id"`
-	ChainName      string            `json:"chain_name"`
-	AnalysisType   string            `json:"analysis_type"`
-	RootAddress    string            `json:"root_address"`
-	FlowAnalysis   *FlowAnalysis     `json:"flow_analysis,omitempty"`
-	ClusterResult  *ClusterResult    `json:"cluster_result,omitempty"`
-	RiskAssessment *RiskAssessment   `json:"risk_assessment,omitempty"`
-	CreatedAt      time.Time         `json:"created_at"`
+	ID             string          `json:"id"`
+	ChainID        string          `json:"chain_id"`
+	ChainName      string          `json:"chain_name"`
+	AnalysisType   string          `json:"analysis_type"`
+	RootAddress    string          `json:"root_address"`
+	FlowAnalysis   *FlowAnalysis   `json:"flow_analysis,omitempty"`
+	ClusterResult  *ClusterResult  `json:"cluster_result,omitempty"`
+	RiskAssessment *RiskAssessment `json:"risk_assessment,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
 }
 
 // FlowAnalysis represents fund flow analysis
 type FlowAnalysis struct {
-	TotalInflow    string         `json:"total_inflow"`
-	TotalOutflow   string         `json:"total_outflow"`
-	UniqueInbound  int            `json:"unique_inbound"`
-	UniqueOutbound int            `json:"unique_outbound"`
-	TopSources     []FlowNode     `json:"top_sources"`
-	TopDestinations []FlowNode    `json:"top_destinations"`
-	Paths          []FlowPath     `json:"paths"`
+	TotalInflow     string     `json:"total_inflow"`
+	TotalOutflow    string     `json:"total_outflow"`
+	UniqueInbound   int        `json:"unique_inbound"`
+	UniqueOutbound  int        `json:"unique_outbound"`
+	TopSources      []FlowNode `json:"top_sources"`
+	TopDestinations []FlowNode `json:"top_destinations"`
+	Paths           []FlowPath `json:"paths"`
 }
 
 // FlowNode represents a node in flow analysis
@@ -163,12 +163,12 @@ type ClusterResult struct {
 
 // RiskAssessment represents risk scoring
 type RiskAssessment struct {
-	OverallRisk    float64           `json:"overall_risk"`
-	RiskLevel      string            `json:"risk_level"`
-	RiskFactors    []RiskFactor      `json:"risk_factors"`
-	Sanctions      []SanctionMatch   `json:"sanctions"`
-	Mixers         []MixerExposure   `json:"mixer_exposure"`
-	KnownBad       []KnownBadActor   `json:"known_bad_actors"`
+	OverallRisk float64         `json:"overall_risk"`
+	RiskLevel   string          `json:"risk_level"`
+	RiskFactors []RiskFactor    `json:"risk_factors"`
+	Sanctions   []SanctionMatch `json:"sanctions"`
+	Mixers      []MixerExposure `json:"mixer_exposure"`
+	KnownBad    []KnownBadActor `json:"known_bad_actors"`
 }
 
 // RiskFactor represents a factor contributing to risk
@@ -197,10 +197,10 @@ type MixerExposure struct {
 
 // KnownBadActor represents a known malicious actor
 type KnownBadActor struct {
-	Address     string   `json:"address"`
-	Labels      []string `json:"labels"`
-	Incidents   []string `json:"incidents"`
-	FirstSeen   string   `json:"first_seen"`
+	Address   string   `json:"address"`
+	Labels    []string `json:"labels"`
+	Incidents []string `json:"incidents"`
+	FirstSeen string   `json:"first_seen"`
 }
 
 // Toolkit provides forensics investigation capabilities
@@ -220,15 +220,15 @@ type ChainAnalyzer interface {
 
 // TransactionTrace represents a detailed transaction trace
 type TransactionTrace struct {
-	TxHash       string       `json:"tx_hash"`
-	BlockNumber  uint64       `json:"block_number"`
-	From         string       `json:"from"`
-	To           string       `json:"to"`
-	Value        string       `json:"value"`
-	GasUsed      uint64       `json:"gas_used"`
-	Status       bool         `json:"status"`
-	InternalTxs  []InternalTx `json:"internal_txs"`
-	Logs         []Log        `json:"logs"`
+	TxHash       string        `json:"tx_hash"`
+	BlockNumber  uint64        `json:"block_number"`
+	From         string        `json:"from"`
+	To           string        `json:"to"`
+	Value        string        `json:"value"`
+	GasUsed      uint64        `json:"gas_used"`
+	Status       bool          `json:"status"`
+	InternalTxs  []InternalTx  `json:"internal_txs"`
+	Logs         []Log         `json:"logs"`
 	StateChanges []StateChange `json:"state_changes"`
 }
 
@@ -262,8 +262,8 @@ type StateChange struct {
 // Config holds toolkit configuration
 type Config struct {
 	MaxConcurrentAnalyses int
-	TraceDepth           int
-	ClusterMinConfidence float64
+	TraceDepth            int
+	ClusterMinConfidence  float64
 }
 
 // NewToolkit creates a new forensics toolkit

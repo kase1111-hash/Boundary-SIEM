@@ -477,12 +477,12 @@ func TestNormalizeToEvent(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "integrity-state-root-failures",
-		Severity: "high",
-		Title:    "State Root Validation Failures",
+		ID:          uuid.New(),
+		Type:        "integrity-state-root-failures",
+		Severity:    "high",
+		Title:       "State Root Validation Failures",
 		Description: "State root validation failing",
-		Timestamp: time.Now(),
+		Timestamp:   time.Now(),
 		Metadata: map[string]interface{}{
 			"failure_rate": 20.0,
 		},
@@ -557,10 +557,10 @@ func TestAlertDeduplication(t *testing.T) {
 	})
 
 	alert := &Alert{
-		ID:       uuid.New(),
-		Type:     "test-alert",
-		Severity: "high",
-		Title:    "Test Alert",
+		ID:        uuid.New(),
+		Type:      "test-alert",
+		Severity:  "high",
+		Title:     "Test Alert",
 		Timestamp: time.Now(),
 	}
 

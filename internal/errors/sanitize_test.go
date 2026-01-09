@@ -13,9 +13,9 @@ func TestSanitizeError_ProductionMode(t *testing.T) {
 	defer func() { ProductionMode = originalMode }()
 
 	tests := []struct {
-		name     string
-		input    error
-		contains string
+		name        string
+		input       error
+		contains    string
 		notContains string
 	}{
 		{
@@ -88,9 +88,9 @@ func TestSanitizeString(t *testing.T) {
 	defer func() { ProductionMode = originalMode }()
 
 	tests := []struct {
-		name     string
-		input    string
-		contains string
+		name        string
+		input       string
+		contains    string
 		notContains string
 	}{
 		{

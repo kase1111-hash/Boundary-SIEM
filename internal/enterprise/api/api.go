@@ -72,8 +72,8 @@ type APIResponse struct {
 
 // APIError represents an API error.
 type APIError struct {
-	Code    string `json:"code"`
-	Message string `json:"message"`
+	Code    string      `json:"code"`
+	Message string      `json:"message"`
 	Details interface{} `json:"details,omitempty"`
 }
 
@@ -96,8 +96,8 @@ type PaginationParams struct {
 // NewRouter creates a new API router.
 func NewRouter(version APIVersion) *Router {
 	return &Router{
-		routes:  make(map[string]*Route),
-		version: version,
+		routes:       make(map[string]*Route),
+		version:      version,
 		errorHandler: defaultErrorHandler,
 	}
 }
@@ -300,15 +300,15 @@ type GraphQLRequest struct {
 
 // GraphQLResponse represents a GraphQL response.
 type GraphQLResponse struct {
-	Data   interface{}     `json:"data,omitempty"`
-	Errors []GraphQLError  `json:"errors,omitempty"`
+	Data   interface{}    `json:"data,omitempty"`
+	Errors []GraphQLError `json:"errors,omitempty"`
 }
 
 // GraphQLError represents a GraphQL error.
 type GraphQLError struct {
-	Message   string                 `json:"message"`
-	Locations []GraphQLLocation      `json:"locations,omitempty"`
-	Path      []interface{}          `json:"path,omitempty"`
+	Message    string                 `json:"message"`
+	Locations  []GraphQLLocation      `json:"locations,omitempty"`
+	Path       []interface{}          `json:"path,omitempty"`
 	Extensions map[string]interface{} `json:"extensions,omitempty"`
 }
 
@@ -594,8 +594,8 @@ type SDK struct {
 
 // SDKGenerator generates SDKs for various languages.
 type SDKGenerator struct {
-	schema  *GraphQLSchema
-	routes  []*Route
+	schema *GraphQLSchema
+	routes []*Route
 }
 
 // NewSDKGenerator creates a new SDK generator.
@@ -1046,9 +1046,9 @@ func GenerateOpenAPISpec(routes []*Route) map[string]interface{} {
 
 		method := strings.ToLower(route.Method)
 		paths[pathKey].(map[string]interface{})[method] = map[string]interface{}{
-			"summary":     route.Description,
-			"tags":        route.Tags,
-			"deprecated":  route.Deprecated,
+			"summary":    route.Description,
+			"tags":       route.Tags,
+			"deprecated": route.Deprecated,
 			"responses": map[string]interface{}{
 				"200": map[string]interface{}{
 					"description": "Successful response",
