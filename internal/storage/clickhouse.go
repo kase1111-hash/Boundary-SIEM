@@ -4,6 +4,7 @@ package storage
 import (
 	"context"
 	"crypto/tls"
+	"database/sql"
 	"fmt"
 	"time"
 
@@ -44,6 +45,7 @@ func DefaultClickHouseConfig() ClickHouseConfig {
 // ClickHouseClient wraps the ClickHouse connection.
 type ClickHouseClient struct {
 	conn   driver.Conn
+	sqlDB  *sql.DB
 	config ClickHouseConfig
 }
 
@@ -88,15 +90,31 @@ func NewClickHouseClient(cfg ClickHouseConfig) (*ClickHouseClient, error) {
 		return nil, WrapConnectionError("Ping", err)
 	}
 
+	// Also create a database/sql compatible connection for search queries
+	sqlDB := clickhouse.OpenDB(opts)
+	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+
 	return &ClickHouseClient{
 		conn:   conn,
+		sqlDB:  sqlDB,
 		config: cfg,
 	}, nil
 }
 
 // Close closes the ClickHouse connection.
 func (c *ClickHouseClient) Close() error {
+	if c.sqlDB != nil {
+		c.sqlDB.Close()
+	}
 	return c.conn.Close()
+}
+
+// DB returns the database/sql compatible connection.
+// This is used by the search package for query execution.
+func (c *ClickHouseClient) DB() *sql.DB {
+	return c.sqlDB
 }
 
 // Ping checks if the connection is alive.
