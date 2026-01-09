@@ -62,9 +62,9 @@ logging:
   format: json
 
 # Storage configuration
-# Set storage.enabled to true and configure ClickHouse to persist events
+# ClickHouse is used to persist and query events
 storage:
-  enabled: false  # Set to true when ClickHouse is available
+  enabled: true  # Enabled by default - requires ClickHouse to be running
   clickhouse:
     hosts:
       - "localhost:9000"

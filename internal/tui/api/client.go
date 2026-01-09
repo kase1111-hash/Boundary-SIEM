@@ -78,33 +78,22 @@ type SearchResponse struct {
 
 // SearchResult represents a single search result from the backend
 type SearchResult struct {
-	EventID    string                 `json:"event_id"`
-	Timestamp  time.Time              `json:"timestamp"`
-	ReceivedAt time.Time              `json:"received_at"`
-	TenantID   string                 `json:"tenant_id"`
-	Action     string                 `json:"action"`
-	Severity   int                    `json:"severity"`
-	Outcome    string                 `json:"outcome"`
-	Source     EventSource            `json:"source"`
-	Actor      *EventActor            `json:"actor,omitempty"`
-	Target     string                 `json:"target,omitempty"`
-	Raw        string                 `json:"raw,omitempty"`
-	Metadata   map[string]interface{} `json:"metadata,omitempty"`
-}
-
-// EventSource represents the source of an event
-type EventSource struct {
-	Product string `json:"product"`
-	Host    string `json:"host"`
-	Version string `json:"version"`
-	IP      string `json:"ip,omitempty"`
-}
-
-// EventActor represents who performed an action
-type EventActor struct {
-	Name string `json:"name,omitempty"`
-	ID   string `json:"id,omitempty"`
-	IP   string `json:"ip,omitempty"`
+	EventID       string                 `json:"event_id"`
+	Timestamp     time.Time              `json:"timestamp"`
+	ReceivedAt    time.Time              `json:"received_at"`
+	TenantID      string                 `json:"tenant_id"`
+	Action        string                 `json:"action"`
+	Severity      int                    `json:"severity"`
+	Outcome       string                 `json:"outcome"`
+	Target        string                 `json:"target,omitempty"`
+	Raw           string                 `json:"raw,omitempty"`
+	SourceProduct string                 `json:"source_product"`
+	SourceVendor  string                 `json:"source_vendor"`
+	SourceIP      string                 `json:"source_ip,omitempty"`
+	ActorName     string                 `json:"actor_name,omitempty"`
+	ActorID       string                 `json:"actor_id,omitempty"`
+	ActorIP       string                 `json:"actor_ip,omitempty"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // HealthResponse represents health check response
@@ -308,17 +297,18 @@ func (c *Client) GetEvents(limit int) (*EventsResponse, error) {
 		event := Event{
 			ID:        r.EventID,
 			Timestamp: r.Timestamp,
-			Source:    r.Source.Product,
+			Source:    r.SourceProduct,
 			Severity:  r.Severity,
 			Action:    r.Action,
 			Outcome:   r.Outcome,
 			Target:    r.Target,
 		}
-		if r.Source.Host != "" {
-			event.Source = r.Source.Host
+		// Use vendor as source if product is empty
+		if event.Source == "" && r.SourceVendor != "" {
+			event.Source = r.SourceVendor
 		}
-		if r.Actor != nil && r.Actor.Name != "" {
-			event.Actor = r.Actor.Name
+		if r.ActorName != "" {
+			event.Actor = r.ActorName
 		}
 		// Build a message from action and outcome
 		event.Message = r.Action

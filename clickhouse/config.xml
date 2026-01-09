@@ -1,0 +1,85 @@
+<?xml version="1.0"?>
+<!--
+    ClickHouse Configuration for Boundary-SIEM
+    Portable/USB-friendly configuration
+-->
+<clickhouse>
+    <!-- Logging -->
+    <logger>
+        <level>warning</level>
+        <log>logs/clickhouse-server.log</log>
+        <errorlog>logs/clickhouse-error.log</errorlog>
+        <size>100M</size>
+        <count>3</count>
+    </logger>
+
+    <!-- Network -->
+    <http_port>8123</http_port>
+    <tcp_port>9000</tcp_port>
+    <listen_host>127.0.0.1</listen_host>
+
+    <!-- Data paths (relative for portability) -->
+    <path>data/</path>
+    <tmp_path>data/tmp/</tmp_path>
+    <user_files_path>data/user_files/</user_files_path>
+    <format_schema_path>data/format_schemas/</format_schema_path>
+
+    <!-- Memory limits for portable use -->
+    <max_server_memory_usage_to_ram_ratio>0.5</max_server_memory_usage_to_ram_ratio>
+    <max_memory_usage>2000000000</max_memory_usage>
+
+    <!-- Disable features not needed for portable deployment -->
+    <interserver_http_port>0</interserver_http_port>
+
+    <!-- Default profile -->
+    <default_profile>default</default_profile>
+    <default_database>default</default_database>
+
+    <!-- Users configuration -->
+    <users>
+        <default>
+            <password></password>
+            <networks>
+                <ip>127.0.0.1</ip>
+            </networks>
+            <profile>default</profile>
+            <quota>default</quota>
+            <access_management>1</access_management>
+        </default>
+    </users>
+
+    <!-- Profiles -->
+    <profiles>
+        <default>
+            <max_memory_usage>1000000000</max_memory_usage>
+            <use_uncompressed_cache>0</use_uncompressed_cache>
+            <load_balancing>random</load_balancing>
+        </default>
+    </profiles>
+
+    <!-- Quotas -->
+    <quotas>
+        <default>
+            <interval>
+                <duration>3600</duration>
+                <queries>0</queries>
+                <errors>0</errors>
+                <result_rows>0</result_rows>
+                <read_rows>0</read_rows>
+                <execution_time>0</execution_time>
+            </interval>
+        </default>
+    </quotas>
+
+    <!-- MergeTree settings optimized for SIEM workload -->
+    <merge_tree>
+        <max_suspicious_broken_parts>5</max_suspicious_broken_parts>
+    </merge_tree>
+
+    <!-- Compression for efficient storage -->
+    <compression>
+        <case>
+            <method>zstd</method>
+        </case>
+    </compression>
+</clickhouse>

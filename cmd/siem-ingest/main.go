@@ -17,6 +17,7 @@ import (
 	"boundary-siem/internal/ingest/cef"
 	"boundary-siem/internal/queue"
 	"boundary-siem/internal/schema"
+	"boundary-siem/internal/search"
 	"boundary-siem/internal/startup"
 	"boundary-siem/internal/storage"
 )
@@ -162,6 +163,12 @@ func main() {
 		}
 		queueConsumer = consumer.New(eventQueue, batchWriter, consumerCfg)
 		queueConsumer.Start(ctx)
+
+		// Register search routes when storage is enabled
+		searchExecutor := search.NewExecutor(chClient.DB())
+		searchHandler := search.NewHandler(searchExecutor)
+		searchHandler.RegisterRoutes(mux)
+		slog.Info("search API registered", "endpoints", []string{"/v1/search", "/v1/aggregations", "/v1/events/{id}", "/v1/stats"})
 
 		slog.Info("storage initialized successfully")
 	} else {
