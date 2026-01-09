@@ -48,16 +48,26 @@ if %ERRORLEVEL% neq 0 (
 echo [INFO] Dependencies downloaded successfully
 echo.
 
-REM Build the main binary
+REM Build the ingest service
 echo [INFO] Building siem-ingest...
 go build -ldflags="-s -w" -o bin\siem-ingest.exe .\cmd\siem-ingest
 if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Build failed
+    echo [ERROR] siem-ingest build failed
     pause
     exit /b 1
 )
+echo [SUCCESS] Ingest service: bin\siem-ingest.exe
+echo.
 
-echo [SUCCESS] Backend build complete: bin\siem-ingest.exe
+REM Build the TUI
+echo [INFO] Building boundary-siem TUI...
+go build -ldflags="-s -w" -o bin\boundary-siem.exe .\cmd\boundary-siem
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] TUI build failed
+    pause
+    exit /b 1
+)
+echo [SUCCESS] TUI application: bin\boundary-siem.exe
 echo.
 
 REM Check if Node.js is available for frontend build
@@ -100,8 +110,11 @@ echo ========================================
 echo    Build Complete!
 echo ========================================
 echo.
-echo Binary location: bin\siem-ingest.exe
+echo Binaries:
+echo   - bin\siem-ingest.exe   (Ingest Service)
+echo   - bin\boundary-siem.exe (Terminal UI)
 echo.
-echo Run 'start.bat' to launch the service
+echo Run 'start.bat' to launch the ingest service
+echo Run 'run-tui.bat' to launch the TUI
 echo.
 pause
