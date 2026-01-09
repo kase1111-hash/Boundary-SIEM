@@ -56,12 +56,55 @@ type DreamingMetrics struct {
 
 // Event represents a security event
 type Event struct {
-	ID        string    `json:"id"`
+	ID        string    `json:"event_id"`
 	Timestamp time.Time `json:"timestamp"`
 	Source    string    `json:"source"`
-	Severity  string    `json:"severity"`
+	Severity  int       `json:"severity"`
+	Action    string    `json:"action"`
+	Outcome   string    `json:"outcome"`
+	Target    string    `json:"target,omitempty"`
+	Actor     string    `json:"actor,omitempty"`
 	Message   string    `json:"message"`
-	Category  string    `json:"category"`
+}
+
+// SearchResponse represents the response from the search API
+type SearchResponse struct {
+	Results    []SearchResult `json:"results"`
+	TotalCount int64          `json:"total_count"`
+	Took       int64          `json:"took_ms"`
+	Limit      int            `json:"limit"`
+	Offset     int            `json:"offset"`
+}
+
+// SearchResult represents a single search result from the backend
+type SearchResult struct {
+	EventID    string                 `json:"event_id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	ReceivedAt time.Time              `json:"received_at"`
+	TenantID   string                 `json:"tenant_id"`
+	Action     string                 `json:"action"`
+	Severity   int                    `json:"severity"`
+	Outcome    string                 `json:"outcome"`
+	Source     EventSource            `json:"source"`
+	Actor      *EventActor            `json:"actor,omitempty"`
+	Target     string                 `json:"target,omitempty"`
+	Raw        string                 `json:"raw,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
+}
+
+// EventSource represents the source of an event
+type EventSource struct {
+	Product string `json:"product"`
+	Host    string `json:"host"`
+	Version string `json:"version"`
+	IP      string `json:"ip,omitempty"`
+}
+
+// EventActor represents who performed an action
+type EventActor struct {
+	Name string `json:"name,omitempty"`
+	ID   string `json:"id,omitempty"`
+	IP   string `json:"ip,omitempty"`
 }
 
 // HealthResponse represents health check response
@@ -221,6 +264,75 @@ func (c *Client) GetStats() (*Stats, error) {
 	}
 
 	return stats, nil
+}
+
+// EventsResponse wraps the events list with metadata
+type EventsResponse struct {
+	Events     []Event `json:"events"`
+	TotalCount int64   `json:"total_count"`
+	HasMore    bool    `json:"has_more"`
+	Error      string  `json:"error,omitempty"`
+}
+
+// GetEvents fetches events from the search API
+func (c *Client) GetEvents(limit int) (*EventsResponse, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	url := fmt.Sprintf("%s/v1/search?limit=%d&order=desc", c.baseURL, limit)
+	resp, err := c.httpClient.Get(url)
+	if err != nil {
+		return &EventsResponse{
+			Error: fmt.Sprintf("connection failed: %v", err),
+		}, nil
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return &EventsResponse{
+			Error: fmt.Sprintf("search API returned status %d", resp.StatusCode),
+		}, nil
+	}
+
+	var searchResp SearchResponse
+	if err := json.NewDecoder(resp.Body).Decode(&searchResp); err != nil {
+		return &EventsResponse{
+			Error: fmt.Sprintf("failed to decode response: %v", err),
+		}, nil
+	}
+
+	// Convert SearchResults to Events
+	events := make([]Event, 0, len(searchResp.Results))
+	for _, r := range searchResp.Results {
+		event := Event{
+			ID:        r.EventID,
+			Timestamp: r.Timestamp,
+			Source:    r.Source.Product,
+			Severity:  r.Severity,
+			Action:    r.Action,
+			Outcome:   r.Outcome,
+			Target:    r.Target,
+		}
+		if r.Source.Host != "" {
+			event.Source = r.Source.Host
+		}
+		if r.Actor != nil && r.Actor.Name != "" {
+			event.Actor = r.Actor.Name
+		}
+		// Build a message from action and outcome
+		event.Message = r.Action
+		if r.Outcome != "" {
+			event.Message = fmt.Sprintf("%s (%s)", r.Action, r.Outcome)
+		}
+		events = append(events, event)
+	}
+
+	return &EventsResponse{
+		Events:     events,
+		TotalCount: searchResp.TotalCount,
+		HasMore:    int64(len(events)) < searchResp.TotalCount,
+	}, nil
 }
 
 func formatUptime(seconds float64) string {
