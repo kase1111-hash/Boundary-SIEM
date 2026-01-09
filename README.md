@@ -1,5 +1,10 @@
 # Boundary SIEM
 
+![Version](https://img.shields.io/badge/version-1.0.0--beta-blue)
+![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Security](https://img.shields.io/badge/security-★★★★★-brightgreen)
+
 A comprehensive Security Information and Event Management (SIEM) platform designed for blockchain infrastructure protection. Built in Go with high-performance event processing, blockchain-specific detection rules, and enterprise-grade features.
 
 ## Overview
@@ -12,8 +17,15 @@ A comprehensive Security Information and Event Management (SIEM) platform design
 
 ## Features
 
+### Terminal User Interface (TUI)
+- **Real-time Dashboard**: Live health status, event metrics, and queue statistics
+- **Events Browser**: Browse and search real security events from storage
+- **System Information**: Server endpoints, queue configuration, and integration status
+- **Activity Monitor**: System activity status with descriptive icons
+- **Cross-platform**: Works on Windows, macOS, and Linux terminals
+
 ### Core SIEM Capabilities
-- **Event Ingestion**: CEF (UDP/TCP), JSON HTTP, syslog, NatLangChain with backpressure-safe queuing
+- **Event Ingestion**: CEF (UDP/TCP/DTLS), JSON HTTP, syslog, NatLangChain with backpressure-safe queuing
 - **Canonical Schema**: Versioned event schema with strict validation and quarantine
 - **Storage Engine**: ClickHouse-based with time-partitioned tables and tiered retention
 - **Search & Query**: Time-range, field-based, and full-text search with pagination
@@ -69,11 +81,17 @@ A comprehensive Security Information and Event Management (SIEM) platform design
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                          Boundary SIEM                                   │
+│                     Boundary SIEM v1.0.0-beta                            │
+├─────────────────────────────────────────────────────────────────────────┤
+│  User Interfaces                                                         │
+│  ├── Terminal UI (TUI) - Dashboard, Events, System Info                 │
+│  ├── REST API (/api/v1/*)                                               │
+│  ├── GraphQL (/graphql)                                                 │
+│  └── WebSocket (Real-time alerts)                                       │
 ├─────────────────────────────────────────────────────────────────────────┤
 │  Ingestion Layer                                                         │
-│  ├── CEF Parser (UDP 514, TCP 1514)                                     │
-│  ├── JSON HTTP (POST /api/v1/events)                                    │
+│  ├── CEF Parser (UDP 5514, TCP 5515, DTLS 5516)                         │
+│  ├── JSON HTTP (POST /v1/events)                                        │
 │  ├── Syslog (RFC 5424)                                                  │
 │  └── Ring Buffer Queue (100K events, backpressure)                      │
 ├─────────────────────────────────────────────────────────────────────────┤
@@ -88,12 +106,6 @@ A comprehensive Security Information and Event Management (SIEM) platform design
 │  ├── Kafka (Event Streaming)                                            │
 │  └── S3 (Archive)                                                        │
 ├─────────────────────────────────────────────────────────────────────────┤
-│  API Layer                                                               │
-│  ├── REST API (/api/v1/*)                                               │
-│  ├── GraphQL (/graphql)                                                 │
-│  ├── WebSocket (Real-time alerts)                                       │
-│  └── gRPC (Internal services)                                           │
-├─────────────────────────────────────────────────────────────────────────┤
 │  Detection & Response                                                    │
 │  ├── 143 Blockchain Detection Rules                                     │
 │  ├── 9 Incident Playbooks                                               │
@@ -106,11 +118,24 @@ A comprehensive Security Information and Event Management (SIEM) platform design
 
 ### Prerequisites
 - Go 1.21+
-- ClickHouse 23.8+
+- ClickHouse 23.8+ (optional, for persistent storage)
 - Kafka 3.5+ (optional, for HA)
 - Docker & Docker Compose (for development)
 
-### Development Setup
+### Windows (One-Click Setup)
+
+```batch
+# Build everything (creates directories, generates certs, builds binaries)
+build.bat
+
+# Start the SIEM backend server
+start.bat
+
+# Launch the Terminal UI (in a separate terminal)
+run-tui.bat
+```
+
+### Linux/macOS Development Setup
 
 ```bash
 # Clone repository
@@ -120,14 +145,17 @@ cd boundary-siem
 # Install dependencies
 make deps
 
-# Start dependencies
+# Start dependencies (optional, for storage)
 docker-compose -f deployments/clickhouse/docker-compose.yaml up -d
 
-# Build
+# Build all binaries (server + TUI)
 make build
 
-# Run
+# Run the SIEM server
 make run
+
+# Run the TUI (in another terminal)
+./bin/boundary-siem
 
 # Run tests
 make test
@@ -138,6 +166,20 @@ make security
 # Run all CI checks (lint, security, test)
 make ci
 ```
+
+### TUI Navigation
+
+The Terminal UI provides three tabs for monitoring your SIEM:
+
+| Key | Tab | Description |
+|-----|-----|-------------|
+| `1` | Dashboard | Health status, event metrics, queue statistics |
+| `2` | Events | Browse real security events from storage |
+| `3` | System | Server endpoints, queue config, integrations |
+| `Tab` | Cycle | Cycle through tabs |
+| `↑↓`/`jk` | Navigate | Navigate within lists |
+| `r` | Refresh | Manual refresh (Events tab) |
+| `q` | Quit | Exit the TUI |
 
 ### Configuration
 
@@ -1545,8 +1587,14 @@ echo 'CEF:0|Boundary|Daemon|1.0|100|Validator Attestation|3|src=node-1' | nc loc
 ```
 boundary-siem/
 ├── cmd/
-│   └── siem-ingest/          # Main entry point
+│   ├── boundary-siem/        # Terminal UI (TUI) entry point
+│   └── siem-ingest/          # SIEM server entry point
 ├── internal/
+│   ├── tui/                  # Terminal UI
+│   │   ├── api/              # API client for backend
+│   │   ├── scenes/           # Dashboard, Events, System scenes
+│   │   └── styles/           # UI styling
+│   ├── startup/              # Startup diagnostics
 │   ├── ingest/               # Event ingestion (CEF, JSON, syslog)
 │   ├── schema/               # Canonical event schema
 │   ├── storage/              # ClickHouse storage engine
