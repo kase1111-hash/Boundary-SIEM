@@ -7,18 +7,32 @@ ingest:
   max_batch_size: 1000
   max_payload_size: 10485760  # 10MB
   cef:
+    # SECURITY WARNING: Plain UDP provides NO encryption
+    # Only enable for trusted internal networks or testing
     udp:
-      enabled: true
+      enabled: false  # DISABLED by default - use DTLS for secure UDP
       address: ":5514"
       buffer_size: 16777216  # 16MB
       workers: 8
       max_message_size: 65535
+    # DTLS provides encrypted UDP transport - RECOMMENDED for production
+    dtls:
+      enabled: false  # Enable after configuring certificates
+      address: ":5516"
+      cert_file: "certs/server.crt"
+      key_file: "certs/server.key"
+      # ca_file: "certs/ca.crt"  # Optional: for client certificate verification
+      require_client_cert: false
+      workers: 8
+      max_message_size: 65535
+      connection_timeout: 30s
+      idle_timeout: 5m
     tcp:
       enabled: true
       address: ":5515"
-      tls_enabled: false
-      # tls_cert_file: /etc/siem/certs/server.crt
-      # tls_key_file: /etc/siem/certs/server.key
+      tls_enabled: false  # Enable TLS for production security
+      tls_cert_file: "certs/server.crt"
+      tls_key_file: "certs/server.key"
       max_connections: 1000
       idle_timeout: 5m
       max_line_length: 65535
