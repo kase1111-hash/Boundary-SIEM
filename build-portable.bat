@@ -62,6 +62,9 @@ mkdir "%OUTPUT_DIR%\data\events"
 mkdir "%OUTPUT_DIR%\logs"
 mkdir "%OUTPUT_DIR%\certs"
 mkdir "%OUTPUT_DIR%\configs"
+mkdir "%OUTPUT_DIR%\clickhouse"
+mkdir "%OUTPUT_DIR%\clickhouse\data"
+mkdir "%OUTPUT_DIR%\clickhouse\logs"
 
 echo [OK] Directory structure created
 echo.
@@ -174,7 +177,23 @@ if exist "configs\config.yaml" (
         echo   format: json
         echo.
         echo storage:
-        echo   enabled: false
+        echo   enabled: true
+        echo   clickhouse:
+        echo     hosts:
+        echo       - "localhost:9000"
+        echo     database: siem
+        echo     username: default
+        echo     password: ""
+        echo     max_open_conns: 10
+        echo     max_idle_conns: 5
+        echo     conn_max_lifetime: 1h
+        echo     tls_enabled: false
+        echo     dial_timeout: 10s
+        echo   batch_writer:
+        echo     batch_size: 1000
+        echo     flush_interval: 5s
+        echo     max_retries: 3
+        echo     retry_delay: 1s
         echo.
         echo consumer:
         echo   workers: 4
@@ -183,6 +202,18 @@ if exist "configs\config.yaml" (
     ) > "%OUTPUT_DIR%\configs\config.yaml"
     echo [OK] Default configuration created
 )
+
+REM Copy ClickHouse config
+if exist "clickhouse\config.xml" (
+    copy "clickhouse\config.xml" "%OUTPUT_DIR%\clickhouse\config.xml" >nul
+    echo [OK] ClickHouse configuration copied
+)
+
+REM Copy ClickHouse setup script
+if exist "setup-clickhouse.bat" (
+    copy "setup-clickhouse.bat" "%OUTPUT_DIR%\Setup-ClickHouse.bat" >nul
+    echo [OK] ClickHouse setup script copied
+)
 echo.
 
 REM ----------------------------------------
@@ -190,17 +221,16 @@ REM Step 6: Create Portable Launcher Scripts
 REM ----------------------------------------
 echo [STEP 6/7] Creating portable launcher scripts...
 
-REM Main launcher - Start Service
+REM Main launcher - Start Service with ClickHouse
 (
     echo @echo off
     echo REM ============================================
     echo REM Boundary-SIEM Portable Launcher
-    echo REM Run from USB drive or any location
+    echo REM Automatically starts ClickHouse and SIEM
     echo REM ============================================
     echo.
     echo setlocal enabledelayedexpansion
     echo.
-    echo REM Get the directory where this script is located
     echo set "PORTABLE_DIR=%%~dp0"
     echo cd /d "%%PORTABLE_DIR%%"
     echo.
@@ -215,26 +245,63 @@ REM Main launcher - Start Service
     echo REM Check if binary exists
     echo if not exist "bin\siem-ingest.exe" ^(
     echo     echo [ERROR] Binary not found: bin\siem-ingest.exe
-    echo     echo         This portable package may be corrupted.
     echo     pause
     echo     exit /b 1
     echo ^)
     echo.
+    echo REM ----------------------------------------
+    echo REM Start ClickHouse if available
+    echo REM ----------------------------------------
+    echo set "CH_EXE=clickhouse\clickhouse.exe"
+    echo set "CH_RUNNING=0"
+    echo.
+    echo if exist "%%CH_EXE%%" ^(
+    echo     echo [INFO] Checking ClickHouse...
+    echo     tasklist /FI "IMAGENAME eq clickhouse.exe" 2^>nul ^| find /i "clickhouse.exe" ^>nul
+    echo     if ^^!ERRORLEVEL^^! equ 0 ^(
+    echo         echo [OK] ClickHouse already running
+    echo         set "CH_RUNNING=1"
+    echo     ^) else ^(
+    echo         echo [INFO] Starting ClickHouse server...
+    echo         start "ClickHouse" /MIN cmd /c "cd /d "%%PORTABLE_DIR%%clickhouse" ^&^& clickhouse.exe server --config-file=config.xml 2^>logs\stderr.log"
+    echo         timeout /t 3 /nobreak ^>nul
+    echo         tasklist /FI "IMAGENAME eq clickhouse.exe" 2^>nul ^| find /i "clickhouse.exe" ^>nul
+    echo         if ^^!ERRORLEVEL^^! equ 0 ^(
+    echo             echo [OK] ClickHouse started
+    echo             set "CH_RUNNING=1"
+    echo         ^) else ^(
+    echo             echo [WARNING] ClickHouse may not have started
+    echo         ^)
+    echo     ^)
+    echo ^) else ^(
+    echo     echo [WARNING] ClickHouse not installed
+    echo     echo           Run Setup-ClickHouse.bat to install it
+    echo ^)
+    echo echo.
+    echo.
     echo echo ----------------------------------------
     echo echo  Endpoints:
-    echo echo    HTTP API:    http://localhost:8080
-    echo echo    Health:      http://localhost:8080/health
-    echo echo    CEF TCP:     localhost:5515
+    echo echo    HTTP API:     http://localhost:8080
+    echo echo    Search API:   http://localhost:8080/v1/search
+    echo echo    Health:       http://localhost:8080/health
+    echo echo    CEF TCP:      localhost:5515
+    echo echo    ClickHouse:   %%CH_RUNNING%% ^(1=running^)
     echo echo ----------------------------------------
     echo echo.
     echo echo Press Ctrl+C to stop the service
     echo echo.
     echo.
-    echo REM Start service with config from portable directory
+    echo REM Start SIEM service
     echo "%%PORTABLE_DIR%%bin\siem-ingest.exe" -config "%%PORTABLE_DIR%%configs\config.yaml"
     echo.
     echo echo.
-    echo echo [INFO] Service stopped
+    echo echo [INFO] SIEM service stopped
+    echo.
+    echo REM Stop ClickHouse when SIEM stops
+    echo if exist "%%CH_EXE%%" ^(
+    echo     echo [INFO] Stopping ClickHouse...
+    echo     taskkill /F /IM clickhouse.exe ^>nul 2^>nul
+    echo ^)
     echo pause
 ) > "%OUTPUT_DIR%\Start-SIEM.bat"
 echo [OK] Start-SIEM.bat created
@@ -296,15 +363,20 @@ REM Quick info script
     echo echo directly from a USB drive without installation.
     echo echo.
     echo echo FILES:
-    echo echo   Start-SIEM.bat   - Start the SIEM service
-    echo echo   Start-TUI.bat    - Launch terminal dashboard
-    echo echo   bin\             - Executable files
-    echo echo   configs\         - Configuration files
-    echo echo   data\            - Event data storage
-    echo echo   logs\            - Application logs
+    echo echo   Setup-ClickHouse.bat - Download ClickHouse ^(first time^)
+    echo echo   Start-SIEM.bat       - Start the SIEM service
+    echo echo   Start-TUI.bat        - Launch terminal dashboard
+    echo echo   bin\                 - Executable files
+    echo echo   configs\             - Configuration files
+    echo echo   clickhouse\          - ClickHouse database
+    echo echo   data\                - Event data storage
+    echo echo   logs\                - Application logs
+    echo echo.
+    echo echo FIRST TIME SETUP:
+    echo echo   1. Run Setup-ClickHouse.bat to download ClickHouse
     echo echo.
     echo echo QUICK START:
-    echo echo   1. Run Start-SIEM.bat to start the service
+    echo echo   1. Run Start-SIEM.bat ^(auto-starts ClickHouse^)
     echo echo   2. Run Start-TUI.bat in another window
     echo echo   3. Access http://localhost:8080 in browser
     echo echo.
@@ -347,9 +419,10 @@ echo Output Directory: %OUTPUT_DIR%\
 echo.
 echo Contents:
 for /f %%a in ('dir /s /b "%OUTPUT_DIR%\bin\*.exe" 2^>nul ^| find /c ".exe"') do echo   Executables: %%a
-echo   - Start-SIEM.bat  (Service launcher)
-echo   - Start-TUI.bat   (Dashboard launcher)
-echo   - README.bat      (Quick help)
+echo   - Setup-ClickHouse.bat  (Download ClickHouse - first time)
+echo   - Start-SIEM.bat        (Service launcher + ClickHouse)
+echo   - Start-TUI.bat         (Dashboard launcher)
+echo   - README.bat            (Quick help)
 echo.
 
 REM Show file sizes
@@ -365,9 +438,14 @@ echo ========================================
 echo    USB Drive Instructions
 echo ========================================
 echo.
-echo 1. Copy the entire '%OUTPUT_DIR%' folder to your USB drive
-echo 2. Run 'Start-SIEM.bat' to launch the service
-echo 3. Run 'Start-TUI.bat' to open the dashboard
+echo FIRST TIME SETUP:
+echo   1. Copy '%OUTPUT_DIR%' folder to USB drive
+echo   2. Run 'Setup-ClickHouse.bat' to download ClickHouse
+echo.
+echo RUNNING THE SIEM:
+echo   1. Run 'Start-SIEM.bat' (auto-starts ClickHouse)
+echo   2. Run 'Start-TUI.bat' in another window
+echo   3. Access http://localhost:8080 in browser
 echo.
 echo No installation required - runs directly from USB!
 echo All data stays within the portable folder.
