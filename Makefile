@@ -11,6 +11,7 @@ GOMOD=$(GOCMD) mod
 
 # Binary names
 BINARY_INGEST=siem-ingest
+BINARY_TUI=boundary-siem
 
 # Directories
 CMD_DIR=./cmd
@@ -28,16 +29,25 @@ deps:
 	$(GOMOD) tidy
 
 ## build: Build all binaries
-build: build-ingest
+build: build-ingest build-tui
 
 ## build-ingest: Build the ingest service
 build-ingest:
 	mkdir -p $(BIN_DIR)
 	$(GOBUILD) $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY_INGEST) $(CMD_DIR)/siem-ingest
 
+## build-tui: Build the TUI application
+build-tui:
+	mkdir -p $(BIN_DIR)
+	$(GOBUILD) $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY_TUI) $(CMD_DIR)/boundary-siem
+
 ## run: Run the ingest service
 run:
 	$(GORUN) $(CMD_DIR)/siem-ingest/main.go
+
+## run-tui: Run the TUI application
+run-tui:
+	$(GORUN) $(CMD_DIR)/boundary-siem/main.go
 
 ## test: Run all tests
 test:
