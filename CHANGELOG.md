@@ -7,8 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned
+- ML/UEBA anomaly detection
+- Advanced visualizations
+- Mobile application
+- Attack simulation framework
+- Multi-chain unified dashboard
+
+## [1.0.0-beta] - 2026-01-09
+
 ### Added
-- **Security Audit & Remediation** (2026-01-02)
+
+#### Terminal User Interface (TUI)
+- **Dashboard Scene**: Real-time health status, event metrics, queue statistics
+  - Activity status display with descriptive icons
+  - Queue processing metrics (pushed/popped/dropped)
+  - Color-coded queue usage indicator
+  - Service status overview
+- **Events Scene**: Browse and search real security events
+  - Fetches real events from `/v1/search` API endpoint
+  - Severity-based color coding (CRITICAL, HIGH, MEDIUM, LOW, INFO)
+  - Manual refresh with `[r]` key, auto-refresh every 5 seconds
+  - Scroll navigation with keyboard
+- **System Scene**: Server configuration and integration status
+  - Backend connection status and health
+  - Server endpoint configuration (HTTP, CEF TCP/UDP/DTLS)
+  - Queue configuration and statistics
+  - Available integrations list
+- **Bubbletea Framework**: Modern terminal UI with lipgloss styling
+- **Scene Management**: Only active scene ticks for performance
+- **Cross-platform**: Works on Windows, macOS, and Linux
+
+#### Startup Diagnostics
+- Comprehensive startup checks with verbose logging
+- System environment validation
+- Directory creation and permissions check
+- Configuration validation
+- Port availability testing
+- Security configuration warnings
+- Module status reporting
+- Storage connectivity checks
+
+#### Windows Support
+- `build.bat`: One-click setup (directories, certs, build)
+- `start.bat`: Launch SIEM server with status display
+- `run-tui.bat`: Launch Terminal UI
+
+#### Security Enhancements
+- DTLS support for secure UDP CEF ingestion
+- Insecure plain UDP disabled by default
+- Self-signed certificate generation in build.bat
+
+### Changed
+- **CEF Ports Updated**: UDP 5514, TCP 5515, DTLS 5516
+- **Events API**: Now fetches real events from search API instead of demo data
+- **Queue Metrics**: Added pushed/popped/dropped counters to dashboard
+- **Activity Monitor**: Integrated `/api/system/dreaming` endpoint
+
+### Security
+- **Security Audit & Remediation**
   - Comprehensive security audit with zero backdoors/exploits detected
   - Automated dependency vulnerability scanning (govulncheck, gosec, Trivy, Nancy)
   - GitHub Actions workflow for daily security scans
@@ -18,35 +75,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Top-level SECURITY.md for vulnerability disclosure policy
   - Comprehensive security audit report (`SECURITY_AUDIT_REPORT.md`)
 
-### Changed
-- **Admin Password Security** (2026-01-02)
+- **Admin Password Security**
   - Generated admin passwords now written to secure file (0600 permissions)
   - Removed plaintext password logging
   - Password file includes security notice and deletion instructions
   - Fallback to current directory if `/var/lib` not writable
 
-- **Encryption Key Rotation** (2026-01-02)
+- **Encryption Key Rotation**
   - Enhanced key rotation with backward compatibility
   - Old keys stored for seamless decryption
   - Added `ReEncrypt()` method for data migration to new keys
   - New key management APIs: `GetKeyVersion()`, `GetOldKeyVersions()`, `PurgeOldKeys()`
   - Version validation prevents key version downgrade
 
-### Security
-- **Vulnerability Scanning** (2026-01-02)
+- **Vulnerability Scanning**
   - Daily automated scans with 5 security tools
   - PR blocking on moderate+ severity vulnerabilities
   - SARIF output to GitHub Security tab
   - 30-day artifact retention for scan results
   - License compliance checking
 
-- **Error Sanitization** (2026-01-02)
-  - Production mode removes sensitive info (paths, IPs, SQL details)
-  - Development mode preserves full errors for debugging
-  - User-facing errors pass through unchanged
-  - Stack trace removal in production
-
-- **Security Posture** (2026-01-02)
+- **Security Posture**
   - Security Level: ★★★★★ (5/5) - Excellent
   - Risk Level: Very Low
   - 100% remediation of audit findings
@@ -122,16 +171,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Kafka 3.5+ (optional, for HA)
 - Docker & Docker Compose (for development)
 
-## [Unreleased]
-
-### Planned
-- ML/UEBA anomaly detection
-- Advanced visualizations
-- Mobile application
-- Attack simulation framework
-- Multi-chain unified dashboard
-
 ---
 
+[Unreleased]: https://github.com/kase1111-hash/Boundary-SIEM/compare/v1.0.0-beta...HEAD
+[1.0.0-beta]: https://github.com/kase1111-hash/Boundary-SIEM/compare/v0.1.0-alpha...v1.0.0-beta
 [0.1.0-alpha]: https://github.com/kase1111-hash/Boundary-SIEM/releases/tag/v0.1.0-alpha
-[Unreleased]: https://github.com/kase1111-hash/Boundary-SIEM/compare/v0.1.0-alpha...HEAD
