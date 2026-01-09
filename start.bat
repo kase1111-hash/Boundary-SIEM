@@ -35,8 +35,9 @@ echo ----------------------------------------
 echo  HTTP API:    http://localhost:8080
 echo  Health:      http://localhost:8080/health
 echo  Metrics:     http://localhost:8080/metrics
-echo  CEF UDP:     localhost:5514
 echo  CEF TCP:     localhost:5515
+echo  CEF UDP:     DISABLED (insecure)
+echo  CEF DTLS:    localhost:5516 (if enabled)
 echo ----------------------------------------
 echo.
 echo Press Ctrl+C to stop the service

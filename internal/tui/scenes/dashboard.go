@@ -113,25 +113,50 @@ func (d *DashboardScene) View() string {
 		b.WriteString("\n")
 	}
 
-	// Status indicator
+	// Status indicator with explanation
 	var statusText string
 	if d.stats.Healthy {
 		statusText = styles.StatusOK.Render("● HEALTHY")
+	} else if d.stats.HealthStatus == "degraded" {
+		statusText = styles.StatusWarning.Render("● DEGRADED")
 	} else {
 		statusText = styles.StatusError.Render("● UNHEALTHY")
 	}
-	b.WriteString(fmt.Sprintf("  Status: %s\n\n", statusText))
+	b.WriteString(fmt.Sprintf("  Status: %s", statusText))
 
-	// Metrics cards in a row
-	cards := []string{
-		d.renderMetricCard("Events Total", formatNumber(d.stats.EventsTotal)),
-		d.renderMetricCard("Events/sec", fmt.Sprintf("%.1f", d.stats.EventsPerSecond)),
-		d.renderMetricCard("Queue", fmt.Sprintf("%d/%d", d.stats.QueueSize, d.stats.QueueCapacity)),
-		d.renderMetricCard("Uptime", d.stats.Uptime),
+	// Show reason
+	if d.stats.StatusReason != "" {
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("  (%s)", d.stats.StatusReason)))
+	}
+	b.WriteString("\n\n")
+
+	// Activity status
+	if d.stats.Activity != "" && d.stats.Activity != "unknown" {
+		activityIcon := d.getActivityIcon(d.stats.Activity)
+		b.WriteString(fmt.Sprintf("  Activity: %s %s\n", activityIcon, d.stats.ActivityDesc))
+		b.WriteString("\n")
 	}
 
-	cardRow := lipgloss.JoinHorizontal(lipgloss.Top, cards...)
-	b.WriteString(cardRow)
+	// Metrics cards - Row 1: Overview
+	cards1 := []string{
+		d.renderMetricCard("Events Total", formatNumber(d.stats.EventsTotal)),
+		d.renderMetricCard("Events/sec", fmt.Sprintf("%.1f", d.stats.EventsPerSecond)),
+		d.renderMetricCard("Queue Depth", fmt.Sprintf("%d/%d", d.stats.QueueSize, d.stats.QueueCapacity)),
+		d.renderMetricCard("Uptime", d.stats.Uptime),
+	}
+	cardRow1 := lipgloss.JoinHorizontal(lipgloss.Top, cards1...)
+	b.WriteString(cardRow1)
+	b.WriteString("\n")
+
+	// Metrics cards - Row 2: Queue Processing
+	cards2 := []string{
+		d.renderMetricCard("Pushed", formatNumber(d.stats.QueuePushed)),
+		d.renderMetricCard("Popped", formatNumber(d.stats.QueuePopped)),
+		d.renderMetricCard("Dropped", formatNumber(d.stats.QueueDropped)),
+		d.renderQueueUsageCard(d.stats.QueueUsage),
+	}
+	cardRow2 := lipgloss.JoinHorizontal(lipgloss.Top, cards2...)
+	b.WriteString(cardRow2)
 	b.WriteString("\n\n")
 
 	// Service status section
@@ -165,21 +190,37 @@ func (d *DashboardScene) renderMetricCard(label, value string) string {
 }
 
 func (d *DashboardScene) renderServiceStatus() string {
+	// Services with their actual status based on typical secure defaults
 	services := []struct {
-		name   string
-		status string
-		port   string
+		name    string
+		enabled bool
+		port    string
 	}{
-		{"HTTP API", "running", "8080"},
-		{"CEF UDP", "running", "5514"},
-		{"CEF TCP", "running", "5515"},
-		{"Queue Consumer", "running", "-"},
+		{"HTTP API", true, "8080"},
+		{"CEF TCP", true, "5515"},
+		{"CEF UDP", false, "5514"},  // Disabled by default (insecure)
+		{"CEF DTLS", false, "5516"}, // Disabled until certs configured
+		{"Queue Consumer", true, "-"},
+		{"Storage", false, "-"}, // Placeholder mode
 	}
 
 	var rows []string
 	for _, svc := range services {
-		status := styles.StatusOK.Render("●")
-		row := fmt.Sprintf("  %s %-16s Port: %s", status, svc.name, svc.port)
+		var statusIcon, statusText string
+		if svc.enabled {
+			statusIcon = styles.StatusOK.Render("●")
+			statusText = ""
+		} else {
+			statusIcon = styles.Muted.Render("○")
+			statusText = styles.Muted.Render(" (disabled)")
+		}
+
+		portText := svc.port
+		if svc.port == "-" {
+			portText = "-"
+		}
+
+		row := fmt.Sprintf("  %s %-16s Port: %-6s%s", statusIcon, svc.name, portText, statusText)
 		rows = append(rows, row)
 	}
 
@@ -194,4 +235,46 @@ func formatNumber(n int64) string {
 		return fmt.Sprintf("%.1fK", float64(n)/1000)
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+func (d *DashboardScene) getActivityIcon(activity string) string {
+	switch activity {
+	case "waiting":
+		return styles.Muted.Render("◇")
+	case "low_activity":
+		return styles.StatusOK.Render("◆")
+	case "ingesting":
+		return styles.StatusOK.Render("▶")
+	case "processing_events", "high_throughput":
+		return styles.StatusWarning.Render("▶▶")
+	case "processing_backlog":
+		return styles.StatusError.Render("▶▶▶")
+	default:
+		return styles.Muted.Render("○")
+	}
+}
+
+func (d *DashboardScene) renderQueueUsageCard(usage float64) string {
+	card := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(styles.MutedColor).
+		Padding(0, 2).
+		Width(18).
+		Align(lipgloss.Center)
+
+	var usageStyle lipgloss.Style
+	if usage >= 90 {
+		usageStyle = styles.StatusError
+	} else if usage >= 70 {
+		usageStyle = styles.StatusWarning
+	} else {
+		usageStyle = styles.StatusOK
+	}
+
+	content := fmt.Sprintf("%s\n%s",
+		usageStyle.Render(fmt.Sprintf("%.1f%%", usage)),
+		styles.MetricLabel.Render("Queue Usage"),
+	)
+
+	return card.Render(content)
 }
