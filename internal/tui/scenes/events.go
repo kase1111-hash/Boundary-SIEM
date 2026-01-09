@@ -15,21 +15,24 @@ import (
 
 // EventsScene displays recent security events
 type EventsScene struct {
-	client   *api.Client
-	events   []api.Event
-	err      error
-	width    int
-	height   int
-	cursor   int
-	offset   int
-	loading  bool
-	maxRows  int
+	client     *api.Client
+	events     []api.Event
+	totalCount int64
+	err        string
+	width      int
+	height     int
+	cursor     int
+	offset     int
+	loading    bool
+	maxRows    int
+	lastUpdate time.Time
 }
 
 // eventsMsg carries updated events
 type eventsMsg struct {
-	events []api.Event
-	err    error
+	events     []api.Event
+	totalCount int64
+	err        string
 }
 
 // NewEventsScene creates a new events scene
@@ -37,15 +40,30 @@ func NewEventsScene(client *api.Client) *EventsScene {
 	return &EventsScene{
 		client:  client,
 		loading: true,
-		events:  generateSampleEvents(), // Use sample events until backend implements events API
 		maxRows: 10,
 	}
 }
 
 // Init initializes the events scene
 func (e *EventsScene) Init() tea.Cmd {
-	e.loading = false // We have sample events ready
-	return nil
+	return e.fetchEvents()
+}
+
+// fetchEvents fetches events from the API
+func (e *EventsScene) fetchEvents() tea.Cmd {
+	return func() tea.Msg {
+		resp, err := e.client.GetEvents(100)
+		if err != nil {
+			return eventsMsg{err: err.Error()}
+		}
+		if resp.Error != "" {
+			return eventsMsg{err: resp.Error}
+		}
+		return eventsMsg{
+			events:     resp.Events,
+			totalCount: resp.TotalCount,
+		}
+	}
 }
 
 // TickCmd returns a command that ticks every interval
@@ -61,7 +79,7 @@ func (e *EventsScene) Update(msg tea.Msg) (*EventsScene, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		e.width = msg.Width
 		e.height = msg.Height
-		e.maxRows = max(5, e.height-10)
+		e.maxRows = max(5, e.height-12)
 		return e, nil
 
 	case tea.KeyMsg:
@@ -86,23 +104,29 @@ func (e *EventsScene) Update(msg tea.Msg) (*EventsScene, tea.Cmd) {
 		case "pgdown":
 			e.cursor = min(len(e.events)-1, e.cursor+e.maxRows)
 			e.offset = min(max(0, len(e.events)-e.maxRows), e.offset+e.maxRows)
+		case "r":
+			// Manual refresh
+			e.loading = true
+			return e, e.fetchEvents()
 		}
 		return e, nil
 
 	case eventsMsg:
 		e.loading = false
 		e.events = msg.events
+		e.totalCount = msg.totalCount
 		e.err = msg.err
+		e.lastUpdate = time.Now()
+		// Reset cursor if out of bounds
+		if e.cursor >= len(e.events) {
+			e.cursor = max(0, len(e.events)-1)
+		}
 		return e, nil
 
 	case TickMsg:
 		if msg.Scene == "events" {
-			// Add a new sample event to simulate real-time updates
-			e.events = append([]api.Event{generateRandomEvent()}, e.events...)
-			if len(e.events) > 100 {
-				e.events = e.events[:100]
-			}
-			return e, nil
+			// Auto-refresh events
+			return e, e.fetchEvents()
 		}
 		return e, nil
 	}
@@ -119,35 +143,48 @@ func (e *EventsScene) View() string {
 	b.WriteString(title)
 	b.WriteString("\n\n")
 
-	if e.loading {
-		b.WriteString(styles.Muted.Render("Loading events..."))
+	if e.loading && len(e.events) == 0 {
+		b.WriteString(styles.Muted.Render("  Loading events..."))
 		return b.String()
 	}
 
-	if e.err != nil {
-		b.WriteString(styles.StatusError.Render(fmt.Sprintf("Error: %v", e.err)))
+	// Error display
+	if e.err != "" {
+		b.WriteString(styles.StatusError.Render(fmt.Sprintf("  Error: %s", e.err)))
 		b.WriteString("\n\n")
+		b.WriteString(styles.Muted.Render("  Make sure storage is enabled in config.yaml to persist and query events."))
+		b.WriteString("\n")
+		b.WriteString(styles.Muted.Render("  Press [r] to retry."))
+		return b.String()
 	}
 
-	// Demo mode notice
-	b.WriteString(styles.StatusWarning.Render("  ⚠ DEMO MODE"))
-	b.WriteString(styles.Muted.Render(" - Showing simulated events"))
-	b.WriteString("\n")
-	b.WriteString(styles.Muted.Render("  Enable storage in config.yaml to persist and query real events"))
-	b.WriteString("\n\n")
+	// No events
+	if len(e.events) == 0 {
+		b.WriteString(styles.Muted.Render("  No events found."))
+		b.WriteString("\n\n")
+		b.WriteString(styles.Muted.Render("  Events will appear here once they are ingested and storage is configured."))
+		b.WriteString("\n")
+		b.WriteString(styles.Muted.Render("  Send events via the HTTP API (POST /v1/events) or CEF endpoints."))
+		return b.String()
+	}
 
-	// Event count
-	b.WriteString(styles.Subtitle.Render(fmt.Sprintf("  Showing %d simulated events", len(e.events))))
+	// Event count and status
+	countText := fmt.Sprintf("  Showing %d of %d events", len(e.events), e.totalCount)
+	b.WriteString(styles.Subtitle.Render(countText))
+	if e.loading {
+		b.WriteString(styles.Muted.Render("  (refreshing...)"))
+	}
 	b.WriteString("\n\n")
 
 	// Table header
 	header := fmt.Sprintf("  %-20s %-10s %-15s %s",
-		"Timestamp", "Severity", "Source", "Message")
+		"Timestamp", "Severity", "Source", "Action")
 	b.WriteString(styles.TableHeader.Render(header))
 	b.WriteString("\n")
 
 	// Table rows
-	visibleEvents := e.events[e.offset:min(e.offset+e.maxRows, len(e.events))]
+	endIdx := min(e.offset+e.maxRows, len(e.events))
+	visibleEvents := e.events[e.offset:endIdx]
 	for i, event := range visibleEvents {
 		idx := e.offset + i
 		row := e.renderEventRow(event, idx == e.cursor)
@@ -157,9 +194,16 @@ func (e *EventsScene) View() string {
 
 	// Scroll indicator
 	if len(e.events) > e.maxRows {
-		scrollInfo := fmt.Sprintf("\n  %d-%d of %d (↑↓ to scroll)",
-			e.offset+1, min(e.offset+e.maxRows, len(e.events)), len(e.events))
+		scrollInfo := fmt.Sprintf("\n  %d-%d of %d (↑↓ to scroll, [r] refresh)",
+			e.offset+1, endIdx, len(e.events))
 		b.WriteString(styles.Muted.Render(scrollInfo))
+	} else {
+		b.WriteString(styles.Muted.Render("\n  [r] Refresh"))
+	}
+
+	// Last update time
+	if !e.lastUpdate.IsZero() {
+		b.WriteString(styles.Muted.Render(fmt.Sprintf("  |  Updated: %s", e.lastUpdate.Format("15:04:05"))))
 	}
 
 	return b.String()
@@ -169,9 +213,9 @@ func (e *EventsScene) renderEventRow(event api.Event, selected bool) string {
 	timestamp := event.Timestamp.Format("15:04:05")
 	severity := e.formatSeverity(event.Severity)
 	source := truncate(event.Source, 15)
-	message := truncate(event.Message, 50)
+	action := truncate(event.Message, 50)
 
-	row := fmt.Sprintf("  %-20s %s %-15s %s", timestamp, severity, source, message)
+	row := fmt.Sprintf("  %-20s %s %-15s %s", timestamp, severity, source, action)
 
 	if selected {
 		return lipgloss.NewStyle().
@@ -183,20 +227,31 @@ func (e *EventsScene) renderEventRow(event api.Event, selected bool) string {
 	return row
 }
 
-func (e *EventsScene) formatSeverity(sev string) string {
+func (e *EventsScene) formatSeverity(sev int) string {
 	width := 10
-	padded := fmt.Sprintf("%-*s", width, sev)
+	var label string
+	var style lipgloss.Style
 
-	switch strings.ToLower(sev) {
-	case "critical", "high":
-		return styles.StatusError.Render(padded)
-	case "medium", "warning":
-		return styles.StatusWarning.Render(padded)
-	case "low", "info":
-		return styles.StatusOK.Render(padded)
+	switch {
+	case sev >= 8:
+		label = "CRITICAL"
+		style = styles.StatusError
+	case sev >= 6:
+		label = "HIGH"
+		style = styles.StatusError
+	case sev >= 4:
+		label = "MEDIUM"
+		style = styles.StatusWarning
+	case sev >= 2:
+		label = "LOW"
+		style = styles.StatusOK
 	default:
-		return styles.Muted.Render(padded)
+		label = "INFO"
+		style = styles.Muted
 	}
+
+	padded := fmt.Sprintf("%-*s", width, label)
+	return style.Render(padded)
 }
 
 func truncate(s string, maxLen int) string {
@@ -204,45 +259,4 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
-}
-
-func generateSampleEvents() []api.Event {
-	now := time.Now()
-	events := []api.Event{
-		{ID: "1", Timestamp: now.Add(-1 * time.Minute), Source: "firewall", Severity: "high", Message: "Blocked connection from suspicious IP"},
-		{ID: "2", Timestamp: now.Add(-2 * time.Minute), Source: "auth-svc", Severity: "medium", Message: "Multiple failed login attempts"},
-		{ID: "3", Timestamp: now.Add(-3 * time.Minute), Source: "api-gateway", Severity: "low", Message: "Rate limit threshold reached"},
-		{ID: "4", Timestamp: now.Add(-4 * time.Minute), Source: "storage", Severity: "info", Message: "Batch write completed"},
-		{ID: "5", Timestamp: now.Add(-5 * time.Minute), Source: "cef-udp", Severity: "low", Message: "Received 1000 events"},
-		{ID: "6", Timestamp: now.Add(-6 * time.Minute), Source: "queue", Severity: "warning", Message: "Queue depth above 80%"},
-		{ID: "7", Timestamp: now.Add(-7 * time.Minute), Source: "blockchain", Severity: "high", Message: "Suspicious transaction pattern detected"},
-		{ID: "8", Timestamp: now.Add(-8 * time.Minute), Source: "network", Severity: "medium", Message: "Unusual outbound traffic volume"},
-		{ID: "9", Timestamp: now.Add(-9 * time.Minute), Source: "endpoint", Severity: "critical", Message: "Malware signature detected"},
-		{ID: "10", Timestamp: now.Add(-10 * time.Minute), Source: "cloud-aws", Severity: "info", Message: "IAM policy change detected"},
-	}
-	return events
-}
-
-var eventCounter = 10
-
-func generateRandomEvent() api.Event {
-	eventCounter++
-	sources := []string{"firewall", "auth-svc", "api-gateway", "blockchain", "network", "endpoint"}
-	severities := []string{"info", "low", "medium", "high", "critical"}
-	messages := []string{
-		"Connection attempt blocked",
-		"Authentication event",
-		"Rate limit triggered",
-		"Anomaly detected",
-		"Policy violation",
-		"Configuration change",
-	}
-
-	return api.Event{
-		ID:        fmt.Sprintf("%d", eventCounter),
-		Timestamp: time.Now(),
-		Source:    sources[eventCounter%len(sources)],
-		Severity:  severities[eventCounter%len(severities)],
-		Message:   messages[eventCounter%len(messages)],
-	}
 }
