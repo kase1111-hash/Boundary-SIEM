@@ -19,8 +19,7 @@ type Scene int
 const (
 	SceneDashboard Scene = iota
 	SceneEvents
-	SceneAlerts
-	SceneConfig
+	SceneSystem
 )
 
 // Model is the main TUI model
@@ -33,6 +32,7 @@ type Model struct {
 	// Scene models - only the active one receives updates
 	dashboard *scenes.DashboardScene
 	events    *scenes.EventsScene
+	system    *scenes.SystemScene
 
 	// Window dimensions
 	width  int
@@ -51,6 +51,7 @@ func New(baseURL string) *Model {
 		scene:     SceneDashboard,
 		dashboard: scenes.NewDashboardScene(client),
 		events:    scenes.NewEventsScene(client),
+		system:    scenes.NewSystemScene(client),
 	}
 }
 
@@ -72,6 +73,8 @@ func (m *Model) getActiveSceneTickCmd() tea.Cmd {
 		return m.dashboard.TickCmd()
 	case SceneEvents:
 		return m.events.TickCmd()
+	case SceneSystem:
+		return m.system.TickCmd()
 	default:
 		return nil
 	}
@@ -105,9 +108,17 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 
+		case "3":
+			if m.scene != SceneSystem {
+				m.scene = SceneSystem
+				// Re-init system and start its ticker
+				cmds = append(cmds, m.system.Init(), m.system.TickCmd())
+			}
+			return m, tea.Batch(cmds...)
+
 		// Tab key cycles through scenes
 		case "tab":
-			m.scene = (m.scene + 1) % 2 // Only 2 scenes for now
+			m.scene = (m.scene + 1) % 3 // 3 scenes
 			// Start the new scene's ticker
 			cmds = append(cmds, m.getActiveSceneTickCmd())
 			return m, tea.Batch(cmds...)
@@ -119,6 +130,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Pass to all scenes so they can adjust
 		m.dashboard, _ = m.dashboard.Update(msg)
 		m.events, _ = m.events.Update(msg)
+		m.system, _ = m.system.Update(msg)
 		return m, nil
 
 	case scenes.TickMsg:
@@ -140,6 +152,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Schedule next tick for events only
 			cmds = append(cmds, m.events.TickCmd())
+		case SceneSystem:
+			m.system, cmd = m.system.Update(msg)
+			if cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			// Schedule next tick for system only
+			cmds = append(cmds, m.system.TickCmd())
 		}
 		return m, tea.Batch(cmds...)
 	}
@@ -151,6 +170,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.dashboard, cmd = m.dashboard.Update(msg)
 	case SceneEvents:
 		m.events, cmd = m.events.Update(msg)
+	case SceneSystem:
+		m.system, cmd = m.system.Update(msg)
 	}
 
 	if cmd != nil {
@@ -178,6 +199,8 @@ func (m *Model) View() string {
 		b.WriteString(m.dashboard.View())
 	case SceneEvents:
 		b.WriteString(m.events.View())
+	case SceneSystem:
+		b.WriteString(m.system.View())
 	}
 
 	// Footer with help
@@ -195,6 +218,7 @@ func (m *Model) renderHeader() string {
 	}{
 		{"Dashboard", "1", SceneDashboard},
 		{"Events", "2", SceneEvents},
+		{"System", "3", SceneSystem},
 	}
 
 	var tabViews []string
@@ -220,7 +244,7 @@ func (m *Model) renderHeader() string {
 }
 
 func (m *Model) renderFooter() string {
-	help := " [1-2] Switch tabs  [Tab] Next tab  [↑↓/jk] Navigate  [q] Quit "
+	help := " [1-3] Switch tabs  [Tab] Next tab  [↑↓/jk] Navigate  [q] Quit "
 	return styles.Help.Render(help)
 }
 

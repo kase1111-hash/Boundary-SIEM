@@ -130,16 +130,33 @@ func (d *DashboardScene) View() string {
 	}
 	b.WriteString("\n\n")
 
-	// Metrics cards in a row
-	cards := []string{
-		d.renderMetricCard("Events Total", formatNumber(d.stats.EventsTotal)),
-		d.renderMetricCard("Events/sec", fmt.Sprintf("%.1f", d.stats.EventsPerSecond)),
-		d.renderMetricCard("Queue", fmt.Sprintf("%d/%d", d.stats.QueueSize, d.stats.QueueCapacity)),
-		d.renderMetricCard("Uptime", d.stats.Uptime),
+	// Activity status
+	if d.stats.Activity != "" && d.stats.Activity != "unknown" {
+		activityIcon := d.getActivityIcon(d.stats.Activity)
+		b.WriteString(fmt.Sprintf("  Activity: %s %s\n", activityIcon, d.stats.ActivityDesc))
+		b.WriteString("\n")
 	}
 
-	cardRow := lipgloss.JoinHorizontal(lipgloss.Top, cards...)
-	b.WriteString(cardRow)
+	// Metrics cards - Row 1: Overview
+	cards1 := []string{
+		d.renderMetricCard("Events Total", formatNumber(d.stats.EventsTotal)),
+		d.renderMetricCard("Events/sec", fmt.Sprintf("%.1f", d.stats.EventsPerSecond)),
+		d.renderMetricCard("Queue Depth", fmt.Sprintf("%d/%d", d.stats.QueueSize, d.stats.QueueCapacity)),
+		d.renderMetricCard("Uptime", d.stats.Uptime),
+	}
+	cardRow1 := lipgloss.JoinHorizontal(lipgloss.Top, cards1...)
+	b.WriteString(cardRow1)
+	b.WriteString("\n")
+
+	// Metrics cards - Row 2: Queue Processing
+	cards2 := []string{
+		d.renderMetricCard("Pushed", formatNumber(d.stats.QueuePushed)),
+		d.renderMetricCard("Popped", formatNumber(d.stats.QueuePopped)),
+		d.renderMetricCard("Dropped", formatNumber(d.stats.QueueDropped)),
+		d.renderQueueUsageCard(d.stats.QueueUsage),
+	}
+	cardRow2 := lipgloss.JoinHorizontal(lipgloss.Top, cards2...)
+	b.WriteString(cardRow2)
 	b.WriteString("\n\n")
 
 	// Service status section
@@ -218,4 +235,46 @@ func formatNumber(n int64) string {
 		return fmt.Sprintf("%.1fK", float64(n)/1000)
 	}
 	return fmt.Sprintf("%d", n)
+}
+
+func (d *DashboardScene) getActivityIcon(activity string) string {
+	switch activity {
+	case "waiting":
+		return styles.Muted.Render("◇")
+	case "low_activity":
+		return styles.StatusOK.Render("◆")
+	case "ingesting":
+		return styles.StatusOK.Render("▶")
+	case "processing_events", "high_throughput":
+		return styles.StatusWarning.Render("▶▶")
+	case "processing_backlog":
+		return styles.StatusError.Render("▶▶▶")
+	default:
+		return styles.Muted.Render("○")
+	}
+}
+
+func (d *DashboardScene) renderQueueUsageCard(usage float64) string {
+	card := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(styles.MutedColor).
+		Padding(0, 2).
+		Width(18).
+		Align(lipgloss.Center)
+
+	var usageStyle lipgloss.Style
+	if usage >= 90 {
+		usageStyle = styles.StatusError
+	} else if usage >= 70 {
+		usageStyle = styles.StatusWarning
+	} else {
+		usageStyle = styles.StatusOK
+	}
+
+	content := fmt.Sprintf("%s\n%s",
+		usageStyle.Render(fmt.Sprintf("%.1f%%", usage)),
+		styles.MetricLabel.Render("Queue Usage"),
+	)
+
+	return card.Render(content)
 }
