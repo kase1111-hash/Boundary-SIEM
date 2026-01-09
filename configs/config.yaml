@@ -229,3 +229,36 @@ rramodule:
   ingester:
     poll_interval: 30s
     batch_size: 100
+
+# Boundary Daemon integration
+# Enable to ingest security events from Boundary Daemon
+# (session management, authentication, access control, threat detection, policy enforcement)
+boundarydaemon:
+  enabled: false  # Set to true to enable Boundary Daemon integration
+  client:
+    base_url: "http://localhost:9000"  # Boundary Daemon API endpoint
+    api_key: ""  # Set your Boundary Daemon API key
+    timeout: 30s
+    max_retries: 3
+    retry_backoff: 1s
+  ingester:
+    poll_interval: 30s
+    session_batch_size: 500
+    auth_batch_size: 500
+    access_batch_size: 500
+    threat_batch_size: 100
+    policy_batch_size: 200
+    audit_batch_size: 500
+    # Event type toggles
+    ingest_sessions: true
+    ingest_auth: true
+    ingest_access: true
+    ingest_threats: true
+    ingest_policies: true
+    ingest_audit_logs: true
+    verify_audit_logs: false  # Enable to verify cryptographic signatures (slower)
+    min_threat_severity: "low"  # Filter threats by minimum severity (low, medium, high, critical)
+  normalizer:
+    default_tenant_id: "default"
+    source_host: "localhost"
+    source_version: "1.0.0"
