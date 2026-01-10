@@ -5,9 +5,13 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Security](https://img.shields.io/badge/security-★★★★★-brightgreen)
 
-A comprehensive Security Information and Event Management (SIEM) platform designed for blockchain infrastructure protection. Built in Go with high-performance event processing, blockchain-specific detection rules, and enterprise-grade features.
+A comprehensive **AI security monitoring** and **Security Information and Event Management (SIEM)** platform designed for blockchain infrastructure and AI agent ecosystems. This **agent SIEM** provides **cognitive security monitoring** for distributed AI systems, **AI threat detection**, and **security event management** with enterprise-grade features. Built in Go with high-performance event processing, blockchain-specific detection rules, and seamless integration with AI agent architectures.
+
+**SIEM for AI systems** - Monitor AI security events, track agent security logs, and detect threats across your AI infrastructure with a purpose-built security platform.
 
 ## Overview
+
+Boundary-SIEM addresses critical challenges in **AI security monitoring** and **agent threat detection**. As AI systems become more autonomous, organizations need robust tools to monitor AI security events, enforce trust boundaries, and maintain **data ownership** over their AI infrastructure. This platform enables **human-AI collaboration** by providing visibility into agent behavior while supporting **digital sovereignty** through self-hosted deployment options.
 
 **Production-Ready Security:** Enterprise-grade security with ★★★★★ (5/5) rating and zero vulnerabilities. Features include automated daily vulnerability scanning (govulncheck, gosec, Trivy, Nancy), error sanitization for production deployments, backward-compatible encryption key rotation, secure admin password delivery (0600 permissions), rate limiting (1000 req/min), HashiCorp Vault integration, AES-256-GCM encryption at rest, comprehensive HTTP security headers (A+ rating), CSRF protection, Redis session storage, and bcrypt password hashing.
 
@@ -2056,6 +2060,40 @@ All PRs trigger automated security scanning and must pass before merge.
 ## License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Connected Repositories
+
+Boundary-SIEM is part of a larger ecosystem of projects focused on natural language programming, AI agent infrastructure, and digital sovereignty.
+
+### 🤖 Agent-OS Ecosystem
+
+| Repository | Description |
+|------------|-------------|
+| [Agent-OS](https://github.com/kase1111-hash/Agent-OS) | Natural language native operating system for AI agents |
+| [synth-mind](https://github.com/kase1111-hash/synth-mind) | NLOS-based agent with psychological modules for emergent continuity and empathy |
+| [boundary-daemon](https://github.com/kase1111-hash/boundary-daemon-) | Mandatory trust enforcement layer defining cognition boundaries for AI agents |
+| [memory-vault](https://github.com/kase1111-hash/memory-vault) | Secure, offline-capable, owner-sovereign storage for cognitive artifacts |
+| [value-ledger](https://github.com/kase1111-hash/value-ledger) | Economic accounting layer for cognitive work (ideas, effort, novelty) |
+| [learning-contracts](https://github.com/kase1111-hash/learning-contracts) | Safety protocols for AI learning and data management |
+
+### 🔗 NatLangChain Ecosystem
+
+| Repository | Description |
+|------------|-------------|
+| [NatLangChain](https://github.com/kase1111-hash/NatLangChain) | Prose-first, intent-native blockchain protocol for human-readable smart contracts |
+| [IntentLog](https://github.com/kase1111-hash/IntentLog) | Git for human reasoning - tracks "why" changes happen via prose commits |
+| [RRA-Module](https://github.com/kase1111-hash/RRA-Module) | Revenant Repo Agent - converts abandoned repositories into autonomous licensing agents |
+| [mediator-node](https://github.com/kase1111-hash/mediator-node) | LLM mediation layer for matching, negotiation, and closure proposals |
+| [ILR-module](https://github.com/kase1111-hash/ILR-module) | IP & Licensing Reconciliation - dispute resolution for intellectual property conflicts |
+| [Finite-Intent-Executor](https://github.com/kase1111-hash/Finite-Intent-Executor) | Posthumous execution of predefined intent via Solidity smart contracts |
+
+### 🎮 Game Development
+
+| Repository | Description |
+|------------|-------------|
+| [Shredsquatch](https://github.com/kase1111-hash/Shredsquatch) | 3D first-person snowboarding infinite runner (SkiFree homage) |
+| [Midnight-pulse](https://github.com/kase1111-hash/Midnight-pulse) | Procedurally generated synthwave night driving experience |
+| [Long-Home](https://github.com/kase1111-hash/Long-Home) | Atmospheric narrative indie game built with Godot |
 
 ## Acknowledgments
 
