@@ -873,7 +873,7 @@ func TestRequirePermission(t *testing.T) {
 	// Test with permission viewer has (read)
 	handler1 := svc.RequirePermission(PermissionRead)(testHandler)
 	req1 := httptest.NewRequest("GET", "/api/test", nil)
-	req1 = req1.WithContext(context.WithValue(req1.Context(), "user", viewer))
+	req1 = req1.WithContext(context.WithValue(req1.Context(), ContextKeyUser, viewer))
 	w1 := httptest.NewRecorder()
 
 	handler1.ServeHTTP(w1, req1)
@@ -885,7 +885,7 @@ func TestRequirePermission(t *testing.T) {
 	// Test with permission viewer doesn't have (write)
 	handler2 := svc.RequirePermission(PermissionWrite)(testHandler)
 	req2 := httptest.NewRequest("POST", "/api/test", nil)
-	req2 = req2.WithContext(context.WithValue(req2.Context(), "user", viewer))
+	req2 = req2.WithContext(context.WithValue(req2.Context(), ContextKeyUser, viewer))
 	w2 := httptest.NewRecorder()
 
 	handler2.ServeHTTP(w2, req2)
