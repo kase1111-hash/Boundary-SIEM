@@ -250,7 +250,7 @@ const TopSources: React.FC<{ sources: SourceStats[] }> = ({ sources }) => (
   <div className="bg-gray-800 rounded-lg p-4 shadow-lg">
     <h3 className="text-white text-lg font-semibold mb-4">Top Event Sources</h3>
     <div className="space-y-2">
-      {sources.slice(0, 5).map((source, index) => (
+      {sources.slice(0, 5).map((source) => (
         <div key={source.source} className="flex justify-between items-center">
           <span className="text-gray-300 text-sm truncate flex-1">{source.source}</span>
           <span className="text-blue-400 font-medium ml-2">{source.count.toLocaleString()}</span>
