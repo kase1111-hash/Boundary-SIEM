@@ -61,7 +61,7 @@ install_selinux() {
 
     # Check for required tools
     for cmd in checkmodule semodule_package semodule semanage restorecon; do
-        if ! command -v $cmd &> /dev/null; then
+        if ! command -v "$cmd" &> /dev/null; then
             log_error "Required command '$cmd' not found. Install policycoreutils-python-utils."
             exit 1
         fi
