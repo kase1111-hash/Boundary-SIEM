@@ -12,21 +12,21 @@ import (
 
 // IngesterConfig holds configuration for the Boundary Daemon ingester.
 type IngesterConfig struct {
-	PollInterval        time.Duration `yaml:"poll_interval"`
-	SessionBatchSize    int           `yaml:"session_batch_size"`
-	AuthBatchSize       int           `yaml:"auth_batch_size"`
-	AccessBatchSize     int           `yaml:"access_batch_size"`
-	ThreatBatchSize     int           `yaml:"threat_batch_size"`
-	PolicyBatchSize     int           `yaml:"policy_batch_size"`
-	AuditBatchSize      int           `yaml:"audit_batch_size"`
-	IngestSessions      bool          `yaml:"ingest_sessions"`
-	IngestAuth          bool          `yaml:"ingest_auth"`
-	IngestAccess        bool          `yaml:"ingest_access"`
-	IngestThreats       bool          `yaml:"ingest_threats"`
-	IngestPolicies      bool          `yaml:"ingest_policies"`
-	IngestAuditLogs     bool          `yaml:"ingest_audit_logs"`
-	VerifyAuditLogs     bool          `yaml:"verify_audit_logs"`
-	MinThreatSeverity   string        `yaml:"min_threat_severity"`
+	PollInterval      time.Duration `yaml:"poll_interval"`
+	SessionBatchSize  int           `yaml:"session_batch_size"`
+	AuthBatchSize     int           `yaml:"auth_batch_size"`
+	AccessBatchSize   int           `yaml:"access_batch_size"`
+	ThreatBatchSize   int           `yaml:"threat_batch_size"`
+	PolicyBatchSize   int           `yaml:"policy_batch_size"`
+	AuditBatchSize    int           `yaml:"audit_batch_size"`
+	IngestSessions    bool          `yaml:"ingest_sessions"`
+	IngestAuth        bool          `yaml:"ingest_auth"`
+	IngestAccess      bool          `yaml:"ingest_access"`
+	IngestThreats     bool          `yaml:"ingest_threats"`
+	IngestPolicies    bool          `yaml:"ingest_policies"`
+	IngestAuditLogs   bool          `yaml:"ingest_audit_logs"`
+	VerifyAuditLogs   bool          `yaml:"verify_audit_logs"`
+	MinThreatSeverity string        `yaml:"min_threat_severity"`
 }
 
 // DefaultIngesterConfig returns the default ingester configuration.

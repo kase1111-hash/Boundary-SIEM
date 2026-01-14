@@ -115,13 +115,13 @@ func (n *Normalizer) NormalizeSessionEvent(ev *SessionEvent) (*schema.Event, err
 		},
 
 		Metadata: map[string]any{
-			"bd_event_id":     ev.ID,
-			"bd_session_id":   ev.SessionID,
-			"bd_event_type":   ev.EventType,
-			"bd_source_ip":    ev.SourceIP,
-			"bd_dest_ip":      ev.DestIP,
-			"bd_protocol":     ev.Protocol,
-			"bd_port":         ev.Port,
+			"bd_event_id":   ev.ID,
+			"bd_session_id": ev.SessionID,
+			"bd_event_type": ev.EventType,
+			"bd_source_ip":  ev.SourceIP,
+			"bd_dest_ip":    ev.DestIP,
+			"bd_protocol":   ev.Protocol,
+			"bd_port":       ev.Port,
 		},
 	}
 
@@ -224,12 +224,12 @@ func (n *Normalizer) NormalizeAccessEvent(ev *AccessEvent) (*schema.Event, error
 		},
 
 		Metadata: map[string]any{
-			"bd_event_id":     ev.ID,
-			"bd_event_type":   ev.EventType,
-			"bd_session_id":   ev.SessionID,
-			"bd_resource":     ev.Resource,
-			"bd_action":       ev.Action,
-			"bd_granted":      ev.Granted,
+			"bd_event_id":   ev.ID,
+			"bd_event_type": ev.EventType,
+			"bd_session_id": ev.SessionID,
+			"bd_resource":   ev.Resource,
+			"bd_action":     ev.Action,
+			"bd_granted":    ev.Granted,
 		},
 	}
 
