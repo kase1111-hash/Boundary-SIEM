@@ -66,6 +66,16 @@ const (
 	PermissionViewCompliance Permission = "view_compliance"
 )
 
+// contextKey is a typed key for context values to avoid collisions.
+type contextKey string
+
+const (
+	// ContextKeyUser is the context key for the authenticated user.
+	ContextKeyUser contextKey = "user"
+	// ContextKeySession is the context key for the session.
+	ContextKeySession contextKey = "session"
+)
+
 // User represents an authenticated user.
 type User struct {
 	ID                    string            `json:"id"`
@@ -1140,8 +1150,8 @@ func (s *AuthService) Middleware(next http.Handler) http.Handler {
 		s.mu.RUnlock()
 
 		// Add user to context
-		ctx := context.WithValue(r.Context(), "user", user)
-		ctx = context.WithValue(ctx, "session", session)
+		ctx := context.WithValue(r.Context(), ContextKeyUser, user)
+		ctx = context.WithValue(ctx, ContextKeySession, session)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -1150,7 +1160,7 @@ func (s *AuthService) Middleware(next http.Handler) http.Handler {
 func (s *AuthService) RequirePermission(permission Permission) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			user, ok := r.Context().Value("user").(*User)
+			user, ok := r.Context().Value(ContextKeyUser).(*User)
 			if !ok {
 				http.Error(w, "Unauthorized", http.StatusUnauthorized)
 				return
@@ -1194,7 +1204,10 @@ func isPublicEndpoint(path string) bool {
 
 func generateID() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Crypto failure is critical - panic to avoid security issues
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
+	}
 	return hex.EncodeToString(b)
 }
 
