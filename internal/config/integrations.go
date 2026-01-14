@@ -12,9 +12,9 @@ type IntegrationsConfig struct {
 
 // BoundaryDaemonConfig holds configuration for the Boundary Daemon integration.
 type BoundaryDaemonConfig struct {
-	Enabled    bool                       `yaml:"enabled"`
-	Client     BoundaryDaemonClientConfig `yaml:"client"`
-	Ingester   BoundaryDaemonIngesterConfig `yaml:"ingester"`
+	Enabled    bool                           `yaml:"enabled"`
+	Client     BoundaryDaemonClientConfig     `yaml:"client"`
+	Ingester   BoundaryDaemonIngesterConfig   `yaml:"ingester"`
 	Normalizer BoundaryDaemonNormalizerConfig `yaml:"normalizer"`
 }
 

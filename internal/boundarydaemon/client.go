@@ -52,87 +52,87 @@ func NewClient(cfg ClientConfig) *Client {
 
 // SessionEvent represents a session management event from Boundary Daemon.
 type SessionEvent struct {
-	ID          string                 `json:"id"`
-	Timestamp   time.Time              `json:"timestamp"`
-	EventType   string                 `json:"event_type"` // session.created, session.terminated, session.expired
-	SessionID   string                 `json:"session_id"`
-	UserID      string                 `json:"user_id"`
-	Username    string                 `json:"username"`
-	SourceIP    string                 `json:"source_ip"`
-	DestIP      string                 `json:"dest_ip"`
-	Protocol    string                 `json:"protocol"`
-	Port        int                    `json:"port"`
-	Duration    int64                  `json:"duration_ms,omitempty"`
-	TermReason  string                 `json:"termination_reason,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	EventType  string                 `json:"event_type"` // session.created, session.terminated, session.expired
+	SessionID  string                 `json:"session_id"`
+	UserID     string                 `json:"user_id"`
+	Username   string                 `json:"username"`
+	SourceIP   string                 `json:"source_ip"`
+	DestIP     string                 `json:"dest_ip"`
+	Protocol   string                 `json:"protocol"`
+	Port       int                    `json:"port"`
+	Duration   int64                  `json:"duration_ms,omitempty"`
+	TermReason string                 `json:"termination_reason,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // AuthEvent represents an authentication event from Boundary Daemon.
 type AuthEvent struct {
-	ID           string                 `json:"id"`
-	Timestamp    time.Time              `json:"timestamp"`
-	EventType    string                 `json:"event_type"` // auth.login, auth.logout, auth.failure, auth.mfa_failure
-	UserID       string                 `json:"user_id"`
-	Username     string                 `json:"username"`
-	SourceIP     string                 `json:"source_ip"`
-	AuthMethod   string                 `json:"auth_method"` // password, mfa, certificate, token
-	Success      bool                   `json:"success"`
-	FailReason   string                 `json:"failure_reason,omitempty"`
-	MFAType      string                 `json:"mfa_type,omitempty"`
-	SessionID    string                 `json:"session_id,omitempty"`
-	Metadata     map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	EventType  string                 `json:"event_type"` // auth.login, auth.logout, auth.failure, auth.mfa_failure
+	UserID     string                 `json:"user_id"`
+	Username   string                 `json:"username"`
+	SourceIP   string                 `json:"source_ip"`
+	AuthMethod string                 `json:"auth_method"` // password, mfa, certificate, token
+	Success    bool                   `json:"success"`
+	FailReason string                 `json:"failure_reason,omitempty"`
+	MFAType    string                 `json:"mfa_type,omitempty"`
+	SessionID  string                 `json:"session_id,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // AccessEvent represents an access control event from Boundary Daemon.
 type AccessEvent struct {
-	ID          string                 `json:"id"`
-	Timestamp   time.Time              `json:"timestamp"`
-	EventType   string                 `json:"event_type"` // access.granted, access.denied
-	UserID      string                 `json:"user_id"`
-	Username    string                 `json:"username"`
-	SessionID   string                 `json:"session_id"`
-	Resource    string                 `json:"resource"`
-	Action      string                 `json:"action"` // read, write, execute, delete
-	Granted     bool                   `json:"granted"`
-	DenyReason  string                 `json:"deny_reason,omitempty"`
-	PolicyID    string                 `json:"policy_id,omitempty"`
-	RuleID      string                 `json:"rule_id,omitempty"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	EventType  string                 `json:"event_type"` // access.granted, access.denied
+	UserID     string                 `json:"user_id"`
+	Username   string                 `json:"username"`
+	SessionID  string                 `json:"session_id"`
+	Resource   string                 `json:"resource"`
+	Action     string                 `json:"action"` // read, write, execute, delete
+	Granted    bool                   `json:"granted"`
+	DenyReason string                 `json:"deny_reason,omitempty"`
+	PolicyID   string                 `json:"policy_id,omitempty"`
+	RuleID     string                 `json:"rule_id,omitempty"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // ThreatEvent represents a threat detection event from Boundary Daemon.
 type ThreatEvent struct {
-	ID            string                 `json:"id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	EventType     string                 `json:"event_type"` // threat.detected, threat.blocked, threat.quarantined
-	ThreatType    string                 `json:"threat_type"` // malware, intrusion, policy_violation, anomaly
-	Severity      string                 `json:"severity"`    // low, medium, high, critical
-	SourceIP      string                 `json:"source_ip,omitempty"`
-	DestIP        string                 `json:"dest_ip,omitempty"`
-	UserID        string                 `json:"user_id,omitempty"`
-	ProcessName   string                 `json:"process_name,omitempty"`
-	ProcessPath   string                 `json:"process_path,omitempty"`
-	Description   string                 `json:"description"`
-	Indicators    []string               `json:"indicators,omitempty"`
-	MITREAttack   []string               `json:"mitre_attack,omitempty"`
-	ActionTaken   string                 `json:"action_taken"`
-	Blocked       bool                   `json:"blocked"`
-	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+	ID          string                 `json:"id"`
+	Timestamp   time.Time              `json:"timestamp"`
+	EventType   string                 `json:"event_type"`  // threat.detected, threat.blocked, threat.quarantined
+	ThreatType  string                 `json:"threat_type"` // malware, intrusion, policy_violation, anomaly
+	Severity    string                 `json:"severity"`    // low, medium, high, critical
+	SourceIP    string                 `json:"source_ip,omitempty"`
+	DestIP      string                 `json:"dest_ip,omitempty"`
+	UserID      string                 `json:"user_id,omitempty"`
+	ProcessName string                 `json:"process_name,omitempty"`
+	ProcessPath string                 `json:"process_path,omitempty"`
+	Description string                 `json:"description"`
+	Indicators  []string               `json:"indicators,omitempty"`
+	MITREAttack []string               `json:"mitre_attack,omitempty"`
+	ActionTaken string                 `json:"action_taken"`
+	Blocked     bool                   `json:"blocked"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // PolicyEvent represents a policy enforcement event from Boundary Daemon.
 type PolicyEvent struct {
-	ID          string                 `json:"id"`
-	Timestamp   time.Time              `json:"timestamp"`
-	EventType   string                 `json:"event_type"` // policy.applied, policy.violated, policy.changed
-	PolicyID    string                 `json:"policy_id"`
-	PolicyName  string                 `json:"policy_name"`
-	PolicyType  string                 `json:"policy_type"` // access, network, process, file, usb
-	Action      string                 `json:"action"`
-	Target      string                 `json:"target"`
-	UserID      string                 `json:"user_id,omitempty"`
-	Enforced    bool                   `json:"enforced"`
-	Metadata    map[string]interface{} `json:"metadata,omitempty"`
+	ID         string                 `json:"id"`
+	Timestamp  time.Time              `json:"timestamp"`
+	EventType  string                 `json:"event_type"` // policy.applied, policy.violated, policy.changed
+	PolicyID   string                 `json:"policy_id"`
+	PolicyName string                 `json:"policy_name"`
+	PolicyType string                 `json:"policy_type"` // access, network, process, file, usb
+	Action     string                 `json:"action"`
+	Target     string                 `json:"target"`
+	UserID     string                 `json:"user_id,omitempty"`
+	Enforced   bool                   `json:"enforced"`
+	Metadata   map[string]interface{} `json:"metadata,omitempty"`
 }
 
 // AuditLogEntry represents an immutable audit log entry with cryptographic verification.
@@ -154,16 +154,16 @@ type AuditLogEntry struct {
 
 // DaemonStatus represents the health and status of the Boundary Daemon.
 type DaemonStatus struct {
-	Status        string    `json:"status"`
-	Ready         bool      `json:"ready"`
-	Live          bool      `json:"live"`
-	Version       string    `json:"version"`
-	Mode          string    `json:"mode"` // normal, lockdown, maintenance
-	Uptime        int64     `json:"uptime_seconds"`
-	ActiveSessions int      `json:"active_sessions"`
-	ThreatLevel   string    `json:"threat_level"` // low, medium, high, critical
-	LastEvent     time.Time `json:"last_event"`
-	Timestamp     time.Time `json:"timestamp"`
+	Status         string    `json:"status"`
+	Ready          bool      `json:"ready"`
+	Live           bool      `json:"live"`
+	Version        string    `json:"version"`
+	Mode           string    `json:"mode"` // normal, lockdown, maintenance
+	Uptime         int64     `json:"uptime_seconds"`
+	ActiveSessions int       `json:"active_sessions"`
+	ThreatLevel    string    `json:"threat_level"` // low, medium, high, critical
+	LastEvent      time.Time `json:"last_event"`
+	Timestamp      time.Time `json:"timestamp"`
 }
 
 // DaemonStats represents statistics from the Boundary Daemon.

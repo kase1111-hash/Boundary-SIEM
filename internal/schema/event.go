@@ -21,6 +21,7 @@ type Event struct {
 
 	// Optional fields
 	Actor    *Actor         `json:"actor,omitempty"`
+	Network  *Network       `json:"network,omitempty"`
 	Target   string         `json:"target,omitempty" validate:"max=1024"`
 	Raw      string         `json:"raw,omitempty" validate:"max=65536"`
 	Metadata map[string]any `json:"metadata,omitempty"`
@@ -46,6 +47,16 @@ type Actor struct {
 	Name      string    `json:"name,omitempty" validate:"max=256"`
 	Email     string    `json:"email,omitempty" validate:"omitempty,email"`
 	IPAddress string    `json:"ip_address,omitempty" validate:"omitempty,ip"`
+}
+
+// Network represents network-related information for an event.
+type Network struct {
+	SourceIP   string `json:"source_ip,omitempty" validate:"omitempty,ip"`
+	DestIP     string `json:"dest_ip,omitempty" validate:"omitempty,ip"`
+	Protocol   string `json:"protocol,omitempty" validate:"max=32"`
+	Port       int    `json:"port,omitempty" validate:"omitempty,min=0,max=65535"`
+	SourcePort int    `json:"source_port,omitempty" validate:"omitempty,min=0,max=65535"`
+	Direction  string `json:"direction,omitempty" validate:"omitempty,oneof=inbound outbound internal unknown"`
 }
 
 // Outcome represents the result of an action.
