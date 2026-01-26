@@ -604,3 +604,12 @@ func (a *Archiver) GetMetrics() ArchiverMetrics {
 		Errors:           a.metrics.errors.Load(),
 	}
 }
+
+// GetHealthStatus returns the health status of the underlying S3 client.
+func (a *Archiver) GetHealthStatus(ctx context.Context) *HealthStatus {
+	if a.client == nil {
+		return nil
+	}
+	status := a.client.HealthCheck(ctx)
+	return &status
+}
