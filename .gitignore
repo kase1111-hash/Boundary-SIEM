@@ -1,5 +1,7 @@
 # Binaries
 bin/
+boundary-siem
+siem-ingest
 *.exe
 *.exe~
 *.dll

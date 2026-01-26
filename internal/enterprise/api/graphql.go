@@ -1255,7 +1255,12 @@ func (e *Executor) resolveThreatLevel(ctx context.Context, args map[string]inter
 }
 
 func (e *Executor) resolveAcknowledgeAlert(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	id, _ := args["id"].(string)
+	id, ok := args["id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("id is required and must be a string")
+	}
+
+	// comment is optional, so we don't return an error if missing
 	comment, _ := args["comment"].(string)
 
 	return map[string]interface{}{
@@ -1268,10 +1273,20 @@ func (e *Executor) resolveAcknowledgeAlert(ctx context.Context, args map[string]
 }
 
 func (e *Executor) resolveCreateIncident(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	input, _ := args["input"].(map[string]interface{})
+	input, ok := args["input"].(map[string]interface{})
+	if !ok || input == nil {
+		return nil, fmt.Errorf("input is required and must be an object")
+	}
 
-	title, _ := input["title"].(string)
+	title, ok := input["title"].(string)
+	if !ok || title == "" {
+		return nil, fmt.Errorf("title is required and must be a string")
+	}
+
+	// description is optional
 	description, _ := input["description"].(string)
+
+	// severity is optional with default
 	severity, _ := input["severity"].(string)
 	if severity == "" {
 		severity = "MEDIUM"
@@ -1288,8 +1303,15 @@ func (e *Executor) resolveCreateIncident(ctx context.Context, args map[string]in
 }
 
 func (e *Executor) resolveUpdateRule(ctx context.Context, args map[string]interface{}) (interface{}, error) {
-	id, _ := args["id"].(string)
-	input, _ := args["input"].(map[string]interface{})
+	id, ok := args["id"].(string)
+	if !ok || id == "" {
+		return nil, fmt.Errorf("id is required and must be a string")
+	}
+
+	input, ok := args["input"].(map[string]interface{})
+	if !ok || input == nil {
+		return nil, fmt.Errorf("input is required and must be an object")
+	}
 
 	rule := map[string]interface{}{
 		"id":        id,

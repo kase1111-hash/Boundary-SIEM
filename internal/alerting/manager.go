@@ -486,19 +486,19 @@ func (m *Manager) Stats() map[string]interface{} {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	stats := map[string]interface{}{
-		"total":       len(m.alerts),
-		"by_status":   make(map[string]int),
-		"by_severity": make(map[string]int),
-		"channels":    len(m.channels),
-	}
-
-	statusCounts := stats["by_status"].(map[string]int)
-	severityCounts := stats["by_severity"].(map[string]int)
+	statusCounts := make(map[string]int)
+	severityCounts := make(map[string]int)
 
 	for _, alert := range m.alerts {
 		statusCounts[string(alert.Status)]++
 		severityCounts[string(alert.Severity)]++
+	}
+
+	stats := map[string]interface{}{
+		"total":       len(m.alerts),
+		"by_status":   statusCounts,
+		"by_severity": severityCounts,
+		"channels":    len(m.channels),
 	}
 
 	return stats
