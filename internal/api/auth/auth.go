@@ -676,6 +676,25 @@ func (s *AuthService) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
 
 // handleUsers manages users.
 func (s *AuthService) handleUsers(w http.ResponseWriter, r *http.Request) {
+	// Require authentication for all user operations
+	token := extractToken(r)
+	if token == "" {
+		writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
+	session, err := s.ValidateSession(token)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "INVALID_SESSION", "Invalid or expired session")
+		return
+	}
+
+	// Check permission for user management
+	if !s.HasPermission(session.UserID, PermissionManageUsers) && !s.HasPermission(session.UserID, PermissionAdmin) {
+		writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "Insufficient permissions to manage users")
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		s.mu.RLock()
@@ -728,6 +747,25 @@ func (s *AuthService) handleUsers(w http.ResponseWriter, r *http.Request) {
 
 // handleTenants manages tenants.
 func (s *AuthService) handleTenants(w http.ResponseWriter, r *http.Request) {
+	// Require authentication for all tenant operations
+	token := extractToken(r)
+	if token == "" {
+		writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
+	session, err := s.ValidateSession(token)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "INVALID_SESSION", "Invalid or expired session")
+		return
+	}
+
+	// Check permission for tenant management
+	if !s.HasPermission(session.UserID, PermissionManageTenants) && !s.HasPermission(session.UserID, PermissionAdmin) {
+		writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "Insufficient permissions to manage tenants")
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		s.mu.RLock()
@@ -776,6 +814,25 @@ func (s *AuthService) handleTenants(w http.ResponseWriter, r *http.Request) {
 func (s *AuthService) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Require authentication for audit log access
+	token := extractToken(r)
+	if token == "" {
+		writeJSONError(w, http.StatusUnauthorized, "UNAUTHORIZED", "Authentication required")
+		return
+	}
+
+	session, err := s.ValidateSession(token)
+	if err != nil {
+		writeJSONError(w, http.StatusUnauthorized, "INVALID_SESSION", "Invalid or expired session")
+		return
+	}
+
+	// Check permission for audit log viewing
+	if !s.HasPermission(session.UserID, PermissionViewAuditLog) && !s.HasPermission(session.UserID, PermissionAdmin) {
+		writeJSONError(w, http.StatusForbidden, "FORBIDDEN", "Insufficient permissions to view audit log")
 		return
 	}
 
