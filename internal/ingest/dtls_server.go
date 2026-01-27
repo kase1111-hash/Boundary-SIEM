@@ -102,6 +102,9 @@ type DTLSServer struct {
 	wg   sync.WaitGroup
 	done chan struct{}
 
+	// Channel management for safe closing
+	messagesClosed sync.Once
+
 	// Metrics
 	connections    uint64
 	handshakes     uint64
@@ -251,13 +254,23 @@ func (s *DTLSServer) startInsecure(ctx context.Context) error {
 	// Start receiver for plain UDP
 	messages := make(chan dtlsMessage, s.config.Workers*100)
 
+	// Safe close function using sync.Once
+	closeMessages := func() {
+		s.messagesClosed.Do(func() {
+			close(messages)
+		})
+	}
+
 	for i := 0; i < s.config.Workers; i++ {
 		s.wg.Add(1)
 		go s.worker(ctx, messages, i)
 	}
 
 	s.wg.Add(1)
-	go s.insecureReceiver(ctx, messages)
+	go func() {
+		s.insecureReceiver(ctx, messages)
+		closeMessages()
+	}()
 
 	return nil
 }
@@ -274,6 +287,13 @@ func (s *DTLSServer) acceptLoop(ctx context.Context) {
 
 	messages := make(chan dtlsMessage, s.config.Workers*100)
 
+	// Safe close function using sync.Once
+	closeMessages := func() {
+		s.messagesClosed.Do(func() {
+			close(messages)
+		})
+	}
+
 	// Start workers
 	for i := 0; i < s.config.Workers; i++ {
 		s.wg.Add(1)
@@ -283,10 +303,10 @@ func (s *DTLSServer) acceptLoop(ctx context.Context) {
 	for {
 		select {
 		case <-ctx.Done():
-			close(messages)
+			closeMessages()
 			return
 		case <-s.done:
-			close(messages)
+			closeMessages()
 			return
 		default:
 		}
@@ -379,7 +399,7 @@ func (s *DTLSServer) handleConnection(ctx context.Context, conn net.Conn, messag
 // insecureReceiver receives messages on plain UDP.
 func (s *DTLSServer) insecureReceiver(ctx context.Context, messages chan<- dtlsMessage) {
 	defer s.wg.Done()
-	defer close(messages)
+	// Channel closing is handled by the caller via sync.Once
 
 	buffer := make([]byte, s.config.MaxMessageSize)
 

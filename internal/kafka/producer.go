@@ -212,10 +212,14 @@ func (p *Producer) GetMetrics() Metrics {
 	}
 
 	if err := p.metrics.lastError.Load(); err != nil {
-		m.LastError = err.(error)
+		if e, ok := err.(error); ok {
+			m.LastError = e
+		}
 	}
 	if t := p.metrics.lastErrorTime.Load(); t != nil {
-		m.LastErrorTime = t.(time.Time)
+		if tm, ok := t.(time.Time); ok {
+			m.LastErrorTime = tm
+		}
 	}
 
 	return m

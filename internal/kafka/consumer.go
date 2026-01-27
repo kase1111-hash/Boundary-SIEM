@@ -255,10 +255,14 @@ func (c *Consumer) GetMetrics() Metrics {
 	}
 
 	if err := c.metrics.lastError.Load(); err != nil {
-		m.LastError = err.(error)
+		if e, ok := err.(error); ok {
+			m.LastError = e
+		}
 	}
 	if t := c.metrics.lastErrorTime.Load(); t != nil {
-		m.LastErrorTime = t.(time.Time)
+		if tm, ok := t.(time.Time); ok {
+			m.LastErrorTime = tm
+		}
 	}
 
 	return m

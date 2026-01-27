@@ -559,7 +559,10 @@ type AuditEvent struct {
 // generateEntryID generates a unique entry ID.
 func generateEntryID() string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-only if random fails
+		return fmt.Sprintf("%d-%d", time.Now().UnixNano(), time.Now().Nanosecond())
+	}
 	return fmt.Sprintf("%d-%s", time.Now().UnixNano(), hex.EncodeToString(b))
 }
 

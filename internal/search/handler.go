@@ -97,7 +97,7 @@ func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	result, err := h.executor.Search(ctx, query)
 	if err != nil {
 		slog.Error("search failed", "error", err, "query", req.Query)
-		h.writeError(w, http.StatusInternalServerError, "search_error", "search execution failed", err.Error())
+		h.writeError(w, http.StatusInternalServerError, "search_error", "search execution failed", "")
 		return
 	}
 
@@ -159,7 +159,7 @@ func (h *Handler) HandleSearchGet(w http.ResponseWriter, r *http.Request) {
 	result, err := h.executor.Search(ctx, query)
 	if err != nil {
 		slog.Error("search failed", "error", err, "query", queryStr)
-		h.writeError(w, http.StatusInternalServerError, "search_error", "search execution failed", err.Error())
+		h.writeError(w, http.StatusInternalServerError, "search_error", "search execution failed", "")
 		return
 	}
 
@@ -221,7 +221,7 @@ func (h *Handler) HandleAggregation(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		slog.Error("aggregation failed", "error", err, "type", req.Type, "field", req.Field)
-		h.writeError(w, http.StatusInternalServerError, "aggregation_error", "aggregation execution failed", err.Error())
+		h.writeError(w, http.StatusInternalServerError, "aggregation_error", "aggregation execution failed", "")
 		return
 	}
 
@@ -249,7 +249,7 @@ func (h *Handler) HandleGetEvent(w http.ResponseWriter, r *http.Request) {
 	event, err := h.executor.GetEvent(ctx, eventID)
 	if err != nil {
 		slog.Error("get event failed", "error", err, "event_id", idStr)
-		h.writeError(w, http.StatusInternalServerError, "query_error", "failed to get event", err.Error())
+		h.writeError(w, http.StatusInternalServerError, "query_error", "failed to get event", "")
 		return
 	}
 
@@ -293,7 +293,7 @@ func (h *Handler) HandleFieldValues(w http.ResponseWriter, r *http.Request) {
 	result, err := h.executor.TopN(ctx, query, field, n)
 	if err != nil {
 		slog.Error("field values query failed", "error", err, "field", field)
-		h.writeError(w, http.StatusInternalServerError, "query_error", "failed to get field values", err.Error())
+		h.writeError(w, http.StatusInternalServerError, "query_error", "failed to get field values", "")
 		return
 	}
 

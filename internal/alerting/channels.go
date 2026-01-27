@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/smtp"
@@ -447,6 +448,9 @@ func (e *EmailChannel) sendMail(ctx context.Context, msg []byte) error {
 			ServerName:         e.config.SMTPHost,
 			InsecureSkipVerify: e.config.SkipVerify,
 		}
+		if e.config.SkipVerify {
+			slog.Warn("SECURITY WARNING: TLS certificate verification is disabled for SMTP - this is NOT recommended for production")
+		}
 		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 	} else {
 		conn, err = dialer.DialContext(ctx, "tcp", addr)
@@ -469,6 +473,9 @@ func (e *EmailChannel) sendMail(ctx context.Context, msg []byte) error {
 			tlsConfig := &tls.Config{
 				ServerName:         e.config.SMTPHost,
 				InsecureSkipVerify: e.config.SkipVerify,
+			}
+			if e.config.SkipVerify {
+				slog.Warn("SECURITY WARNING: TLS certificate verification is disabled for SMTP STARTTLS - this is NOT recommended for production")
 			}
 			if err := client.StartTLS(tlsConfig); err != nil {
 				return fmt.Errorf("STARTTLS failed: %w", err)

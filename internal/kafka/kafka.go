@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"time"
 
@@ -200,6 +201,10 @@ func (c *Config) GetDialer() (*kafka.Dialer, error) {
 
 // getTLSConfig builds a TLS configuration.
 func (c *Config) getTLSConfig() (*tls.Config, error) {
+	if c.TLSSkipVerify {
+		slog.Warn("SECURITY WARNING: TLS certificate verification is disabled for Kafka - this is NOT recommended for production")
+	}
+
 	tlsConfig := &tls.Config{
 		InsecureSkipVerify: c.TLSSkipVerify,
 		MinVersion:         tls.VersionTLS12,

@@ -373,7 +373,9 @@ func NewStateManager(config *StateManagerConfig, logger *slog.Logger) (*StateMan
 	if err != nil {
 		logger.Warn("using ephemeral HMAC key", "error", err)
 		hmacKey = make([]byte, 32)
-		rand.Read(hmacKey)
+		if _, err := rand.Read(hmacKey); err != nil {
+			return nil, fmt.Errorf("failed to generate ephemeral HMAC key: %w", err)
+		}
 	}
 
 	// Initialize genesis
@@ -686,14 +688,21 @@ func computeGenesisHash() string {
 // generateNonce generates a random nonce.
 func generateNonce() string {
 	b := make([]byte, 16)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-based nonce if random fails
+		h := sha256.Sum256([]byte(fmt.Sprintf("%d", time.Now().UnixNano())))
+		return hex.EncodeToString(h[:16])
+	}
 	return hex.EncodeToString(b)
 }
 
 // generateID generates a unique ID.
 func generateID() string {
 	b := make([]byte, 8)
-	rand.Read(b)
+	if _, err := rand.Read(b); err != nil {
+		// Fallback to timestamp-only if random fails
+		return fmt.Sprintf("%d-%d", time.Now().UnixNano(), time.Now().Nanosecond())
+	}
 	return fmt.Sprintf("%d-%s", time.Now().UnixNano(), hex.EncodeToString(b))
 }
 
