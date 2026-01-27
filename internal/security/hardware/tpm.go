@@ -324,8 +324,15 @@ func (t *TPMKeyStore) createTPMKey(ctx context.Context, name string, keySize int
 		return nil, err
 	}
 	tmpPath := tmpFile.Name()
-	tmpFile.Write(keyMaterial)
-	tmpFile.Close()
+	if _, err := tmpFile.Write(keyMaterial); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("failed to write key material to temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("failed to close temp file: %w", err)
+	}
 	defer os.Remove(tmpPath)
 
 	// Build seal command
@@ -704,8 +711,15 @@ func (t *TPMKeyStore) SealData(ctx context.Context, name string, data []byte) er
 		return err
 	}
 	tmpPath := tmpFile.Name()
-	tmpFile.Write(data)
-	tmpFile.Close()
+	if _, err := tmpFile.Write(data); err != nil {
+		tmpFile.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to write data to temp file: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
 	defer os.Remove(tmpPath)
 
 	pubPath := filepath.Join(t.config.KeyStorePath, name+".pub")

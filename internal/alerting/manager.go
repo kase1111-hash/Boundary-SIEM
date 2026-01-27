@@ -337,7 +337,10 @@ func (m *Manager) ListAlerts(ctx context.Context, filter AlertFilter) ([]*Alert,
 	}
 
 	// Apply pagination
-	if filter.Offset > 0 && filter.Offset < len(results) {
+	if filter.Offset > 0 {
+		if filter.Offset >= len(results) {
+			return []*Alert{}, nil
+		}
 		results = results[filter.Offset:]
 	}
 	if filter.Limit > 0 && filter.Limit < len(results) {

@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -270,9 +271,27 @@ func (c *CSRFProtection) validateOrigin(r *http.Request) error {
 		return nil // No origin to validate
 	}
 
-	// Check if origin is trusted
+	// Parse the origin URL
+	originURL, err := url.Parse(origin)
+	if err != nil {
+		return errors.New("invalid origin URL")
+	}
+	originHost := strings.ToLower(originURL.Scheme + "://" + originURL.Host)
+
+	// Check if origin is trusted using exact match
 	for _, trusted := range c.config.TrustedOrigins {
-		if strings.HasPrefix(origin, trusted) {
+		trustedURL, err := url.Parse(trusted)
+		if err != nil {
+			// Fallback to exact string match if trusted origin is not a URL
+			if strings.EqualFold(origin, trusted) || strings.EqualFold(originHost, trusted) {
+				return nil
+			}
+			continue
+		}
+		trustedHost := strings.ToLower(trustedURL.Scheme + "://" + trustedURL.Host)
+
+		// Exact match on scheme + host
+		if originHost == trustedHost {
 			return nil
 		}
 	}

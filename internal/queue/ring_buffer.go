@@ -131,22 +131,15 @@ func (rb *RingBuffer) PopWithTimeout(timeout time.Duration) (*schema.Event, erro
 			return nil, ErrQueueEmpty
 		}
 
-		// Use a timer to wake up after timeout
-		done := make(chan struct{})
-		go func() {
-			time.Sleep(remaining)
+		// Use a timer to wake up after timeout without holding the lock
+		timer := time.AfterFunc(remaining, func() {
 			rb.mu.Lock()
 			rb.cond.Broadcast()
 			rb.mu.Unlock()
-			close(done)
-		}()
+		})
 
 		rb.cond.Wait()
-
-		select {
-		case <-done:
-		default:
-		}
+		timer.Stop()
 
 		if time.Now().After(deadline) {
 			return nil, ErrQueueEmpty

@@ -326,6 +326,7 @@ func (sf *SyslogForwarder) buildTLSConfig() (*tls.Config, error) {
 		cfg := sf.config.TLSConfig
 
 		if cfg.InsecureSkipVerify {
+			sf.logger.Warn("SECURITY WARNING: TLS certificate verification is disabled for syslog - this is NOT recommended for production")
 			tlsConfig.InsecureSkipVerify = true
 		}
 

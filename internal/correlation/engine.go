@@ -458,12 +458,18 @@ func (e *Engine) evaluateSequence(window *Window, rule *Rule, event *schema.Even
 	requiredSteps := 0
 	matchedRequired := 0
 	for i, step := range rule.Sequence.Steps {
-		if step.Required || true { // All steps required for now
+		if step.Required {
 			requiredSteps++
 			if window.Steps[i] {
 				matchedRequired++
 			}
 		}
+	}
+
+	// If no steps are marked as required, all steps are required
+	if requiredSteps == 0 {
+		requiredSteps = len(rule.Sequence.Steps)
+		matchedRequired = len(window.Steps)
 	}
 
 	return matchedRequired >= requiredSteps
