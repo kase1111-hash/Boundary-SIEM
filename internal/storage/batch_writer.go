@@ -113,7 +113,7 @@ func (bw *BatchWriter) flushLocked() error {
 	var lastErr error
 	for attempt := 0; attempt <= bw.config.MaxRetries; attempt++ {
 		if attempt > 0 {
-			time.Sleep(bw.config.RetryDelay * time.Duration(attempt))
+			time.Sleep(bw.config.RetryDelay * time.Duration(1<<(attempt-1)))
 		}
 
 		if err := bw.insertBatch(events); err != nil {
@@ -154,7 +154,14 @@ func (bw *BatchWriter) insertBatch(events []*schema.Event) error {
 	}
 
 	for _, event := range events {
-		metadata, _ := json.Marshal(event.Metadata)
+		metadata, err := json.Marshal(event.Metadata)
+		if err != nil {
+			slog.Warn("failed to marshal event metadata, using empty object",
+				"event_id", event.EventID,
+				"error", err,
+			)
+			metadata = []byte("{}")
+		}
 
 		// Handle actor fields
 		actorType := "unknown"
@@ -179,7 +186,7 @@ func (bw *BatchWriter) insertBatch(events []*schema.Event) error {
 			tenantID = "default"
 		}
 
-		err := batch.Append(
+		err = batch.Append(
 			event.EventID,
 			tenantID,
 			event.Timestamp,

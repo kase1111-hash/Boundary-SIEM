@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -222,10 +223,10 @@ func getClientIP(r *http.Request, trustProxy bool) string {
 			// X-Forwarded-For may contain multiple IPs, take the first
 			for i := 0; i < len(xff); i++ {
 				if xff[i] == ',' {
-					return trimSpaceLocal(xff[:i])
+					return strings.TrimSpace(xff[:i])
 				}
 			}
-			return trimSpaceLocal(xff)
+			return strings.TrimSpace(xff)
 		}
 
 		// Also check X-Real-IP
@@ -242,18 +243,6 @@ func getClientIP(r *http.Request, trustProxy bool) string {
 	return ip
 }
 
-// trimSpace trims leading and trailing whitespace (local implementation).
-func trimSpaceLocal(s string) string {
-	start := 0
-	end := len(s)
-	for start < end && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
-}
 
 // GetRateLimitStats returns rate limiting statistics.
 func GetRateLimitStats() (allowed, limited uint64) {

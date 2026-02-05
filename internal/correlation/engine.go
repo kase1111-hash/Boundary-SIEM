@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"time"
@@ -503,7 +504,7 @@ func (e *Engine) evaluateAggregate(window *Window, rule *Rule) bool {
 			value = sum / float64(window.Count)
 		}
 	case "max":
-		value = -1e99
+		value = math.Inf(-1)
 		for _, event := range window.Events {
 			if v, ok := toFloat64(e.getEventField(event, field)); ok {
 				if v > value {
@@ -512,7 +513,7 @@ func (e *Engine) evaluateAggregate(window *Window, rule *Rule) bool {
 			}
 		}
 	case "min":
-		value = 1e99
+		value = math.Inf(1)
 		for _, event := range window.Events {
 			if v, ok := toFloat64(e.getEventField(event, field)); ok {
 				if v < value {

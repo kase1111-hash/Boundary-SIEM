@@ -110,12 +110,12 @@ A system qualifies as a SIEM (not just log storage) when it:
 
 | Component | Technology | Purpose |
 |-----------|------------|---------|
-| Ingest Layer | Go/Rust | Accept CEF (UDP/TCP) and JSON (HTTP) events |
-| Normalization | Go/Rust | Transform to canonical schema, validate, quarantine invalid |
+| Ingest Layer | Go | Accept CEF (UDP/TCP) and JSON (HTTP) events |
+| Normalization | Go | Transform to canonical schema, validate, quarantine invalid |
 | Storage | ClickHouse | Time-series event storage with partitioning |
-| Correlation | Go/Rust | Rule-based pattern detection with time windows |
+| Correlation | Go | Rule-based pattern detection with time windows |
 | Search | HTTP API + CLI | Query events with filters, pagination |
-| Alerting | Go/Rust | Deduplicated notifications via webhook/Slack |
+| Alerting | Go | Deduplicated notifications via webhook/Slack |
 
 ---
 

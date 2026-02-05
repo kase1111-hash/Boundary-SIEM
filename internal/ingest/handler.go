@@ -87,7 +87,8 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 	// Parse request body
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
-		if err.Error() == "http: request body too large" {
+		// MaxBytesReader returns a MaxBytesError when the body exceeds the limit
+		if _, ok := err.(*http.MaxBytesError); ok {
 			respondError(w, http.StatusRequestEntityTooLarge, "payload too large", requestID)
 			return
 		}
