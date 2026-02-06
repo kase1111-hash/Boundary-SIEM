@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"boundary-siem/internal/config"
@@ -129,9 +130,9 @@ func corsMiddleware(next http.Handler, corsCfg config.CORSConfig) http.Handler {
 	}
 
 	// Pre-build header values
-	allowMethods := joinStrings(corsCfg.AllowedMethods, ", ")
-	allowHeaders := joinStrings(corsCfg.AllowedHeaders, ", ")
-	exposeHeaders := joinStrings(corsCfg.ExposedHeaders, ", ")
+	allowMethods := strings.Join(corsCfg.AllowedMethods, ", ")
+	allowHeaders := strings.Join(corsCfg.AllowedHeaders, ", ")
+	exposeHeaders := strings.Join(corsCfg.ExposedHeaders, ", ")
 	maxAge := fmt.Sprintf("%d", corsCfg.MaxAge)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -182,14 +183,3 @@ func corsMiddleware(next http.Handler, corsCfg config.CORSConfig) http.Handler {
 	})
 }
 
-// joinStrings joins strings with a separator.
-func joinStrings(strs []string, sep string) string {
-	if len(strs) == 0 {
-		return ""
-	}
-	result := strs[0]
-	for i := 1; i < len(strs); i++ {
-		result += sep + strs[i]
-	}
-	return result
-}

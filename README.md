@@ -3,7 +3,6 @@
 ![Version](https://img.shields.io/badge/version-1.0.0--beta-blue)
 ![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Security](https://img.shields.io/badge/security-★★★★★-brightgreen)
 
 A comprehensive **AI security monitoring** and **Security Information and Event Management (SIEM)** platform designed for blockchain infrastructure and AI agent ecosystems. This **agent SIEM** provides **cognitive security monitoring** for distributed AI systems, **AI threat detection**, and **security event management** with enterprise-grade features. Built in Go with high-performance event processing, blockchain-specific detection rules, and seamless integration with AI agent architectures.
 
@@ -13,7 +12,7 @@ A comprehensive **AI security monitoring** and **Security Information and Event 
 
 Boundary-SIEM addresses critical challenges in **AI security monitoring** and **agent threat detection**. As AI systems become more autonomous, organizations need robust tools to monitor AI security events, enforce trust boundaries, and maintain **data ownership** over their AI infrastructure. This platform enables **human-AI collaboration** by providing visibility into agent behavior while supporting **digital sovereignty** through self-hosted deployment options.
 
-**Production-Ready Security:** Enterprise-grade security with ★★★★★ (5/5) rating and zero vulnerabilities. Features include automated daily vulnerability scanning (govulncheck, gosec, Trivy, Nancy), error sanitization for production deployments, backward-compatible encryption key rotation, secure admin password delivery (0600 permissions), rate limiting (1000 req/min), HashiCorp Vault integration, AES-256-GCM encryption at rest, comprehensive HTTP security headers (A+ rating), CSRF protection, Redis session storage, and bcrypt password hashing.
+**Security Features:** Automated daily vulnerability scanning (govulncheck, gosec, Trivy, Nancy), error sanitization for production deployments, backward-compatible encryption key rotation, secure admin password delivery (0600 permissions), rate limiting (1000 req/min), HashiCorp Vault integration, AES-256-GCM encryption at rest, comprehensive HTTP security headers, CSRF protection, Redis session storage, and bcrypt password hashing.
 
 **Comprehensive Testing:** 664 test functions across 45 test files, including 160+ security-specific tests covering authentication, encryption, secrets management, rate limiting, security headers, error sanitization, and key rotation.
 
@@ -57,7 +56,7 @@ Boundary-SIEM addresses critical challenges in **AI security monitoring** and **
 - **Compliance Reports**: SOC 2 Type II, ISO 27001, NIST CSF, PCI DSS, GDPR
 
 ### Security Features
-- **Security Posture**: ★★★★★ (5/5) - Excellent rating with zero vulnerabilities detected
+- **Automated Vulnerability Scanning**: Daily scans with govulncheck, gosec, Trivy, Nancy, Dependency Review
 - **Rate Limiting**: Enterprise-grade with 1000 req/min defaults, RFC 6585 headers, burst support
 - **Secrets Management**: Multi-provider (HashiCorp Vault → Env → File) with 5-min caching
 - **Encryption at Rest**: AES-256-GCM with backward-compatible key rotation and `ReEncrypt()` migration
