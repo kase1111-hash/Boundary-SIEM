@@ -42,6 +42,22 @@ ingest:
     normalizer:
       default_tenant_id: "default"
 
+  # EVM JSON-RPC poller for blockchain event ingestion
+  evm:
+    enabled: false  # Enable to poll EVM-compatible blockchains
+    poll_interval: 12s
+    batch_size: 10
+    start_block: "latest"
+    chains:
+      - name: ethereum
+        chain_id: 1
+        rpc_url: "http://localhost:8545"
+        enabled: false
+      # - name: polygon
+      #   chain_id: 137
+      #   rpc_url: "https://polygon-rpc.com"
+      #   enabled: false
+
 queue:
   size: 100000
   overflow_policy: reject

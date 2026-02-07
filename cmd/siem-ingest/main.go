@@ -18,6 +18,7 @@ import (
 	detectionrules "boundary-siem/internal/detection/rules"
 	"boundary-siem/internal/ingest"
 	"boundary-siem/internal/ingest/cef"
+	"boundary-siem/internal/ingest/evm"
 	"boundary-siem/internal/queue"
 	"boundary-siem/internal/schema"
 	"boundary-siem/internal/search"
@@ -201,14 +202,37 @@ func main() {
 		}
 	}
 
+	// Initialize baseline engine for adaptive thresholds
+	baselineEngine := correlation.NewBaselineEngine()
+	slog.Info("baseline engine initialized")
+
 	// Initialize alert manager
 	alertMgr := alerting.NewManager(alerting.DefaultManagerConfig(), nil)
 	corrEngine.AddHandler(func(ctx context.Context, alert *correlation.Alert) error {
 		return alertMgr.HandleCorrelationAlert(ctx, alert)
 	})
 
+	// Initialize alert reinjector for rule chaining
+	reinjector := correlation.NewAlertReinjector(corrEngine)
+	corrEngine.AddHandler(func(ctx context.Context, alert *correlation.Alert) error {
+		reinjector.Reinject(alert)
+		return nil
+	})
+
+	// Register built-in kill chain rules
+	for _, chain := range correlation.BuiltinChains() {
+		chainRule := correlation.ChainToRule(chain)
+		if err := corrEngine.AddRule(chainRule); err != nil {
+			slog.Warn("failed to add kill chain rule", "chain_id", chain.ID, "error", err)
+		}
+	}
+	slog.Info("kill chain rules registered", "count", len(correlation.BuiltinChains()))
+
 	// Start correlation engine
 	corrEngine.Start(ctx)
+
+	// Suppress unused variable warning for baseline engine (used by rules at runtime)
+	_ = baselineEngine
 
 	// Register alert management API
 	alertHandler := alerting.NewHandler(alertMgr)
@@ -277,6 +301,31 @@ func main() {
 		}
 	}
 
+	// Start EVM poller if enabled
+	var evmPoller *evm.Poller
+	if cfg.Ingest.EVM.Enabled {
+		evmCfg := evm.Config{
+			Enabled:      true,
+			PollInterval: cfg.Ingest.EVM.PollInterval,
+			BatchSize:    cfg.Ingest.EVM.BatchSize,
+			StartBlock:   cfg.Ingest.EVM.StartBlock,
+		}
+		for _, chain := range cfg.Ingest.EVM.Chains {
+			evmCfg.Chains = append(evmCfg.Chains, evm.ChainConfig{
+				Name:    chain.Name,
+				ChainID: chain.ChainID,
+				RPCURL:  chain.RPCURL,
+				Enabled: chain.Enabled,
+			})
+		}
+		evmPoller = evm.NewPoller(evmCfg, eventQueue)
+		evmPoller.Start(ctx)
+		slog.Info("EVM poller started",
+			"chains", len(cfg.Ingest.EVM.Chains),
+			"poll_interval", cfg.Ingest.EVM.PollInterval,
+		)
+	}
+
 	// Start HTTP server
 	go func() {
 		slog.Info("starting ingest server", "address", server.Addr)
@@ -300,6 +349,11 @@ func main() {
 	// Stop accepting new requests
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("server shutdown error", "error", err)
+	}
+
+	// Stop EVM poller
+	if evmPoller != nil {
+		evmPoller.Stop()
 	}
 
 	// Stop CEF servers
