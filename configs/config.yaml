@@ -81,6 +81,15 @@ storage:
     flush_interval: 5s
     max_retries: 3
     retry_delay: 1s
+  retention:
+    events_ttl: 2160h       # 90 days
+    critical_ttl: 8760h     # 365 days
+    quarantine_ttl: 720h    # 30 days
+    alerts_ttl: 8760h       # 365 days
+    archive_enabled: false
+    archive_bucket: "boundary-siem-archive"
+    archive_region: "us-east-1"
+    archive_prefix: "data/"
 
 # Consumer configuration
 consumer:

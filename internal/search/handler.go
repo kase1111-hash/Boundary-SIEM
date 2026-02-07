@@ -364,6 +364,56 @@ func (h *Handler) HandleStats(w http.ResponseWriter, r *http.Request) {
 	h.writeJSON(w, http.StatusOK, stats)
 }
 
+// HandleExplain handles POST /v1/search/explain requests.
+func (h *Handler) HandleExplain(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	var req SearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body", err.Error())
+		return
+	}
+
+	query, err := ParseQuery(req.Query)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_query", "failed to parse query", err.Error())
+		return
+	}
+
+	if req.Limit > 0 && req.Limit <= 10000 {
+		query.Limit = req.Limit
+	}
+	if req.OrderBy != "" {
+		query.OrderBy = req.OrderBy
+	}
+	if req.OrderDesc != nil {
+		query.OrderDesc = *req.OrderDesc
+	}
+
+	if req.StartTime != "" || req.EndTime != "" {
+		query.TimeRange = &TimeRange{}
+		if req.StartTime != "" {
+			if t, err := parseTimeString(req.StartTime); err == nil {
+				query.TimeRange.Start = t
+			}
+		}
+		if req.EndTime != "" {
+			if t, err := parseTimeString(req.EndTime); err == nil {
+				query.TimeRange.End = t
+			}
+		}
+	}
+
+	result, err := h.executor.Explain(ctx, query)
+	if err != nil {
+		slog.Error("explain failed", "error", err, "query", req.Query)
+		h.writeError(w, http.StatusInternalServerError, "explain_error", "explain execution failed", "")
+		return
+	}
+
+	h.writeJSON(w, http.StatusOK, result)
+}
+
 // RegisterRoutes registers search routes on the given mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /v1/search", h.HandleSearch)
@@ -372,6 +422,7 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/events/{id}", h.HandleGetEvent)
 	mux.HandleFunc("GET /v1/fields/{field}/values", h.HandleFieldValues)
 	mux.HandleFunc("GET /v1/stats", h.HandleStats)
+	mux.HandleFunc("POST /v1/search/explain", h.HandleExplain)
 }
 
 func (h *Handler) writeJSON(w http.ResponseWriter, status int, data interface{}) {
