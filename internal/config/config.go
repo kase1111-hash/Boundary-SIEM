@@ -29,9 +29,6 @@ type Config struct {
 	Secrets         SecretsConfig         `yaml:"secrets"`
 	Encryption      EncryptionConfig      `yaml:"encryption"`
 	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers"`
-
-	// Integration configurations
-	BoundaryDaemon BoundaryDaemonConfig `yaml:"boundarydaemon"`
 }
 
 // RateLimitConfig holds rate limiting settings.
@@ -463,8 +460,6 @@ func DefaultConfig() *Config {
 			CrossOriginResourcePolicyValue:   "same-origin",                                                  // Same origin only
 			CustomHeaders:                    make(map[string]string),                                        // No custom headers by default
 		},
-		// Boundary Daemon integration - disabled by default
-		BoundaryDaemon: DefaultBoundaryDaemonConfig(),
 	}
 }
 
