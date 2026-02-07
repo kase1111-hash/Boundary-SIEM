@@ -49,10 +49,15 @@ const (
 
 // Condition represents a single search condition.
 type Condition struct {
-	Field    string
-	Operator Operator
-	Value    interface{}
-	IsRegex  bool
+	Field       string
+	Operator    Operator
+	Value       interface{}
+	IsRegex     bool
+	IsPhrase    bool   // true when value was a quoted phrase
+	IsMetadata  bool   // true when field is metadata.* or meta.*
+	MetadataKey string // the JSON key within metadata (e.g., "chain_id")
+	OpenParens  int    // number of opening parens before this condition
+	CloseParens int    // number of closing parens after this condition
 }
 
 // Query represents a parsed search query.
@@ -261,6 +266,8 @@ func (p *Parser) Parse() (*Query, error) {
 		OrderDesc: true,
 	}
 
+	pendingParens := 0 // tracks open parens before next condition
+
 	for p.current.Type != TokenEOF {
 		switch p.current.Type {
 		case TokenField:
@@ -268,6 +275,8 @@ func (p *Parser) Parse() (*Query, error) {
 			if err != nil {
 				return nil, err
 			}
+			cond.OpenParens = pendingParens
+			pendingParens = 0
 			query.Conditions = append(query.Conditions, cond)
 
 		case TokenAnd:
@@ -282,8 +291,15 @@ func (p *Parser) Parse() (*Query, error) {
 			}
 			p.advance()
 
-		case TokenLParen, TokenRParen:
-			// Skip parentheses for now (simple implementation)
+		case TokenLParen:
+			pendingParens++
+			p.advance()
+
+		case TokenRParen:
+			// Attach close paren to the last condition
+			if len(query.Conditions) > 0 {
+				query.Conditions[len(query.Conditions)-1].CloseParens++
+			}
 			p.advance()
 
 		case TokenNot:
@@ -302,6 +318,8 @@ func (p *Parser) Parse() (*Query, error) {
 				case OpExists:
 					cond.Operator = OpNotExists
 				}
+				cond.OpenParens = pendingParens
+				pendingParens = 0
 				query.Conditions = append(query.Conditions, cond)
 			}
 
@@ -319,6 +337,16 @@ func (p *Parser) parseCondition() (Condition, error) {
 		Operator: OpEquals,
 	}
 
+	// Detect metadata fields (metadata.key or meta.key)
+	fieldLower := strings.ToLower(cond.Field)
+	if strings.HasPrefix(fieldLower, "metadata.") {
+		cond.IsMetadata = true
+		cond.MetadataKey = cond.Field[len("metadata."):]
+	} else if strings.HasPrefix(fieldLower, "meta.") {
+		cond.IsMetadata = true
+		cond.MetadataKey = cond.Field[len("meta."):]
+	}
+
 	p.advance()
 
 	// Parse operator
@@ -331,8 +359,13 @@ func (p *Parser) parseCondition() (Condition, error) {
 	if p.current.Type == TokenValue || p.current.Type == TokenField {
 		value := p.current.Value
 
+		// Detect phrase search: value came from a quoted string and contains spaces
+		if strings.Contains(value, " ") {
+			cond.IsPhrase = true
+		}
+
 		// Check for wildcard
-		if strings.Contains(value, "*") {
+		if strings.Contains(value, "*") && !cond.IsPhrase {
 			cond.IsRegex = true
 			// Convert wildcard to regex
 			value = "^" + regexp.QuoteMeta(value)
@@ -340,14 +373,18 @@ func (p *Parser) parseCondition() (Condition, error) {
 			value += "$"
 		}
 
-		// Try to parse as number
-		if num, err := strconv.ParseInt(value, 10, 64); err == nil {
-			cond.Value = num
-		} else if num, err := strconv.ParseFloat(value, 64); err == nil {
-			cond.Value = num
-		} else if dur, ok := parseDuration(value); ok {
-			// Handle relative time like "now-1h"
-			cond.Value = time.Now().Add(-dur)
+		// Try to parse as number (skip for phrases)
+		if !cond.IsPhrase && !cond.IsRegex {
+			if num, err := strconv.ParseInt(value, 10, 64); err == nil {
+				cond.Value = num
+			} else if num, err := strconv.ParseFloat(value, 64); err == nil {
+				cond.Value = num
+			} else if dur, ok := parseDuration(value); ok {
+				// Handle relative time like "now-1h"
+				cond.Value = time.Now().Add(-dur)
+			} else {
+				cond.Value = value
+			}
 		} else {
 			cond.Value = value
 		}

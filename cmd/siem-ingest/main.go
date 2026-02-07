@@ -167,11 +167,25 @@ func main() {
 		queueConsumer = consumer.New(eventQueue, batchWriter, consumerCfg)
 		queueConsumer.Start(ctx)
 
+		// Apply retention policies
+		retentionCfg := storage.RetentionConfig{
+			EventsTTL:     cfg.Storage.Retention.EventsTTL,
+			CriticalTTL:   cfg.Storage.Retention.CriticalTTL,
+			QuarantineTTL: cfg.Storage.Retention.QuarantineTTL,
+			AlertsTTL:     cfg.Storage.Retention.AlertsTTL,
+		}
+		retentionMgr := storage.NewRetentionManager(chClient, retentionCfg)
+		if err := retentionMgr.ApplyTTLs(ctx); err != nil {
+			slog.Warn("failed to apply retention policies", "error", err)
+		}
+
 		// Register search routes when storage is enabled
 		searchExecutor := search.NewExecutor(chClient.DB())
 		searchHandler := search.NewHandler(searchExecutor)
 		searchHandler.RegisterRoutes(mux)
-		slog.Info("search API registered", "endpoints", []string{"/v1/search", "/v1/aggregations", "/v1/events/{id}", "/v1/stats"})
+		slog.Info("search API registered", "endpoints", []string{
+			"/v1/search", "/v1/aggregations", "/v1/events/{id}", "/v1/stats", "/v1/search/explain",
+		})
 
 		slog.Info("storage initialized successfully")
 	} else {

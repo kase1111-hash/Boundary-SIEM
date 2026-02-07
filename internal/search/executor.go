@@ -326,59 +326,83 @@ func (e *Executor) GetEvent(ctx context.Context, eventID uuid.UUID) (*SearchResu
 }
 
 // buildWhereClause builds a SQL WHERE clause from query conditions.
+// Supports parenthetical grouping via OpenParens/CloseParens on conditions.
 func (e *Executor) buildWhereClause(query *Query) (string, []interface{}) {
 	if len(query.Conditions) == 0 && query.TimeRange == nil {
 		return "", nil
 	}
 
-	var clauses []string
+	var parts []string
 	var args []interface{}
 
 	// Add time range if specified
 	if query.TimeRange != nil {
 		if !query.TimeRange.Start.IsZero() {
-			clauses = append(clauses, "timestamp >= ?")
+			parts = append(parts, "timestamp >= ?")
 			args = append(args, query.TimeRange.Start)
 		}
 		if !query.TimeRange.End.IsZero() {
-			clauses = append(clauses, "timestamp <= ?")
+			parts = append(parts, "timestamp <= ?")
 			args = append(args, query.TimeRange.End)
 		}
 	}
 
-	// Add conditions
-	for i, cond := range query.Conditions {
+	// Build condition clauses with parenthetical grouping
+	for _, cond := range query.Conditions {
 		column, _ := MapField(cond.Field)
-		column = e.sanitizeColumn(column)
+		if !cond.IsMetadata {
+			column = e.sanitizeColumn(column)
+		}
 
 		clause, clauseArgs := e.buildConditionClause(column, cond)
-		clauses = append(clauses, clause)
-		args = append(args, clauseArgs...)
 
-		// Add logic operator
-		if i < len(query.Logic) {
-			// Logic is applied between current and next condition
-			// We'll handle this in clause joining
+		// Wrap with opening parens
+		for j := 0; j < cond.OpenParens; j++ {
+			clause = "(" + clause
 		}
+		// Wrap with closing parens
+		for j := 0; j < cond.CloseParens; j++ {
+			clause = clause + ")"
+		}
+
+		parts = append(parts, clause)
+		args = append(args, clauseArgs...)
 	}
 
-	if len(clauses) == 0 {
+	if len(parts) == 0 {
 		return "", nil
 	}
 
-	// Join clauses with logic operators
+	// Join: time range parts are always ANDed, then condition parts use the Logic slice
 	var result strings.Builder
 	result.WriteString("WHERE ")
 
-	for i, clause := range clauses {
-		if i > 0 {
-			logic := "AND"
-			if i-1 < len(query.Logic) {
-				logic = query.Logic[i-1]
-			}
-			result.WriteString(" " + logic + " ")
+	timePartCount := 0
+	if query.TimeRange != nil {
+		if !query.TimeRange.Start.IsZero() {
+			timePartCount++
 		}
-		result.WriteString(clause)
+		if !query.TimeRange.End.IsZero() {
+			timePartCount++
+		}
+	}
+
+	for i, part := range parts {
+		if i > 0 {
+			if i <= timePartCount {
+				// Time range parts are always ANDed together and with conditions
+				result.WriteString(" AND ")
+			} else {
+				// Condition parts use the Logic operators
+				condIdx := i - timePartCount
+				logic := "AND"
+				if condIdx-1 >= 0 && condIdx-1 < len(query.Logic) {
+					logic = query.Logic[condIdx-1]
+				}
+				result.WriteString(" " + logic + " ")
+			}
+		}
+		result.WriteString(part)
 	}
 
 	return result.String(), args
@@ -386,10 +410,19 @@ func (e *Executor) buildWhereClause(query *Query) (string, []interface{}) {
 
 // buildConditionClause builds a SQL clause for a single condition.
 func (e *Executor) buildConditionClause(column string, cond Condition) (string, []interface{}) {
+	// Handle metadata field queries: metadata.key → JSON extraction
+	if cond.IsMetadata {
+		return e.buildMetadataClause(cond)
+	}
+
 	switch cond.Operator {
 	case OpEquals:
 		if cond.IsRegex {
 			return fmt.Sprintf("match(%s, ?)", column), []interface{}{cond.Value}
+		}
+		if cond.IsPhrase {
+			// Phrase search: use position() for exact phrase match
+			return fmt.Sprintf("position(%s, ?) > 0", column), []interface{}{cond.Value}
 		}
 		return fmt.Sprintf("%s = ?", column), []interface{}{cond.Value}
 
@@ -422,6 +455,34 @@ func (e *Executor) buildConditionClause(column string, cond Condition) (string, 
 
 	default:
 		return fmt.Sprintf("%s = ?", column), []interface{}{cond.Value}
+	}
+}
+
+// buildMetadataClause builds a SQL clause for a metadata JSON field query.
+func (e *Executor) buildMetadataClause(cond Condition) (string, []interface{}) {
+	jsonPath := cond.MetadataKey
+
+	switch cond.Operator {
+	case OpEquals:
+		return "JSONExtractString(metadata, ?) = ?", []interface{}{jsonPath, cond.Value}
+	case OpNotEquals:
+		return "JSONExtractString(metadata, ?) != ?", []interface{}{jsonPath, cond.Value}
+	case OpGreater:
+		return "JSONExtractFloat(metadata, ?) > ?", []interface{}{jsonPath, cond.Value}
+	case OpGreaterEq:
+		return "JSONExtractFloat(metadata, ?) >= ?", []interface{}{jsonPath, cond.Value}
+	case OpLess:
+		return "JSONExtractFloat(metadata, ?) < ?", []interface{}{jsonPath, cond.Value}
+	case OpLessEq:
+		return "JSONExtractFloat(metadata, ?) <= ?", []interface{}{jsonPath, cond.Value}
+	case OpContains:
+		return "position(JSONExtractString(metadata, ?), ?) > 0", []interface{}{jsonPath, cond.Value}
+	case OpExists:
+		return "JSONHas(metadata, ?) = 1", []interface{}{jsonPath}
+	case OpNotExists:
+		return "JSONHas(metadata, ?) = 0", []interface{}{jsonPath}
+	default:
+		return "JSONExtractString(metadata, ?) = ?", []interface{}{jsonPath, cond.Value}
 	}
 }
 
@@ -524,12 +585,16 @@ func (e *Executor) TimeHistogram(ctx context.Context, query *Query, interval str
 	return result, rows.Err()
 }
 
+// MaxTopN is the configurable upper bound for TopN queries.
+// Can be changed at startup if needed.
+var MaxTopN = 10000
+
 // TopN returns top N values for a field.
 func (e *Executor) TopN(ctx context.Context, query *Query, field string, n int) (*AggregationResult, error) {
 	column, _ := MapField(field)
 	column = e.sanitizeColumn(column)
 
-	if n <= 0 || n > 1000 {
+	if n <= 0 || n > MaxTopN {
 		n = 10
 	}
 
@@ -569,4 +634,58 @@ func (e *Executor) TopN(ctx context.Context, query *Query, field string, n int) 
 	}
 
 	return result, rows.Err()
+}
+
+// ExplainResult contains the ClickHouse EXPLAIN output for a query.
+type ExplainResult struct {
+	Query   string   `json:"query"`
+	Plan    []string `json:"plan"`
+	Indexes []string `json:"indexes,omitempty"`
+}
+
+// Explain returns the ClickHouse query plan for a search query.
+func (e *Executor) Explain(ctx context.Context, query *Query) (*ExplainResult, error) {
+	whereClause, args := e.buildWhereClause(query)
+
+	selectSQL := fmt.Sprintf(`
+		SELECT event_id, timestamp, action, severity
+		FROM events
+		%s
+		ORDER BY %s %s
+		LIMIT %d OFFSET %d
+	`, whereClause, e.sanitizeOrderBy(query.OrderBy), e.orderDirection(query.OrderDesc),
+		query.Limit, query.Offset)
+
+	// EXPLAIN PLAN
+	explainSQL := "EXPLAIN PLAN " + selectSQL
+	rows, err := e.db.QueryContext(ctx, explainSQL, args...)
+	if err != nil {
+		return nil, fmt.Errorf("explain query failed: %w", err)
+	}
+	defer rows.Close()
+
+	result := &ExplainResult{Query: selectSQL}
+	for rows.Next() {
+		var line string
+		if err := rows.Scan(&line); err != nil {
+			return nil, err
+		}
+		result.Plan = append(result.Plan, line)
+	}
+
+	// EXPLAIN INDEXES
+	indexSQL := "EXPLAIN INDEXES = 1 " + selectSQL
+	indexRows, err := e.db.QueryContext(ctx, indexSQL, args...)
+	if err == nil {
+		defer indexRows.Close()
+		for indexRows.Next() {
+			var line string
+			if err := indexRows.Scan(&line); err != nil {
+				break
+			}
+			result.Indexes = append(result.Indexes, line)
+		}
+	}
+
+	return result, nil
 }

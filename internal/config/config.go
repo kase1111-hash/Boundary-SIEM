@@ -58,6 +58,19 @@ type StorageConfig struct {
 	Enabled     bool              `yaml:"enabled"`
 	ClickHouse  ClickHouseConfig  `yaml:"clickhouse"`
 	BatchWriter BatchWriterConfig `yaml:"batch_writer"`
+	Retention   RetentionConfig   `yaml:"retention"`
+}
+
+// RetentionConfig holds data retention settings.
+type RetentionConfig struct {
+	EventsTTL     time.Duration `yaml:"events_ttl"`     // TTL for main events table
+	CriticalTTL   time.Duration `yaml:"critical_ttl"`   // TTL for critical events
+	QuarantineTTL time.Duration `yaml:"quarantine_ttl"`  // TTL for quarantined events
+	AlertsTTL     time.Duration `yaml:"alerts_ttl"`     // TTL for alerts
+	ArchiveEnabled bool         `yaml:"archive_enabled"` // Enable S3 archival before deletion
+	ArchiveBucket  string       `yaml:"archive_bucket"`  // S3 bucket for archives
+	ArchiveRegion  string       `yaml:"archive_region"`  // AWS region for S3
+	ArchivePrefix  string       `yaml:"archive_prefix"`  // S3 key prefix
 }
 
 // ClickHouseConfig holds ClickHouse connection settings.
@@ -401,6 +414,16 @@ func DefaultConfig() *Config {
 				FlushInterval: 5 * time.Second,
 				MaxRetries:    3,
 				RetryDelay:    time.Second,
+			},
+			Retention: RetentionConfig{
+				EventsTTL:      90 * 24 * time.Hour,  // 90 days
+				CriticalTTL:    365 * 24 * time.Hour, // 1 year
+				QuarantineTTL:  30 * 24 * time.Hour,  // 30 days
+				AlertsTTL:      365 * 24 * time.Hour, // 1 year
+				ArchiveEnabled: false,
+				ArchiveBucket:  "boundary-siem-archive",
+				ArchiveRegion:  "us-east-1",
+				ArchivePrefix:  "data/",
 			},
 		},
 		Consumer: ConsumerConfig{
