@@ -234,6 +234,14 @@ func main() {
 	// Suppress unused variable warning for baseline engine (used by rules at runtime)
 	_ = baselineEngine
 
+	// Initialize escalation engine
+	escalationEngine := alerting.NewEscalationEngine(alertMgr)
+	for _, policy := range alerting.BuiltinEscalationPolicies() {
+		escalationEngine.AddPolicy(policy)
+	}
+	escalationEngine.Start(ctx, 1*time.Minute)
+	slog.Info("escalation engine started", "policies", len(alerting.BuiltinEscalationPolicies()))
+
 	// Register alert management API
 	alertHandler := alerting.NewHandler(alertMgr)
 	alertHandler.RegisterRoutes(mux)
@@ -363,6 +371,9 @@ func main() {
 	if tcpServer != nil {
 		tcpServer.Stop()
 	}
+
+	// Stop escalation engine
+	escalationEngine.Stop()
 
 	// Stop correlation engine
 	corrEngine.Stop()
