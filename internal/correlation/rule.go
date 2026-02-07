@@ -59,6 +59,8 @@ type Rule struct {
 	Correlation     *CorrelationConfig `yaml:"correlation,omitempty"` // For correlation rules
 	Actions         []Action           `yaml:"actions,omitempty"`
 	Metadata        map[string]any     `yaml:"metadata,omitempty"`
+	DependsOn       []string           `yaml:"depends_on,omitempty" json:"depends_on,omitempty"` // Rule IDs that must fire first (chaining)
+	Baseline        *BaselineConfig    `yaml:"baseline,omitempty" json:"baseline,omitempty"`     // Adaptive threshold config
 }
 
 // Conditions holds match conditions for a rule.

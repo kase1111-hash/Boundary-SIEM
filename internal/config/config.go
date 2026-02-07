@@ -113,6 +113,24 @@ type IngestConfig struct {
 	MaxBatchSize   int       `yaml:"max_batch_size"`
 	MaxPayloadSize int       `yaml:"max_payload_size"`
 	CEF            CEFConfig `yaml:"cef"`
+	EVM            EVMConfig `yaml:"evm"`
+}
+
+// EVMConfig holds EVM JSON-RPC poller settings.
+type EVMConfig struct {
+	Enabled      bool             `yaml:"enabled"`
+	PollInterval time.Duration    `yaml:"poll_interval"`
+	BatchSize    int              `yaml:"batch_size"`
+	StartBlock   string           `yaml:"start_block"`
+	Chains       []EVMChainConfig `yaml:"chains"`
+}
+
+// EVMChainConfig defines a single EVM chain to poll.
+type EVMChainConfig struct {
+	Name    string `yaml:"name"`
+	ChainID int64  `yaml:"chain_id"`
+	RPCURL  string `yaml:"rpc_url"`
+	Enabled bool   `yaml:"enabled"`
 }
 
 // CEFConfig holds CEF ingestion settings.
@@ -346,6 +364,15 @@ func DefaultConfig() *Config {
 				},
 				Normalizer: CEFNormalizerConfig{
 					DefaultTenantID: "default",
+				},
+			},
+			EVM: EVMConfig{
+				Enabled:      false,
+				PollInterval: 12 * time.Second,
+				BatchSize:    10,
+				StartBlock:   "latest",
+				Chains: []EVMChainConfig{
+					{Name: "ethereum", ChainID: 1, RPCURL: "http://localhost:8545", Enabled: false},
 				},
 			},
 		},

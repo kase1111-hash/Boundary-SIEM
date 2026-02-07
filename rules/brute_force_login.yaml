@@ -1,0 +1,29 @@
+id: community-brute-force-login
+name: "Brute Force Login Attempts"
+description: "Detects more than 20 failed login attempts from a single source within 5 minutes."
+type: threshold
+enabled: true
+severity: 6
+category: "Credential Attack"
+tags:
+  - brute-force
+  - authentication
+  - credential-attack
+mitre:
+  tactic_id: "TA0006"
+  tactic_name: "Credential Access"
+  technique_id: "T1110"
+conditions:
+  match:
+    - field: action
+      operator: eq
+      value: "auth.login"
+    - field: outcome
+      operator: eq
+      value: "failure"
+threshold:
+  count: 20
+  operator: gte
+window: 5m
+group_by:
+  - actor.ip

@@ -1,0 +1,27 @@
+id: community-validator-missed-attestations
+name: "Consensus Validator Missed Attestations"
+description: "Alerts when a validator misses 5 or more attestations in a 30-minute window, which may indicate infrastructure issues or a compromised validator."
+type: threshold
+enabled: true
+severity: 7
+category: "Validator Health"
+tags:
+  - validator
+  - consensus
+  - attestation
+  - infrastructure
+mitre:
+  tactic_id: "TA0040"
+  tactic_name: "Impact"
+  technique_id: "T1499"
+conditions:
+  match:
+    - field: action
+      operator: eq
+      value: "validator.attestation.missed"
+threshold:
+  count: 5
+  operator: gte
+window: 30m
+group_by:
+  - metadata.validator_index

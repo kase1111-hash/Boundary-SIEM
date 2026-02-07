@@ -1,0 +1,26 @@
+id: community-evm-contract-deploy-surge
+name: "Rapid Contract Deployment Surge"
+description: "Detects 10+ contract deployments from the same address within 15 minutes, a pattern often seen in token scam campaigns."
+type: threshold
+enabled: true
+severity: 7
+category: "Smart Contract"
+tags:
+  - evm
+  - contract-creation
+  - scam-detection
+mitre:
+  tactic_id: "TA0001"
+  tactic_name: "Initial Access"
+  technique_id: "T1190"
+conditions:
+  match:
+    - field: action
+      operator: eq
+      value: "evm.contract.created"
+threshold:
+  count: 10
+  operator: gte
+window: 15m
+group_by:
+  - actor.id

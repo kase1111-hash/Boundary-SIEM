@@ -1,0 +1,29 @@
+id: community-evm-high-value-transfer
+name: "EVM High-Value Token Transfer"
+description: "Detects token transfers exceeding 500 ETH in value, which may indicate fund draining or large unauthorized withdrawals."
+type: threshold
+enabled: true
+severity: 8
+category: "Fund Movement"
+tags:
+  - evm
+  - high-value
+  - fund-movement
+mitre:
+  tactic_id: "TA0010"
+  tactic_name: "Exfiltration"
+  technique_id: "T1041"
+conditions:
+  match:
+    - field: action
+      operator: eq
+      value: "evm.transaction"
+    - field: metadata.value_eth
+      operator: gt
+      value: 500
+threshold:
+  count: 1
+  operator: gte
+window: 5m
+group_by:
+  - metadata.from
