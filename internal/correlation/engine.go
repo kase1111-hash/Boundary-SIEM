@@ -96,6 +96,9 @@ type Window struct {
 	// Sequence tracking
 	StepIndex int
 	Steps     map[int]bool
+	// Absence tracking
+	AbsenceSeen    bool
+	AbsenceChecked time.Time
 }
 
 // NewEngine creates a new correlation engine.
@@ -170,6 +173,10 @@ func (e *Engine) Start(ctx context.Context) {
 	// Start state cleanup
 	e.wg.Add(1)
 	go e.stateCleanup(ctx)
+
+	// Start absence rule checker
+	e.wg.Add(1)
+	go e.absenceChecker(ctx)
 
 	slog.Info("correlation engine started", "workers", e.config.WorkerCount)
 }
@@ -376,6 +383,10 @@ func (e *Engine) evaluateRule(ctx context.Context, rule *Rule, event *schema.Eve
 		fired = e.evaluateSequence(window, rule, event)
 	case RuleTypeAggregate:
 		fired = e.evaluateAggregate(window, rule)
+	case RuleTypeAbsence:
+		// For absence rules, the trigger event resets the absence timer.
+		// Mark that we've seen the expected event in this window.
+		window.AbsenceSeen = true
 	}
 
 	if fired {
@@ -641,6 +652,124 @@ func (e *Engine) cleanupExpiredState() {
 		}
 		state.mu.Unlock()
 	}
+}
+
+func (e *Engine) absenceChecker(ctx context.Context) {
+	defer e.wg.Done()
+
+	ticker := time.NewTicker(e.config.StateCleanupFreq)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-e.stopCh:
+			return
+		case <-ticker.C:
+			e.checkAbsenceRules()
+		}
+	}
+}
+
+func (e *Engine) checkAbsenceRules() {
+	e.mu.RLock()
+	var absenceRules []*Rule
+	for _, rule := range e.rules {
+		if rule.Type == RuleTypeAbsence && rule.Enabled {
+			absenceRules = append(absenceRules, rule)
+		}
+	}
+	e.mu.RUnlock()
+
+	now := time.Now()
+	for _, rule := range absenceRules {
+		e.mu.RLock()
+		state := e.states[rule.ID]
+		e.mu.RUnlock()
+		if state == nil {
+			continue
+		}
+
+		state.mu.Lock()
+
+		// Check the default group key if no events have created windows yet
+		groupKeys := make([]string, 0, len(state.windows)+1)
+		if len(state.windows) == 0 {
+			groupKeys = append(groupKeys, "default")
+		}
+		for k := range state.windows {
+			groupKeys = append(groupKeys, k)
+		}
+
+		for _, groupKey := range groupKeys {
+			window := state.windows[groupKey]
+			if window == nil {
+				// No events seen at all — create a window and fire
+				window = &Window{
+					Events:         make([]*schema.Event, 0),
+					StartTime:      now.Add(-rule.Window),
+					Steps:          make(map[int]bool),
+					AbsenceChecked: now,
+				}
+				state.windows[groupKey] = window
+			}
+
+			// Only check if enough time has passed since the window started
+			elapsed := now.Sub(window.StartTime)
+			if elapsed < rule.Window {
+				continue
+			}
+
+			// If the expected event was NOT seen, fire the alert
+			if !window.AbsenceSeen {
+				// Check dedup
+				if lastFire, ok := state.lastFire[groupKey]; ok {
+					if now.Sub(lastFire) < rule.Window {
+						continue
+					}
+				}
+				state.lastFire[groupKey] = now
+
+				alert := e.createAlert(rule, window, groupKey)
+				select {
+				case e.alertCh <- alert:
+				default:
+					slog.Warn("alert channel full, dropping absence alert", "rule_id", rule.ID)
+				}
+			}
+
+			// Reset the window for the next period
+			window.AbsenceSeen = false
+			window.StartTime = now
+			window.Events = window.Events[:0]
+			window.Count = 0
+			window.AbsenceChecked = now
+		}
+
+		state.mu.Unlock()
+	}
+}
+
+// GetRules returns all loaded rules (for API use).
+func (e *Engine) GetRules() []*Rule {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	rules := make([]*Rule, 0, len(e.rules))
+	for _, rule := range e.rules {
+		rules = append(rules, rule)
+	}
+	return rules
+}
+
+// GetRule returns a single rule by ID.
+func (e *Engine) GetRule(id string) (*Rule, bool) {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
+	rule, ok := e.rules[id]
+	return rule, ok
 }
 
 // Stats returns engine statistics.

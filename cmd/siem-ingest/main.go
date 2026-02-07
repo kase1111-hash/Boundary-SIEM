@@ -11,8 +11,11 @@ import (
 	"syscall"
 	"time"
 
+	"boundary-siem/internal/alerting"
 	"boundary-siem/internal/config"
 	"boundary-siem/internal/consumer"
+	"boundary-siem/internal/correlation"
+	detectionrules "boundary-siem/internal/detection/rules"
 	"boundary-siem/internal/ingest"
 	"boundary-siem/internal/ingest/cef"
 	"boundary-siem/internal/queue"
@@ -176,6 +179,45 @@ func main() {
 		go consumeQueuePlaceholder(ctx, eventQueue)
 	}
 
+	// Initialize correlation engine with detection rules
+	corrEngine := correlation.NewEngine(correlation.DefaultEngineConfig())
+	for _, rule := range detectionrules.GetAllRules() {
+		if err := corrEngine.AddRule(rule); err != nil {
+			slog.Warn("failed to add detection rule", "rule_id", rule.ID, "error", err)
+		}
+	}
+
+	// Initialize alert manager
+	alertMgr := alerting.NewManager(alerting.DefaultManagerConfig(), nil)
+	corrEngine.AddHandler(func(ctx context.Context, alert *correlation.Alert) error {
+		return alertMgr.HandleCorrelationAlert(ctx, alert)
+	})
+
+	// Start correlation engine
+	corrEngine.Start(ctx)
+
+	// Register alert management API
+	alertHandler := alerting.NewHandler(alertMgr)
+	alertHandler.RegisterRoutes(mux)
+	slog.Info("alert API registered", "endpoints", []string{
+		"/v1/alerts", "/v1/alerts/{id}", "/v1/alerts/{id}/acknowledge",
+		"/v1/alerts/{id}/resolve", "/v1/alerts/{id}/notes", "/v1/alerts/{id}/assign",
+	})
+
+	// Register rule management API
+	rulesDir := os.Getenv("SIEM_RULES_DIR")
+	if rulesDir == "" {
+		rulesDir = "data/rules"
+	}
+	ruleHandler := correlation.NewRuleHandler(corrEngine, rulesDir)
+	if err := ruleHandler.LoadCustomRules(); err != nil {
+		slog.Warn("failed to load custom rules", "error", err)
+	}
+	ruleHandler.RegisterRoutes(mux)
+	slog.Info("rule API registered", "endpoints", []string{
+		"/v1/rules", "/v1/rules/{id}", "/v1/rules/{id}/test",
+	})
+
 	// Initialize CEF parser and normalizer
 	cefParser := cef.NewParser(cef.ParserConfig{
 		StrictMode:    cfg.Ingest.CEF.Parser.StrictMode,
@@ -253,6 +295,9 @@ func main() {
 	if tcpServer != nil {
 		tcpServer.Stop()
 	}
+
+	// Stop correlation engine
+	corrEngine.Stop()
 
 	// Stop queue consumer
 	cancel()
