@@ -67,10 +67,6 @@ func TestDefaultConfig(t *testing.T) {
 		t.Errorf("expected FrameOptionsValue 'DENY', got %s", cfg.SecurityHeaders.FrameOptionsValue)
 	}
 
-	// Test boundary daemon defaults
-	if cfg.BoundaryDaemon.Enabled {
-		t.Error("expected BoundaryDaemon.Enabled to be false by default")
-	}
 }
 
 func TestValidate_ValidConfig(t *testing.T) {
@@ -381,34 +377,3 @@ func TestValidate_WithPassword(t *testing.T) {
 	}
 }
 
-func TestDefaultBoundaryDaemonConfig(t *testing.T) {
-	cfg := DefaultBoundaryDaemonConfig()
-
-	if cfg.Enabled {
-		t.Error("expected Enabled to be false by default")
-	}
-	if cfg.Client.BaseURL != "http://localhost:9000" {
-		t.Errorf("expected BaseURL 'http://localhost:9000', got %s", cfg.Client.BaseURL)
-	}
-	if cfg.Client.Timeout != 30*time.Second {
-		t.Errorf("expected Timeout 30s, got %v", cfg.Client.Timeout)
-	}
-	if cfg.Ingester.PollInterval != 30*time.Second {
-		t.Errorf("expected PollInterval 30s, got %v", cfg.Ingester.PollInterval)
-	}
-	if cfg.Ingester.SessionBatchSize != 500 {
-		t.Errorf("expected SessionBatchSize 500, got %d", cfg.Ingester.SessionBatchSize)
-	}
-	if !cfg.Ingester.IngestSessions {
-		t.Error("expected IngestSessions to be true")
-	}
-	if !cfg.Ingester.IngestAuth {
-		t.Error("expected IngestAuth to be true")
-	}
-	if !cfg.Ingester.IngestThreats {
-		t.Error("expected IngestThreats to be true")
-	}
-	if cfg.Normalizer.DefaultTenantID != "default" {
-		t.Errorf("expected DefaultTenantID 'default', got %s", cfg.Normalizer.DefaultTenantID)
-	}
-}
