@@ -1,7 +1,7 @@
 # Boundary SIEM
 
 ![Version](https://img.shields.io/badge/version-1.0.0--beta-blue)
-![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)
+![Go](https://img.shields.io/badge/Go-1.24+-00ADD8?logo=go)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 A focused **Security Information and Event Management (SIEM)** platform designed for blockchain infrastructure. Boundary-SIEM provides real-time event ingestion, correlation-based detection, and alerting with 143+ blockchain-specific detection rules covering validator monitoring, transaction analysis, smart contract security, and DeFi protocol threats.
@@ -92,7 +92,7 @@ All built-in rules are mapped to MITRE ATT&CK techniques.
 ## Quick Start
 
 ### Prerequisites
-- Go 1.21+
+- Go 1.24+
 - Node.js 18+ (for web dashboard development)
 - ClickHouse 23.8+ (optional, for persistent storage)
 
@@ -103,20 +103,24 @@ All built-in rules are mapped to MITRE ATT&CK techniques.
 git clone https://github.com/kase1111-hash/Boundary-SIEM.git
 cd Boundary-SIEM
 
-# Build all binaries (server, TUI, rule validator)
-go build ./cmd/...
+# Build all binaries to ./bin/ (server, TUI, rule validator)
+make build
+
+# Or build individually
+make build-ingest  # Build SIEM server
+make build-tui     # Build Terminal UI
 
 # Run the SIEM server
-./siem-ingest
+./bin/siem-ingest
 
 # (Optional) Build the web dashboard
 cd web && npm install && npm run build && cd ..
 
 # Run the TUI (separate terminal)
-./boundary-siem
+./bin/boundary-siem -server http://localhost:8080
 
 # Validate community rules
-./siem-rules validate ./rules/
+./bin/siem-rules validate ./rules/
 ```
 
 ### Send a Test Event
@@ -243,8 +247,8 @@ group_by: [metadata.from]
 Validate rules before deploying:
 
 ```bash
-./siem-rules validate ./rules/
-./siem-rules list ./rules/
+./bin/siem-rules validate ./rules/
+./bin/siem-rules list ./rules/
 ```
 
 ## Project Structure
@@ -270,28 +274,36 @@ boundary-siem/
 |   +-- queue/                # Ring buffer event queue
 |   +-- schema/               # Canonical event schema
 |   +-- search/               # ClickHouse query executor
+|   +-- secrets/              # Secrets management (Vault, env vars, files)
+|   +-- security/             # Platform security (audit, privilege, trust)
 |   +-- storage/              # ClickHouse client, batch writer, migrations, retention
 |   +-- tui/                  # Terminal UI
 +-- web/                      # React dashboard (Vite + TypeScript + Tailwind)
 +-- rules/                    # Community YAML detection rules
 +-- configs/                  # Server configuration
++-- deploy/                   # Deployment configs (Docker, Kubernetes, systemd, security)
 +-- deployments/              # Docker Compose for ClickHouse
++-- scripts/                  # Test and utility scripts
++-- docs/                     # Technical documentation
 ```
 
 ## Testing
 
 ```bash
-# Run all tests
-go test ./...
+# Run all tests with race detection and coverage
+make test
 
-# Run with race detector
-go test -race ./...
+# Run unit tests only (faster, skips integration tests)
+make test-unit
+
+# Run tests with HTML coverage report
+make test-coverage
 
 # Run specific package
-go test ./internal/correlation/...
+go test -v ./internal/correlation/...
 
-# Run with coverage
-go test -cover ./...
+# Run all CI checks (lint, security, test)
+make ci
 ```
 
 ## Contributing
@@ -299,8 +311,8 @@ go test -cover ./...
 1. Fork the repository
 2. Create a feature branch
 3. Write tests for new functionality
-4. Ensure `go build ./cmd/...` and `go vet ./...` pass
-5. Validate any new rules: `./siem-rules validate ./rules/`
+4. Ensure `make ci` passes (lint, security, test)
+5. Validate any new rules: `./bin/siem-rules validate ./rules/`
 6. Open a Pull Request
 
 Community detection rules are welcome as YAML files in the `rules/` directory.

@@ -17,7 +17,7 @@ Thank you for your interest in contributing to Boundary-SIEM! This document prov
 
 ### Prerequisites
 
-- **Go 1.21+** - [Installation Guide](https://golang.org/doc/install)
+- **Go 1.24+** - [Installation Guide](https://golang.org/doc/install)
 - **Docker & Docker Compose** - For local development dependencies
 - **ClickHouse 23.8+** (optional) - For persistent storage testing
 - **Git** - Version control
@@ -101,21 +101,26 @@ make lint
 boundary-siem/
 ├── cmd/                    # Application entry points
 │   ├── boundary-siem/     # TUI client
-│   └── siem-ingest/       # SIEM server
+│   ├── siem-ingest/       # SIEM server
+│   └── siem-rules/        # Rule validation CLI
 ├── internal/              # Private application code
-│   ├── api/              # REST API handlers
+│   ├── alerting/         # Alert manager, notification channels, escalation
+│   ├── api/              # REST API handlers (auth, dashboard, reports)
 │   ├── blockchain/       # Blockchain-specific modules
 │   ├── correlation/      # Event correlation engine
-│   ├── detection/        # Detection rules
-│   ├── ingest/          # Event ingestion
-│   ├── schema/          # Event schema
-│   ├── search/          # Search engine
-│   ├── storage/         # ClickHouse storage
-│   └── tui/             # Terminal UI
-├── configs/              # Configuration files
-├── deploy/               # Deployment configurations
-├── deployments/          # Docker Compose files
-└── docs/                 # Documentation
+│   ├── detection/        # Detection rules (143+ built-in)
+│   ├── ingest/           # Event ingestion (CEF, EVM, HTTP)
+│   ├── schema/           # Canonical event schema
+│   ├── search/           # ClickHouse query executor
+│   ├── storage/          # ClickHouse storage, batch writer, migrations
+│   └── tui/              # Terminal UI
+├── web/                   # React dashboard (Vite + TypeScript + Tailwind)
+├── rules/                 # Community YAML detection rules
+├── configs/               # Server configuration
+├── deploy/                # Deployment configs (Docker, Kubernetes, systemd)
+├── deployments/           # Docker Compose files
+├── scripts/               # Test and utility scripts
+└── docs/                  # Technical documentation
 ```
 
 ### Commit Messages

@@ -135,18 +135,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - NatLangChain: semantic drift detection, dispute monitoring, adversarial pattern detection
 
 #### Enterprise Features
-- Kubernetes high availability (StatefulSet, HPA, PDB, pod anti-affinity)
-- Kafka integration for event streaming
-- REST and GraphQL APIs
-- OAuth 2.0, SAML 2.0, OIDC, LDAP authentication with MFA support
+- Kubernetes deployment manifests (StatefulSet, HPA, PDB, pod anti-affinity)
+- Kafka integration for event streaming (producer, consumer, admin)
+- REST API with full CRUD for events, alerts, rules, and search
 - RBAC with 7 roles and 16 permissions
-- Multi-tenancy support
+- Multi-tenancy support with tenant isolation
 - Compliance reporting: SOC 2 Type II, ISO 27001, NIST CSF, PCI DSS, GDPR
+- Authentication provider framework (OAuth 2.0, SAML 2.0, OIDC, LDAP config structures defined; functional implementation planned)
 
 #### Advanced Features
-- Threat Hunting Workbench: 10 templates, 7 hunt types, 6 query languages
-- Forensics Toolkit: 12 artifact types, case management, fund flow analysis
-- SOAR Workflow Automation: 8 response workflows, 8 integrations
+- SOAR Workflow Automation: 9 response playbooks with alert, notify, webhook, and ticket executors
 
 #### Platform Security
 - Tamper-evident audit logging with SHA-256 hash chain integrity

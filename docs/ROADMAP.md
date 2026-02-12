@@ -328,11 +328,12 @@ We welcome contributions to these planned features! Here's how to get started:
 |---------|------|----------|
 | 0.1.0-alpha | 2026-01-01 | Core SIEM, Blockchain Security, boundary-daemon & NatLangChain integrations |
 | 0.1.1-alpha | 2026-01-02 | 11 ecosystem integrations, 200+ detection rules, cross-system correlation |
-| 0.2.0 | TBD | ML/UEBA (planned) |
-| 0.3.0 | TBD | Advanced Visualizations (planned) |
-| 0.4.0 | TBD | Mobile App (planned) |
-| 0.5.0 | TBD | Attack Simulation (planned) |
-| 1.0.0 | TBD | Multi-Chain Dashboard, GA Release |
+| 1.0.0-beta | 2026-01-09 | TUI, startup diagnostics, Windows support, security audit, key rotation |
+| 1.1.0 | TBD | ML/UEBA (planned) |
+| 1.2.0 | TBD | Advanced Visualizations (planned) |
+| 1.3.0 | TBD | Mobile App (planned) |
+| 1.4.0 | TBD | Attack Simulation (planned) |
+| 2.0.0 | TBD | Multi-Chain Dashboard, GA Release |
 
 ---
 
