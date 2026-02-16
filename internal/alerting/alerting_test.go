@@ -685,7 +685,10 @@ func TestWebhookChannelConfig(t *testing.T) {
 		"Authorization": "Bearer test-token",
 		"X-Source":       "boundary-siem",
 	}
-	ch := NewWebhookChannel("my-webhook", "https://example.com/hook", headers)
+	ch, err := NewWebhookChannel("my-webhook", "https://example.com/hook", headers)
+	if err != nil {
+		t.Fatalf("NewWebhookChannel failed: %v", err)
+	}
 	if ch.Name() != "my-webhook" {
 		t.Errorf("expected name 'my-webhook', got %s", ch.Name())
 	}
@@ -743,7 +746,7 @@ func TestWebhookChannelSendSuccess(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ch := NewWebhookChannel("test-hook", server.URL, map[string]string{
+	ch := NewWebhookChannelForTest("test-hook", server.URL, map[string]string{
 		"X-Custom-Header": "custom-value",
 		"Authorization":   "Bearer test-token",
 	})
@@ -791,7 +794,7 @@ func TestWebhookChannelNon2xxResponse(t *testing.T) {
 	}))
 	defer server.Close()
 
-	ch := NewWebhookChannel("fail-hook", server.URL, nil)
+	ch := NewWebhookChannelForTest("fail-hook", server.URL, nil)
 	alert := &Alert{
 		ID:        uuid.New(),
 		RuleID:    "test",

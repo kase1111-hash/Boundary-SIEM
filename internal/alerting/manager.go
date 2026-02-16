@@ -176,10 +176,26 @@ func (m *Manager) storeAlert(ctx context.Context, alert *Alert) error {
 
 // persistAlert persists an alert to the database.
 func (m *Manager) persistAlert(ctx context.Context, alert *Alert) error {
-	eventIDsJSON, _ := json.Marshal(alert.EventIDs)
-	tagsJSON, _ := json.Marshal(alert.Tags)
-	metadataJSON, _ := json.Marshal(alert.Metadata)
-	mitreJSON, _ := json.Marshal(alert.MITRE)
+	eventIDsJSON, err := json.Marshal(alert.EventIDs)
+	if err != nil {
+		slog.Warn("failed to marshal event IDs, using empty array", "alert_id", alert.ID, "error", err)
+		eventIDsJSON = []byte("[]")
+	}
+	tagsJSON, err := json.Marshal(alert.Tags)
+	if err != nil {
+		slog.Warn("failed to marshal tags, using empty array", "alert_id", alert.ID, "error", err)
+		tagsJSON = []byte("[]")
+	}
+	metadataJSON, err := json.Marshal(alert.Metadata)
+	if err != nil {
+		slog.Warn("failed to marshal metadata, using empty object", "alert_id", alert.ID, "error", err)
+		metadataJSON = []byte("{}")
+	}
+	mitreJSON, err := json.Marshal(alert.MITRE)
+	if err != nil {
+		slog.Warn("failed to marshal MITRE data, using null", "alert_id", alert.ID, "error", err)
+		mitreJSON = []byte("null")
+	}
 
 	query := `
 		INSERT INTO alerts (
@@ -189,7 +205,7 @@ func (m *Manager) persistAlert(ctx context.Context, alert *Alert) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
-	_, err := m.db.ExecContext(ctx, query,
+	_, err = m.db.ExecContext(ctx, query,
 		alert.ID.String(),
 		alert.RuleID,
 		alert.RuleName,
@@ -303,27 +319,44 @@ func (m *Manager) loadAlert(ctx context.Context, id uuid.UUID) (*Alert, error) {
 	alert.AssignedTo = assignedTo.String
 
 	if eventIDsJSON.Valid {
-		json.Unmarshal([]byte(eventIDsJSON.String), &alert.EventIDs)
+		if err := json.Unmarshal([]byte(eventIDsJSON.String), &alert.EventIDs); err != nil {
+			slog.Warn("failed to unmarshal event IDs", "alert_id", alert.ID, "error", err)
+		}
 	}
 	if tagsJSON.Valid {
-		json.Unmarshal([]byte(tagsJSON.String), &alert.Tags)
+		if err := json.Unmarshal([]byte(tagsJSON.String), &alert.Tags); err != nil {
+			slog.Warn("failed to unmarshal tags", "alert_id", alert.ID, "error", err)
+		}
 	}
 	if metadataJSON.Valid {
-		json.Unmarshal([]byte(metadataJSON.String), &alert.Metadata)
+		if err := json.Unmarshal([]byte(metadataJSON.String), &alert.Metadata); err != nil {
+			slog.Warn("failed to unmarshal metadata", "alert_id", alert.ID, "error", err)
+		}
 	}
 
 	return &alert, nil
 }
 
 // ListAlerts lists alerts with optional filters.
+// Falls back to database if in-memory store has no results and DB is available.
 func (m *Manager) ListAlerts(ctx context.Context, filter AlertFilter) ([]*Alert, error) {
 	m.mu.RLock()
-	defer m.mu.RUnlock()
 
 	var results []*Alert
 	for _, alert := range m.alerts {
 		if filter.matches(alert) {
 			results = append(results, alert)
+		}
+	}
+	m.mu.RUnlock()
+
+	// Fall back to database if in-memory store is empty and DB is available
+	if len(results) == 0 && m.db != nil {
+		dbResults, err := m.listAlertsFromDB(ctx, filter)
+		if err != nil {
+			slog.Warn("failed to list alerts from database, returning in-memory results", "error", err)
+		} else {
+			results = dbResults
 		}
 	}
 
@@ -348,6 +381,102 @@ func (m *Manager) ListAlerts(ctx context.Context, filter AlertFilter) ([]*Alert,
 	}
 
 	return results, nil
+}
+
+// listAlertsFromDB queries alerts from the database with filters.
+func (m *Manager) listAlertsFromDB(ctx context.Context, filter AlertFilter) ([]*Alert, error) {
+	query := `
+		SELECT
+			id, rule_id, rule_name, severity, status, title, description,
+			created_at, updated_at, acked_at, acked_by, resolved_at, resolved_by,
+			group_key, event_count, event_ids, tags, mitre, metadata, assigned_to
+		FROM alerts
+		WHERE 1=1
+	`
+	var args []interface{}
+
+	if filter.Status != nil {
+		query += " AND status = ?"
+		args = append(args, string(*filter.Status))
+	}
+	if filter.Severity != nil {
+		query += " AND severity = ?"
+		args = append(args, string(*filter.Severity))
+	}
+	if filter.RuleID != "" {
+		query += " AND rule_id = ?"
+		args = append(args, filter.RuleID)
+	}
+	if filter.Since != nil {
+		query += " AND created_at >= ?"
+		args = append(args, *filter.Since)
+	}
+	if filter.Until != nil {
+		query += " AND created_at <= ?"
+		args = append(args, *filter.Until)
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	rows, err := m.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("failed to query alerts: %w", err)
+	}
+	defer rows.Close()
+
+	var results []*Alert
+	for rows.Next() {
+		var alert Alert
+		var severity, status string
+		var eventIDsJSON, tagsJSON, mitreJSON, metadataJSON sql.NullString
+		var ackedAt, resolvedAt sql.NullTime
+		var ackedBy, resolvedBy, assignedTo sql.NullString
+
+		err := rows.Scan(
+			&alert.ID, &alert.RuleID, &alert.RuleName,
+			&severity, &status, &alert.Title, &alert.Description,
+			&alert.CreatedAt, &alert.UpdatedAt,
+			&ackedAt, &ackedBy, &resolvedAt, &resolvedBy,
+			&alert.GroupKey, &alert.EventCount,
+			&eventIDsJSON, &tagsJSON, &mitreJSON, &metadataJSON,
+			&assignedTo,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to scan alert: %w", err)
+		}
+
+		alert.Severity = correlation.Severity(severity)
+		alert.Status = AlertStatus(status)
+		if ackedAt.Valid {
+			alert.AckedAt = &ackedAt.Time
+		}
+		alert.AckedBy = ackedBy.String
+		if resolvedAt.Valid {
+			alert.ResolvedAt = &resolvedAt.Time
+		}
+		alert.ResolvedBy = resolvedBy.String
+		alert.AssignedTo = assignedTo.String
+
+		if eventIDsJSON.Valid {
+			if err := json.Unmarshal([]byte(eventIDsJSON.String), &alert.EventIDs); err != nil {
+				slog.Warn("failed to unmarshal event IDs", "alert_id", alert.ID, "error", err)
+			}
+		}
+		if tagsJSON.Valid {
+			if err := json.Unmarshal([]byte(tagsJSON.String), &alert.Tags); err != nil {
+				slog.Warn("failed to unmarshal tags", "alert_id", alert.ID, "error", err)
+			}
+		}
+		if metadataJSON.Valid {
+			if err := json.Unmarshal([]byte(metadataJSON.String), &alert.Metadata); err != nil {
+				slog.Warn("failed to unmarshal metadata", "alert_id", alert.ID, "error", err)
+			}
+		}
+
+		results = append(results, &alert)
+	}
+
+	return results, rows.Err()
 }
 
 // AlertFilter defines filters for listing alerts.

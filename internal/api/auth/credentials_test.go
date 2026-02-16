@@ -241,9 +241,9 @@ func TestInitDefaultUsers_RandomPassword(t *testing.T) {
 		t.Error("expected RequirePasswordChange to be true for random password")
 	}
 
-	// Verify password was logged (for first-time setup)
+	// Verify password file save was logged (for first-time setup)
 	logOutput := logBuf.String()
-	if !strings.Contains(logOutput, "Generated random admin password") {
+	if !strings.Contains(logOutput, "admin password saved to secure file") {
 		t.Error("expected log message about generated password")
 	}
 

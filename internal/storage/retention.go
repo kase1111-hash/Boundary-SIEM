@@ -41,12 +41,28 @@ func (r *RetentionManager) ApplyTTLs(ctx context.Context) error {
 	policies := []tablePolicy{
 		{"events", "timestamp", r.config.EventsTTL},
 		{"events_critical", "timestamp", r.config.CriticalTTL},
-		{"quarantine", "quarantined_at", r.config.QuarantineTTL},
+		{"events_quarantine", "quarantined_at", r.config.QuarantineTTL},
 		{"alerts", "created_at", r.config.AlertsTTL},
+	}
+
+	// Allowlist of valid table and column names for TTL operations
+	validTTLTables := map[string]bool{
+		"events": true, "events_critical": true,
+		"events_quarantine": true, "alerts": true,
+	}
+	validTTLColumns := map[string]bool{
+		"timestamp": true, "quarantined_at": true, "created_at": true,
 	}
 
 	for _, p := range policies {
 		if p.ttl <= 0 {
+			continue
+		}
+
+		// Validate table and column names against allowlists
+		if !validTTLTables[p.table] || !validTTLColumns[p.column] {
+			slog.Warn("skipping TTL policy for unknown table/column",
+				"table", p.table, "column", p.column)
 			continue
 		}
 

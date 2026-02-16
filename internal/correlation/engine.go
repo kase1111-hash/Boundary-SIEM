@@ -326,9 +326,13 @@ func (e *Engine) getEventField(event *schema.Event, field string) any {
 			return event.Actor.Type
 		}
 	default:
-		// Check metadata
+		// Check metadata — support both "metadata.key" and bare "key"
 		if event.Metadata != nil {
-			if v, ok := event.Metadata[field]; ok {
+			metaKey := field
+			if strings.HasPrefix(field, "metadata.") {
+				metaKey = strings.TrimPrefix(field, "metadata.")
+			}
+			if v, ok := event.Metadata[metaKey]; ok {
 				return v
 			}
 		}
@@ -355,6 +359,21 @@ func (e *Engine) evaluateRule(ctx context.Context, rule *Rule, event *schema.Eve
 
 	// Create or reset window if needed
 	if window == nil || now.Sub(window.StartTime) > rule.Window {
+		// Enforce MaxStateEntries: evict oldest window if at capacity
+		if window == nil && len(state.windows) >= e.config.MaxStateEntries {
+			var oldestKey string
+			var oldestTime time.Time
+			for k, w := range state.windows {
+				if oldestKey == "" || w.StartTime.Before(oldestTime) {
+					oldestKey = k
+					oldestTime = w.StartTime
+				}
+			}
+			if oldestKey != "" {
+				delete(state.windows, oldestKey)
+			}
+		}
+
 		window = &Window{
 			Events:    make([]*schema.Event, 0, 100),
 			StartTime: now,

@@ -4,6 +4,7 @@ package encryption
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -98,10 +99,18 @@ func NewEngine(cfg *Config) (*Engine, error) {
 	}, nil
 }
 
-// deriveKey derives a 32-byte encryption key from the master key using SHA-256.
+// deriveKey derives a 32-byte encryption key from the master key using
+// iterated HMAC-SHA256 (100,000 rounds) with an application-specific salt.
+// This provides proper key stretching without requiring external dependencies.
 func deriveKey(masterKey []byte) []byte {
-	hash := sha256.Sum256(masterKey)
-	return hash[:]
+	salt := []byte("boundary-siem-encryption-v1")
+	key := masterKey
+	for i := 0; i < 100000; i++ {
+		h := hmac.New(sha256.New, salt)
+		h.Write(key)
+		key = h.Sum(nil)
+	}
+	return key
 }
 
 // Enabled returns whether encryption is enabled.
@@ -120,6 +129,11 @@ func (e *Engine) Encrypt(plaintext []byte) (string, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
+	return e.encryptLocked(plaintext)
+}
+
+// encryptLocked performs encryption. Caller must hold at least a read lock.
+func (e *Engine) encryptLocked(plaintext []byte) (string, error) {
 	if len(plaintext) == 0 {
 		return "", nil
 	}
@@ -169,6 +183,11 @@ func (e *Engine) Decrypt(encodedCiphertext string) ([]byte, error) {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
+	return e.decryptLocked(encodedCiphertext)
+}
+
+// decryptLocked performs decryption. Caller must hold at least a read lock.
+func (e *Engine) decryptLocked(encodedCiphertext string) ([]byte, error) {
 	if encodedCiphertext == "" {
 		return nil, nil
 	}
@@ -322,6 +341,11 @@ func (e *Engine) ReEncrypt(encodedCiphertext string) (string, bool, error) {
 		return "", false, fmt.Errorf("%w: data too short", ErrInvalidCiphertext)
 	}
 
+	// Hold lock for the entire check-decrypt-encrypt sequence to prevent
+	// a race with concurrent RotateKey() calls.
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+
 	version := int(data[0])
 
 	// Already using current key version - no re-encryption needed
@@ -329,14 +353,14 @@ func (e *Engine) ReEncrypt(encodedCiphertext string) (string, bool, error) {
 		return encodedCiphertext, false, nil
 	}
 
-	// Decrypt with old key
-	plaintext, err := e.Decrypt(encodedCiphertext)
+	// Decrypt with old key (using lock-free variant since we already hold the lock)
+	plaintext, err := e.decryptLocked(encodedCiphertext)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to decrypt during re-encryption: %w", err)
 	}
 
-	// Re-encrypt with current key
-	newCiphertext, err := e.Encrypt(plaintext)
+	// Re-encrypt with current key (using lock-free variant since we already hold the lock)
+	newCiphertext, err := e.encryptLocked(plaintext)
 	if err != nil {
 		return "", false, fmt.Errorf("failed to encrypt during re-encryption: %w", err)
 	}

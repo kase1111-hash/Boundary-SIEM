@@ -431,9 +431,12 @@ func TestLogChannel(t *testing.T) {
 }
 
 func TestWebhookChannel(t *testing.T) {
-	ch := NewWebhookChannel("test-webhook", "http://example.com/webhook", map[string]string{
+	ch, err := NewWebhookChannel("test-webhook", "http://example.com/webhook", map[string]string{
 		"Authorization": "Bearer token123",
 	})
+	if err != nil {
+		t.Fatalf("NewWebhookChannel failed: %v", err)
+	}
 
 	if ch.Name() != "test-webhook" {
 		t.Errorf("expected name 'test-webhook', got %s", ch.Name())

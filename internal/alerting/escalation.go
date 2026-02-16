@@ -51,6 +51,7 @@ type EscalationEngine struct {
 	mu           sync.RWMutex
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
+	notifySem    chan struct{} // semaphore to limit concurrent notification goroutines
 }
 
 // NewEscalationEngine creates a new escalation engine.
@@ -60,6 +61,7 @@ func NewEscalationEngine(manager *Manager) *EscalationEngine {
 		channels:  make(map[string]NotificationChannel),
 		escalated: make(map[string]map[int]bool),
 		stopCh:    make(chan struct{}),
+		notifySem: make(chan struct{}, 50), // limit to 50 concurrent notification goroutines
 	}
 }
 
@@ -269,7 +271,7 @@ func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, 
 		slog.Warn("failed to add escalation note", "alert_id", alert.ID, "error", err)
 	}
 
-	// Send to escalation channels
+	// Send to escalation channels with bounded concurrency
 	e.mu.RLock()
 	for _, chName := range rule.Channels {
 		ch, ok := e.channels[chName]
@@ -278,6 +280,10 @@ func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, 
 			continue
 		}
 		go func(c NotificationChannel) {
+			// Acquire semaphore slot to limit concurrent goroutines
+			e.notifySem <- struct{}{}
+			defer func() { <-e.notifySem }()
+
 			if err := c.Send(ctx, alert); err != nil {
 				slog.Error("escalation notification failed",
 					"channel", c.Name(),
@@ -290,19 +296,35 @@ func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, 
 }
 
 func (e *EscalationEngine) cleanupTracking() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
+	// Collect keys under lock to avoid holding lock during DB calls.
+	e.mu.RLock()
+	keys := make([]string, 0, len(e.escalated))
 	for alertKey := range e.escalated {
+		keys = append(keys, alertKey)
+	}
+	e.mu.RUnlock()
+
+	// Query DB without holding lock.
+	toDelete := make([]string, 0)
+	for _, alertKey := range keys {
 		id, err := uuid.Parse(alertKey)
 		if err != nil {
-			delete(e.escalated, alertKey)
+			toDelete = append(toDelete, alertKey)
 			continue
 		}
 		alert, err := e.manager.GetAlert(context.Background(), id)
 		if err != nil || alert.Status == StatusResolved || alert.Status == StatusAcknowledged {
-			delete(e.escalated, alertKey)
+			toDelete = append(toDelete, alertKey)
 		}
+	}
+
+	// Re-acquire lock to delete stale entries.
+	if len(toDelete) > 0 {
+		e.mu.Lock()
+		for _, key := range toDelete {
+			delete(e.escalated, key)
+		}
+		e.mu.Unlock()
 	}
 }
 
@@ -318,9 +340,9 @@ func BuiltinEscalationPolicies() []EscalationPolicy {
 			Enabled:  true,
 			Severity: &critSev,
 			Rules: []EscalationRule{
-				{After: 15 * time.Minute, Message: "Critical alert unacknowledged for 15 minutes"},
-				{After: 30 * time.Minute, Message: "Critical alert unacknowledged for 30 minutes — immediate action required"},
-				{After: 1 * time.Hour, Message: "Critical alert unacknowledged for 1 hour — executive escalation"},
+				{After: 15 * time.Minute, Channels: []string{"default"}, Message: "Critical alert unacknowledged for 15 minutes"},
+				{After: 30 * time.Minute, Channels: []string{"default"}, Message: "Critical alert unacknowledged for 30 minutes — immediate action required"},
+				{After: 1 * time.Hour, Channels: []string{"default"}, Message: "Critical alert unacknowledged for 1 hour — executive escalation"},
 			},
 		},
 		{
@@ -329,8 +351,8 @@ func BuiltinEscalationPolicies() []EscalationPolicy {
 			Enabled:  true,
 			Severity: &highSev,
 			Rules: []EscalationRule{
-				{After: 30 * time.Minute, Message: "High severity alert unacknowledged for 30 minutes"},
-				{After: 2 * time.Hour, Message: "High severity alert unacknowledged for 2 hours — management escalation"},
+				{After: 30 * time.Minute, Channels: []string{"default"}, Message: "High severity alert unacknowledged for 30 minutes"},
+				{After: 2 * time.Hour, Channels: []string{"default"}, Message: "High severity alert unacknowledged for 2 hours — management escalation"},
 			},
 		},
 	}

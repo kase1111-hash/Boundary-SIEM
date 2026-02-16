@@ -27,32 +27,40 @@ func TestSanitizeColumn(t *testing.T) {
 		input string
 		want  string
 	}{
-		// Normal, valid column names
+		// Valid column names in the allowlist
 		{name: "simple column", input: "action", want: "action"},
 		{name: "underscored column", input: "source_product", want: "source_product"},
-		{name: "mixed case", input: "ActorName", want: "ActorName"},
-		{name: "column with digits", input: "field2", want: "field2"},
+		{name: "event_id", input: "event_id", want: "event_id"},
+		{name: "timestamp", input: "timestamp", want: "timestamp"},
+		{name: "severity", input: "severity", want: "severity"},
+		{name: "actor_name", input: "actor_name", want: "actor_name"},
+		{name: "metadata", input: "metadata", want: "metadata"},
+		{name: "tenant_id", input: "tenant_id", want: "tenant_id"},
+		{name: "raw", input: "raw", want: "raw"},
+		{name: "schema_version", input: "schema_version", want: "schema_version"},
 
-		// SQL injection attempts -- everything that is not [a-zA-Z0-9_] is stripped
-		{name: "semicolon injection", input: "action; DROP TABLE events;--", want: "actionDROPTABLEevents"},
-		{name: "single quote injection", input: "action' OR '1'='1", want: "actionOR11"},
-		{name: "double quote injection", input: `action" OR "1"="1`, want: "actionOR11"},
-		{name: "parentheses injection", input: "count(*)", want: "count"},
-		{name: "comment injection", input: "action/**/OR/**/1=1", want: "actionOR11"},
-		{name: "backtick injection", input: "`action`", want: "action"},
-		{name: "newline injection", input: "action\n; DROP TABLE events", want: "actionDROPTABLEevents"},
-		{name: "tab injection", input: "action\tOR\t1=1", want: "actionOR11"},
-		{name: "dash injection", input: "source-product", want: "sourceproduct"},
-		{name: "dot stripping", input: "metadata.key", want: "metadatakey"},
-		{name: "slash injection", input: "../../etc/passwd", want: "etcpasswd"},
-		{name: "pipe injection", input: "action|cat /etc/passwd", want: "actioncatetcpasswd"},
+		// Invalid columns fall back to "timestamp"
+		{name: "mixed case not in allowlist", input: "ActorName", want: "timestamp"},
+		{name: "unknown column", input: "field2", want: "timestamp"},
+		{name: "empty string", input: "", want: "timestamp"},
 
-		// Edge cases
-		{name: "empty string", input: "", want: ""},
-		{name: "only special chars", input: "!@#$%^&*()", want: ""},
-		{name: "unicode letters stripped", input: "col\u00fcmn", want: "colmn"},
-		{name: "spaces stripped", input: "action name", want: "actionname"},
-		{name: "very long input", input: strings.Repeat("a", 10000), want: strings.Repeat("a", 10000)},
+		// SQL injection attempts -- all rejected by allowlist, return "timestamp"
+		{name: "semicolon injection", input: "action; DROP TABLE events;--", want: "timestamp"},
+		{name: "single quote injection", input: "action' OR '1'='1", want: "timestamp"},
+		{name: "double quote injection", input: `action" OR "1"="1`, want: "timestamp"},
+		{name: "parentheses injection", input: "count(*)", want: "timestamp"},
+		{name: "comment injection", input: "action/**/OR/**/1=1", want: "timestamp"},
+		{name: "backtick injection", input: "`action`", want: "timestamp"},
+		{name: "newline injection", input: "action\n; DROP TABLE events", want: "timestamp"},
+		{name: "tab injection", input: "action\tOR\t1=1", want: "timestamp"},
+		{name: "dash injection", input: "source-product", want: "timestamp"},
+		{name: "dot stripping", input: "metadata.key", want: "timestamp"},
+		{name: "slash injection", input: "../../etc/passwd", want: "timestamp"},
+		{name: "pipe injection", input: "action|cat /etc/passwd", want: "timestamp"},
+		{name: "only special chars", input: "!@#$%^&*()", want: "timestamp"},
+		{name: "unicode letters", input: "col\u00fcmn", want: "timestamp"},
+		{name: "spaces", input: "action name", want: "timestamp"},
+		{name: "very long input", input: strings.Repeat("a", 10000), want: "timestamp"},
 	}
 
 	for _, tt := range tests {
@@ -77,7 +85,7 @@ func TestSanitizeOrderBy(t *testing.T) {
 		input string
 		want  string
 	}{
-		// Valid columns that appear in the allowlist
+		// Valid columns that appear in the orderBy allowlist
 		{name: "timestamp", input: "timestamp", want: "timestamp"},
 		{name: "received_at", input: "received_at", want: "received_at"},
 		{name: "severity", input: "severity", want: "severity"},
@@ -87,14 +95,14 @@ func TestSanitizeOrderBy(t *testing.T) {
 
 		// Invalid columns should fall back to "timestamp"
 		{name: "unknown column", input: "unknown_col", want: "timestamp"},
-		{name: "event_id not in allowlist", input: "event_id", want: "timestamp"},
+		// event_id is in sanitizeColumn allowlist but NOT in sanitizeOrderBy allowlist
+		{name: "event_id not in order allowlist", input: "event_id", want: "timestamp"},
 		{name: "empty string", input: "", want: "timestamp"},
 
-		// SQL injection -- sanitizeColumn strips special chars first, then
-		// the cleaned string is checked against the allowlist.
+		// SQL injection -- all rejected by allowlist, return "timestamp"
 		{name: "injection semicolon", input: "timestamp; DROP TABLE events;--", want: "timestamp"},
 		{name: "injection union", input: "timestamp UNION SELECT * FROM users", want: "timestamp"},
-		{name: "injection comment", input: "severity--", want: "severity"},
+		{name: "injection comment", input: "severity--", want: "timestamp"},
 		{name: "injection with parens", input: "COUNT(*)", want: "timestamp"},
 		{name: "injection single quote", input: "action' OR '1'='1", want: "timestamp"},
 	}
@@ -466,23 +474,18 @@ func TestBuildWhereClause_InjectionViaFieldNames(t *testing.T) {
 			}
 			clause, _ := exec.buildWhereClause(q)
 
-			// After sanitization the clause must not contain SQL syntax
-			// metacharacters from the field name. Note that alphabetic
-			// residue like "actionDROPTABLEevents" is harmless -- it is
-			// just an (invalid) column identifier, not executable SQL.
-			// We check for the truly dangerous characters/patterns.
+			// With the allowlist approach, all invalid column names are
+			// replaced with "timestamp" (the safe fallback). The clause
+			// must not contain any SQL syntax metacharacters.
 			for _, bad := range []string{";", "'", `"`, "--", "/*", "*/", " OR ", " AND ", " UNION ", " SELECT ", " DROP "} {
 				if strings.Contains(clause, bad) {
 					t.Errorf("clause contains dangerous SQL syntax %q: %s", bad, clause)
 				}
 			}
 
-			// Verify the column part has no spaces (all spaces stripped).
-			// Extract column from "WHERE <column> = ?" pattern.
-			trimmed := strings.TrimPrefix(clause, "WHERE ")
-			columnPart := strings.SplitN(trimmed, " ", 2)[0]
-			if strings.ContainsAny(columnPart, " ;'\"()-/*") {
-				t.Errorf("column part still contains dangerous chars: %q", columnPart)
+			// With allowlist, any injection field becomes "timestamp"
+			if !strings.Contains(clause, "timestamp") {
+				t.Errorf("expected injection field to be replaced with 'timestamp', got %q", clause)
 			}
 		})
 	}

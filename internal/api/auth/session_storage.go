@@ -50,13 +50,35 @@ type MemorySessionStorage struct {
 	mu           sync.RWMutex
 	sessions     map[string]*Session // token -> session
 	userSessions map[string][]string // userID -> []token
+	stopCleanup  chan struct{}
 }
 
 // NewMemorySessionStorage creates a new in-memory session storage.
+// Starts a background goroutine to periodically clean up expired sessions.
 func NewMemorySessionStorage() *MemorySessionStorage {
-	return &MemorySessionStorage{
+	m := &MemorySessionStorage{
 		sessions:     make(map[string]*Session),
 		userSessions: make(map[string][]string),
+		stopCleanup:  make(chan struct{}),
+	}
+
+	go m.cleanupLoop()
+
+	return m
+}
+
+// cleanupLoop periodically removes expired sessions to prevent memory leaks.
+func (m *MemorySessionStorage) cleanupLoop() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.stopCleanup:
+			return
+		case <-ticker.C:
+			m.CleanupExpired(context.Background())
+		}
 	}
 }
 
@@ -186,8 +208,9 @@ func (m *MemorySessionStorage) Count(ctx context.Context) (int, error) {
 	return count, nil
 }
 
-// Close releases resources (no-op for memory storage).
+// Close releases resources and stops the background cleanup goroutine.
 func (m *MemorySessionStorage) Close() error {
+	close(m.stopCleanup)
 	return nil
 }
 

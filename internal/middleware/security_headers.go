@@ -78,7 +78,7 @@ func DefaultSecurityHeadersConfig() SecurityHeadersConfig {
 		CSPEnabled:        true,
 		CSPDefaultSrc:     []string{"'self'"},
 		CSPScriptSrc:      []string{"'self'"},
-		CSPStyleSrc:       []string{"'self'", "'unsafe-inline'"}, // Allow inline styles for UI frameworks
+		CSPStyleSrc:       []string{"'self'"},
 		CSPImgSrc:         []string{"'self'", "data:", "https:"},
 		CSPFontSrc:        []string{"'self'"},
 		CSPConnectSrc:     []string{"'self'"},

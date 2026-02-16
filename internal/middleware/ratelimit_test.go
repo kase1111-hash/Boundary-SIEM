@@ -504,7 +504,7 @@ func TestGetClientIP(t *testing.T) {
 			remoteAddr: "127.0.0.1:12345",
 			xff:        "203.0.113.100, 198.51.100.50",
 			trustProxy: true,
-			expected:   "203.0.113.100",
+			expected:   "198.51.100.50", // Rightmost IP (set by trusted proxy, not client-spoofable)
 		},
 		{
 			name:       "X-Real-IP when trust proxy",

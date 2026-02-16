@@ -319,9 +319,18 @@ func (c *Condition) matchContains(eventValue any) bool {
 	return strings.Contains(strings.ToLower(str), strings.ToLower(pattern))
 }
 
+// maxRegexPatternLen limits regex pattern length to prevent resource exhaustion.
+const maxRegexPatternLen = 1024
+
 func (c *Condition) matchRegex(eventValue any) bool {
 	str := fmt.Sprintf("%v", eventValue)
 	pattern := fmt.Sprintf("%v", c.Value)
+
+	// Reject overly long patterns to prevent resource exhaustion
+	if len(pattern) > maxRegexPatternLen {
+		return false
+	}
+
 	re, err := regexp.Compile(pattern)
 	if err != nil {
 		return false
