@@ -318,9 +318,9 @@ func BuiltinEscalationPolicies() []EscalationPolicy {
 			Enabled:  true,
 			Severity: &critSev,
 			Rules: []EscalationRule{
-				{After: 15 * time.Minute, Message: "Critical alert unacknowledged for 15 minutes"},
-				{After: 30 * time.Minute, Message: "Critical alert unacknowledged for 30 minutes — immediate action required"},
-				{After: 1 * time.Hour, Message: "Critical alert unacknowledged for 1 hour — executive escalation"},
+				{After: 15 * time.Minute, Channels: []string{"default"}, Message: "Critical alert unacknowledged for 15 minutes"},
+				{After: 30 * time.Minute, Channels: []string{"default"}, Message: "Critical alert unacknowledged for 30 minutes — immediate action required"},
+				{After: 1 * time.Hour, Channels: []string{"default"}, Message: "Critical alert unacknowledged for 1 hour — executive escalation"},
 			},
 		},
 		{
@@ -329,8 +329,8 @@ func BuiltinEscalationPolicies() []EscalationPolicy {
 			Enabled:  true,
 			Severity: &highSev,
 			Rules: []EscalationRule{
-				{After: 30 * time.Minute, Message: "High severity alert unacknowledged for 30 minutes"},
-				{After: 2 * time.Hour, Message: "High severity alert unacknowledged for 2 hours — management escalation"},
+				{After: 30 * time.Minute, Channels: []string{"default"}, Message: "High severity alert unacknowledged for 30 minutes"},
+				{After: 2 * time.Hour, Channels: []string{"default"}, Message: "High severity alert unacknowledged for 2 hours — management escalation"},
 			},
 		},
 	}

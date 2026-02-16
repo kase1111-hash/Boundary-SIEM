@@ -3,6 +3,7 @@ package search
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -144,6 +145,11 @@ func (e *Executor) Search(ctx context.Context, query *Query) (*SearchResponse, e
 		r.ActorName = actorName.String
 		r.ActorID = actorID.String
 		r.ActorIP = actorIP.String
+
+		if metadataJSON != "" {
+			r.Metadata = make(map[string]interface{})
+			json.Unmarshal([]byte(metadataJSON), &r.Metadata)
+		}
 
 		results = append(results, &r)
 	}
@@ -321,6 +327,11 @@ func (e *Executor) GetEvent(ctx context.Context, eventID uuid.UUID) (*SearchResu
 	r.ActorName = actorName.String
 	r.ActorID = actorID.String
 	r.ActorIP = actorIP.String
+
+	if metadataJSON != "" {
+		r.Metadata = make(map[string]interface{})
+		json.Unmarshal([]byte(metadataJSON), &r.Metadata)
+	}
 
 	return &r, nil
 }

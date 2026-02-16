@@ -326,9 +326,13 @@ func (e *Engine) getEventField(event *schema.Event, field string) any {
 			return event.Actor.Type
 		}
 	default:
-		// Check metadata
+		// Check metadata — support both "metadata.key" and bare "key"
 		if event.Metadata != nil {
-			if v, ok := event.Metadata[field]; ok {
+			metaKey := field
+			if strings.HasPrefix(field, "metadata.") {
+				metaKey = strings.TrimPrefix(field, "metadata.")
+			}
+			if v, ok := event.Metadata[metaKey]; ok {
 				return v
 			}
 		}

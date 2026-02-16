@@ -101,6 +101,7 @@ func (bw *BatchWriter) timerFlush() {
 }
 
 // flushLocked flushes the buffer. Caller must hold the lock.
+// The lock is released during retries to avoid blocking concurrent Write() calls.
 func (bw *BatchWriter) flushLocked() error {
 	if len(bw.buffer) == 0 {
 		return nil
@@ -109,7 +110,17 @@ func (bw *BatchWriter) flushLocked() error {
 	events := bw.buffer
 	bw.buffer = make([]*schema.Event, 0, bw.config.BatchSize)
 
-	// Perform batch insert with retries
+	// Release the lock during batch insert with retries so Write() is not blocked.
+	bw.mu.Unlock()
+	err := bw.insertBatchWithRetries(events)
+	bw.mu.Lock()
+
+	return err
+}
+
+// insertBatchWithRetries attempts to insert a batch with exponential backoff.
+// Must NOT be called with the mutex held.
+func (bw *BatchWriter) insertBatchWithRetries(events []*schema.Event) error {
 	var lastErr error
 	for attempt := 0; attempt <= bw.config.MaxRetries; attempt++ {
 		if attempt > 0 {

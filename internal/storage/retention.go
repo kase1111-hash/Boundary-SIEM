@@ -41,7 +41,7 @@ func (r *RetentionManager) ApplyTTLs(ctx context.Context) error {
 	policies := []tablePolicy{
 		{"events", "timestamp", r.config.EventsTTL},
 		{"events_critical", "timestamp", r.config.CriticalTTL},
-		{"quarantine", "quarantined_at", r.config.QuarantineTTL},
+		{"events_quarantine", "quarantined_at", r.config.QuarantineTTL},
 		{"alerts", "created_at", r.config.AlertsTTL},
 	}
 
