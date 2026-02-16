@@ -205,7 +205,7 @@ func (m *Manager) persistAlert(ctx context.Context, alert *Alert) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`
 
-	_, err := m.db.ExecContext(ctx, query,
+	_, err = m.db.ExecContext(ctx, query,
 		alert.ID.String(),
 		alert.RuleID,
 		alert.RuleName,

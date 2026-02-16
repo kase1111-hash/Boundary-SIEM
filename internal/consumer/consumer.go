@@ -85,6 +85,8 @@ func (c *Consumer) worker(ctx context.Context, id int) {
 				if err == queue.ErrQueueClosed {
 					return
 				}
+				slog.Warn("unexpected queue error", "worker_id", id, "error", err)
+				atomic.AddUint64(&c.errors, 1)
 				continue
 			}
 

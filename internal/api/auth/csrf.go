@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -166,7 +167,8 @@ func (c *CSRFProtection) ensureToken(w http.ResponseWriter, r *http.Request) {
 	// Generate and set new token
 	token, err := c.GenerateToken()
 	if err != nil {
-		return // Silent fail for token generation
+		slog.Error("failed to generate CSRF token", "error", err)
+		return
 	}
 
 	c.SetToken(w, token)

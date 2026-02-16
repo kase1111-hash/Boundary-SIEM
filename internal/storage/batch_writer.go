@@ -243,9 +243,9 @@ func (bw *BatchWriter) Flush() error {
 func (bw *BatchWriter) Close() error {
 	bw.mu.Lock()
 	bw.closed = true
+	bw.flushTimer.Stop()
 	bw.mu.Unlock()
 
-	bw.flushTimer.Stop()
 	close(bw.done)
 
 	// Final flush

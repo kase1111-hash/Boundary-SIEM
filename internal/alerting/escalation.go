@@ -290,19 +290,35 @@ func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, 
 }
 
 func (e *EscalationEngine) cleanupTracking() {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
+	// Collect keys under lock to avoid holding lock during DB calls.
+	e.mu.RLock()
+	keys := make([]string, 0, len(e.escalated))
 	for alertKey := range e.escalated {
+		keys = append(keys, alertKey)
+	}
+	e.mu.RUnlock()
+
+	// Query DB without holding lock.
+	toDelete := make([]string, 0)
+	for _, alertKey := range keys {
 		id, err := uuid.Parse(alertKey)
 		if err != nil {
-			delete(e.escalated, alertKey)
+			toDelete = append(toDelete, alertKey)
 			continue
 		}
 		alert, err := e.manager.GetAlert(context.Background(), id)
 		if err != nil || alert.Status == StatusResolved || alert.Status == StatusAcknowledged {
-			delete(e.escalated, alertKey)
+			toDelete = append(toDelete, alertKey)
 		}
+	}
+
+	// Re-acquire lock to delete stale entries.
+	if len(toDelete) > 0 {
+		e.mu.Lock()
+		for _, key := range toDelete {
+			delete(e.escalated, key)
+		}
+		e.mu.Unlock()
 	}
 }
 

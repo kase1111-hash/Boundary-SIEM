@@ -630,7 +630,7 @@ func (s *AuthService) handleSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.RLock()
-	user := s.users[session.UserID]
+	user := s.getUserByIDLocked(session.UserID)
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
@@ -1132,17 +1132,22 @@ func (s *AuthService) logAudit(action AuditAction, userID, username, tenantID, r
 	)
 }
 
+// getUserByIDLocked finds a user by ID. Caller must hold at least a read lock.
+func (s *AuthService) getUserByIDLocked(id string) *User {
+	for _, u := range s.users {
+		if u.ID == id {
+			return u
+		}
+	}
+	return nil
+}
+
 // GetUser returns a user by ID.
 func (s *AuthService) GetUser(id string) (*User, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	// Iterate through users to find by ID (map is keyed by username)
-	for _, u := range s.users {
-		if u.ID == id {
-			return u, true
-		}
-	}
-	return nil, false
+	u := s.getUserByIDLocked(id)
+	return u, u != nil
 }
 
 // GetTenant returns a tenant by ID.
@@ -1203,7 +1208,7 @@ func (s *AuthService) Middleware(next http.Handler) http.Handler {
 		}
 
 		s.mu.RLock()
-		user := s.users[session.UserID]
+		user := s.getUserByIDLocked(session.UserID)
 		s.mu.RUnlock()
 
 		// Add user to context
