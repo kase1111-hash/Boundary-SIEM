@@ -799,7 +799,7 @@ func TestMiddleware(t *testing.T) {
 
 	// Create a test handler
 	testHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		user, ok := r.Context().Value("user").(*User)
+		user, ok := r.Context().Value(ContextKeyUser).(*User)
 		if !ok || user == nil {
 			t.Error("expected user in context")
 		}

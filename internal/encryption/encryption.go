@@ -4,6 +4,7 @@ package encryption
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
@@ -98,10 +99,18 @@ func NewEngine(cfg *Config) (*Engine, error) {
 	}, nil
 }
 
-// deriveKey derives a 32-byte encryption key from the master key using SHA-256.
+// deriveKey derives a 32-byte encryption key from the master key using
+// iterated HMAC-SHA256 (100,000 rounds) with an application-specific salt.
+// This provides proper key stretching without requiring external dependencies.
 func deriveKey(masterKey []byte) []byte {
-	hash := sha256.Sum256(masterKey)
-	return hash[:]
+	salt := []byte("boundary-siem-encryption-v1")
+	key := masterKey
+	for i := 0; i < 100000; i++ {
+		h := hmac.New(sha256.New, salt)
+		h.Write(key)
+		key = h.Sum(nil)
+	}
+	return key
 }
 
 // Enabled returns whether encryption is enabled.

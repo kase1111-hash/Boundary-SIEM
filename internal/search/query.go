@@ -65,6 +65,7 @@ type Query struct {
 	Conditions []Condition
 	Logic      []string // "AND" or "OR" between conditions
 	TimeRange  *TimeRange
+	TenantID   string // Required for tenant isolation; must be set by caller
 	Limit      int
 	Offset     int
 	OrderBy    string

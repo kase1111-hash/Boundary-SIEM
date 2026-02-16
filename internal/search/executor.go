@@ -54,6 +54,14 @@ type AggregationBucket struct {
 	Value float64     `json:"value,omitempty"`
 }
 
+// truncateForLog truncates a string for safe inclusion in log messages.
+func truncateForLog(s string, maxLen int) string {
+	if len(s) > maxLen {
+		return s[:maxLen] + "...[truncated]"
+	}
+	return s
+}
+
 // Executor executes search queries against ClickHouse.
 type Executor struct {
 	db *sql.DB
@@ -65,7 +73,12 @@ func NewExecutor(db *sql.DB) *Executor {
 }
 
 // Search executes a search query and returns results.
+// The query must have TenantID set for tenant isolation.
 func (e *Executor) Search(ctx context.Context, query *Query) (*SearchResponse, error) {
+	if query.TenantID == "" {
+		return nil, fmt.Errorf("tenant_id is required for search queries")
+	}
+
 	start := time.Now()
 
 	// Build WHERE clause
@@ -169,7 +182,12 @@ func (e *Executor) Search(ctx context.Context, query *Query) (*SearchResponse, e
 }
 
 // Aggregate executes an aggregation query.
+// The query must have TenantID set for tenant isolation.
 func (e *Executor) Aggregate(ctx context.Context, query *Query, field string, aggType string) (*AggregationResult, error) {
+	if query.TenantID == "" {
+		return nil, fmt.Errorf("tenant_id is required for aggregation queries")
+	}
+
 	// Map field name to column
 	column, _ := MapField(field)
 	column = e.sanitizeColumn(column)
@@ -339,12 +357,18 @@ func (e *Executor) GetEvent(ctx context.Context, eventID uuid.UUID) (*SearchResu
 // buildWhereClause builds a SQL WHERE clause from query conditions.
 // Supports parenthetical grouping via OpenParens/CloseParens on conditions.
 func (e *Executor) buildWhereClause(query *Query) (string, []interface{}) {
-	if len(query.Conditions) == 0 && query.TimeRange == nil {
-		return "", nil
-	}
-
 	var parts []string
 	var args []interface{}
+
+	// Enforce tenant isolation — always filter by tenant_id when set
+	if query.TenantID != "" {
+		parts = append(parts, "tenant_id = ?")
+		args = append(args, query.TenantID)
+	}
+
+	if len(query.Conditions) == 0 && query.TimeRange == nil && len(parts) == 0 {
+		return "", nil
+	}
 
 	// Add time range if specified
 	if query.TimeRange != nil {
@@ -384,28 +408,35 @@ func (e *Executor) buildWhereClause(query *Query) (string, []interface{}) {
 		return "", nil
 	}
 
-	// Join: time range parts are always ANDed, then condition parts use the Logic slice
+	// Join: tenant_id and time range parts are always ANDed, then condition parts use the Logic slice
 	var result strings.Builder
 	result.WriteString("WHERE ")
 
-	timePartCount := 0
+	// Count fixed parts (tenant_id + time range) that are always ANDed
+	fixedPartCount := 0
+	if query.TenantID != "" {
+		fixedPartCount++
+	}
 	if query.TimeRange != nil {
 		if !query.TimeRange.Start.IsZero() {
-			timePartCount++
+			fixedPartCount++
 		}
 		if !query.TimeRange.End.IsZero() {
-			timePartCount++
+			fixedPartCount++
 		}
 	}
 
 	for i, part := range parts {
 		if i > 0 {
-			if i <= timePartCount {
-				// Time range parts are always ANDed together and with conditions
+			if i < fixedPartCount {
+				// Fixed parts (tenant_id, time range) are always ANDed together
+				result.WriteString(" AND ")
+			} else if i == fixedPartCount {
+				// Transition from fixed to condition parts — always AND
 				result.WriteString(" AND ")
 			} else {
 				// Condition parts use the Logic operators
-				condIdx := i - timePartCount
+				condIdx := i - fixedPartCount
 				logic := "AND"
 				if condIdx-1 >= 0 && condIdx-1 < len(query.Logic) {
 					logic = query.Logic[condIdx-1]
@@ -429,6 +460,10 @@ func (e *Executor) buildConditionClause(column string, cond Condition) (string, 
 	switch cond.Operator {
 	case OpEquals:
 		if cond.IsRegex {
+			// Validate regex pattern length to prevent resource exhaustion in ClickHouse
+			if pattern, ok := cond.Value.(string); ok && len(pattern) > 1024 {
+				return "1=0", nil // reject overly long patterns
+			}
 			return fmt.Sprintf("match(%s, ?)", column), []interface{}{cond.Value}
 		}
 		if cond.IsPhrase {
@@ -497,17 +532,37 @@ func (e *Executor) buildMetadataClause(cond Condition) (string, []interface{}) {
 	}
 }
 
-// sanitizeColumn ensures column name is safe for SQL.
+// validColumns is an allowlist of known safe column names for SQL queries.
+var validColumns = map[string]bool{
+	"event_id":       true,
+	"timestamp":      true,
+	"received_at":    true,
+	"tenant_id":      true,
+	"action":         true,
+	"outcome":        true,
+	"severity":       true,
+	"target":         true,
+	"raw":            true,
+	"source_product": true,
+	"source_vendor":  true,
+	"source_version": true,
+	"source_hostname": true,
+	"source_ip":      true,
+	"actor_name":     true,
+	"actor_id":       true,
+	"actor_type":     true,
+	"actor_ip":       true,
+	"metadata":       true,
+	"schema_version": true,
+}
+
+// sanitizeColumn ensures column name is a known valid column.
+// Returns "timestamp" as safe fallback for unknown columns.
 func (e *Executor) sanitizeColumn(column string) string {
-	// Allow only alphanumeric and underscore
-	var result strings.Builder
-	for _, r := range column {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') ||
-			(r >= '0' && r <= '9') || r == '_' {
-			result.WriteRune(r)
-		}
+	if validColumns[column] {
+		return column
 	}
-	return result.String()
+	return "timestamp"
 }
 
 // sanitizeOrderBy ensures order by column is valid.

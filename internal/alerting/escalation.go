@@ -51,6 +51,7 @@ type EscalationEngine struct {
 	mu           sync.RWMutex
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
+	notifySem    chan struct{} // semaphore to limit concurrent notification goroutines
 }
 
 // NewEscalationEngine creates a new escalation engine.
@@ -60,6 +61,7 @@ func NewEscalationEngine(manager *Manager) *EscalationEngine {
 		channels:  make(map[string]NotificationChannel),
 		escalated: make(map[string]map[int]bool),
 		stopCh:    make(chan struct{}),
+		notifySem: make(chan struct{}, 50), // limit to 50 concurrent notification goroutines
 	}
 }
 
@@ -269,7 +271,7 @@ func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, 
 		slog.Warn("failed to add escalation note", "alert_id", alert.ID, "error", err)
 	}
 
-	// Send to escalation channels
+	// Send to escalation channels with bounded concurrency
 	e.mu.RLock()
 	for _, chName := range rule.Channels {
 		ch, ok := e.channels[chName]
@@ -278,6 +280,10 @@ func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, 
 			continue
 		}
 		go func(c NotificationChannel) {
+			// Acquire semaphore slot to limit concurrent goroutines
+			e.notifySem <- struct{}{}
+			defer func() { <-e.notifySem }()
+
 			if err := c.Send(ctx, alert); err != nil {
 				slog.Error("escalation notification failed",
 					"channel", c.Name(),

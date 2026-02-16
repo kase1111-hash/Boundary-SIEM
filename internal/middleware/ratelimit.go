@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -244,18 +245,21 @@ func RateLimitMiddleware(cfg config.RateLimitConfig, logger *slog.Logger) func(h
 
 // getClientIP extracts the client IP from the HTTP request.
 // If trustProxy is true, it checks X-Forwarded-For and X-Real-IP headers first.
+// Uses the rightmost IP in X-Forwarded-For to prevent client-controlled spoofing.
 func getClientIP(r *http.Request, trustProxy bool) string {
 	// If we trust the proxy, check X-Forwarded-For header
 	if trustProxy {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			// X-Forwarded-For may contain multiple IPs (client, proxy1, proxy2, ...)
-			// Take the first IP (leftmost = original client)
-			for i := 0; i < len(xff); i++ {
-				if xff[i] == ',' {
-					return trimSpace(xff[:i])
+			// X-Forwarded-For: client, proxy1, proxy2
+			// Use the rightmost IP — it was set by the trusted proxy closest to us
+			// and cannot be spoofed by the client.
+			parts := strings.Split(xff, ",")
+			for i := len(parts) - 1; i >= 0; i-- {
+				ip := trimSpace(parts[i])
+				if ip != "" {
+					return ip
 				}
 			}
-			return trimSpace(xff)
 		}
 
 		// Also check X-Real-IP header (common in nginx)
@@ -289,4 +293,63 @@ func trimSpace(s string) string {
 	}
 
 	return s[start:end]
+}
+
+// LoginRateLimiter applies per-username rate limiting for login endpoints.
+// This limits brute-force attacks against specific usernames.
+type LoginRateLimiter struct {
+	attempts    map[string]*loginAttempt
+	mu          sync.Mutex
+	maxAttempts int
+	window      time.Duration
+}
+
+type loginAttempt struct {
+	count     int
+	windowEnd time.Time
+}
+
+// NewLoginRateLimiter creates a per-username login rate limiter.
+func NewLoginRateLimiter(maxAttempts int, window time.Duration) *LoginRateLimiter {
+	return &LoginRateLimiter{
+		attempts:    make(map[string]*loginAttempt),
+		maxAttempts: maxAttempts,
+		window:      window,
+	}
+}
+
+// AllowLogin checks if a login attempt for the given username should be allowed.
+func (l *LoginRateLimiter) AllowLogin(username string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	attempt, exists := l.attempts[username]
+	if !exists || now.After(attempt.windowEnd) {
+		l.attempts[username] = &loginAttempt{
+			count:     1,
+			windowEnd: now.Add(l.window),
+		}
+		return true
+	}
+
+	if attempt.count >= l.maxAttempts {
+		return false
+	}
+
+	attempt.count++
+	return true
+}
+
+// CleanupLoginAttempts removes expired entries from the login rate limiter.
+func (l *LoginRateLimiter) CleanupLoginAttempts() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	now := time.Now()
+	for username, attempt := range l.attempts {
+		if now.After(attempt.windowEnd) {
+			delete(l.attempts, username)
+		}
+	}
 }

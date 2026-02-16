@@ -148,8 +148,9 @@ func TestAlertNotifyWebhook(t *testing.T) {
 	}))
 	defer mockServer.Close()
 
-	// Create webhook channel pointing at mock server
-	webhookCh := alerting.NewWebhookChannel("test-webhook", mockServer.URL, nil)
+	// Create webhook channel pointing at mock server (local httptest server
+	// uses loopback which would be blocked by SSRF check, so use test constructor)
+	webhookCh := alerting.NewWebhookChannelForTest("test-webhook", mockServer.URL, nil)
 
 	// Create alert manager with webhook channel
 	alertMgr := alerting.NewManager(alerting.DefaultManagerConfig(), nil)

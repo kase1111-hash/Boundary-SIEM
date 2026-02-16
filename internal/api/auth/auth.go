@@ -391,10 +391,9 @@ func (s *AuthService) initDefaultUsers(config *AdminConfig) error {
 			s.logger.Error("failed to write admin password to secure file", "error", err)
 			// Continue - password is still valid, just not persisted to file
 		} else {
-			s.logger.Warn("SECURITY: Generated random admin password - SAVED TO SECURE FILE",
+			s.logger.Info("admin password saved to secure file",
 				"username", config.Username,
-				"password_file", "/var/lib/boundary-siem/admin-password.txt",
-				"action_required", "Retrieve password from secure file and change it immediately after first login")
+				"action_required", "change password after first login")
 		}
 	} else {
 		// Validate provided password strength
@@ -531,18 +530,12 @@ func (s *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 
 	user, err := s.Authenticate(req.Username, req.Password, req.TenantID)
 	if err != nil {
+		// Log detailed error server-side for debugging (not exposed to client)
 		s.logAudit(AuditActionLoginFailed, "", req.Username, req.TenantID, "auth", "", r, false, err.Error())
 
-		// Return appropriate error based on type
-		if authErr, ok := err.(*AuthError); ok {
-			statusCode := http.StatusUnauthorized
-			if authErr.Code == "ACCOUNT_LOCKED" {
-				statusCode = http.StatusForbidden
-			}
-			writeJSONError(w, statusCode, authErr.Code, authErr.Message)
-		} else {
-			writeJSONError(w, http.StatusUnauthorized, "AUTH_FAILED", "Authentication failed")
-		}
+		// Return a generic error to avoid leaking whether the username exists,
+		// or the specific reason for failure (locked, disabled, wrong password, etc.)
+		writeJSONError(w, http.StatusUnauthorized, "AUTH_FAILED", "Invalid username or password")
 		return
 	}
 
@@ -610,6 +603,9 @@ func (s *AuthService) handleLogout(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.logAudit(AuditActionLogout, session.UserID, "", session.TenantID, "session", session.ID, r, true, "")
+
+	// Clear CSRF token cookie on logout
+	s.csrf.ClearToken(w)
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "logged out"})
@@ -714,24 +710,62 @@ func (s *AuthService) handleUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var user User
-		if err := json.NewDecoder(r.Body).Decode(&user); err != nil {
-			http.Error(w, "Invalid request", http.StatusBadRequest)
+		// Use a restricted request struct to prevent clients from setting PasswordHash directly
+		var req struct {
+			Username string   `json:"username"`
+			Password string   `json:"password"`
+			Email    string   `json:"email"`
+			Roles    []string `json:"roles"`
+			TenantID string   `json:"tenant_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_REQUEST", "Invalid request body")
 			return
 		}
 
-		user.ID = generateID()
-		user.CreatedAt = time.Now()
-		user.Permissions = s.getPermissionsForRoles(user.Roles)
+		if req.Username == "" {
+			writeJSONError(w, http.StatusBadRequest, "INVALID_REQUEST", "Username is required")
+			return
+		}
+
+		// Enforce password policy on creation
+		if err := validatePasswordStrength(req.Password); err != nil {
+			writeJSONError(w, http.StatusBadRequest, "WEAK_PASSWORD", err.Error())
+			return
+		}
+
+		// Hash password server-side (never accept pre-hashed passwords)
+		passwordHash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcryptCost)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "Failed to process password")
+			return
+		}
+
+		roles := make([]Role, len(req.Roles))
+		for i, r := range req.Roles {
+			roles[i] = Role(r)
+		}
+
+		user := &User{
+			ID:           generateID(),
+			Username:     req.Username,
+			Email:        req.Email,
+			PasswordHash: string(passwordHash),
+			Roles:        roles,
+			TenantID:     req.TenantID,
+			CreatedAt:    time.Now(),
+			Provider:     AuthProviderLocal,
+			Permissions:  s.getPermissionsForRoles(roles),
+		}
 
 		s.mu.Lock()
 		// Check if username already exists
 		if _, exists := s.users[user.Username]; exists {
 			s.mu.Unlock()
-			http.Error(w, "Username already exists", http.StatusConflict)
+			writeJSONError(w, http.StatusConflict, "USERNAME_EXISTS", "Username already exists")
 			return
 		}
-		s.users[user.Username] = &user // Use username as key for Authenticate() compatibility
+		s.users[user.Username] = user
 		s.mu.Unlock()
 
 		s.logAudit(AuditActionUserCreated, "", "", user.TenantID, "user", user.ID, r, true, "")
@@ -1036,6 +1070,9 @@ func (s *AuthService) CreateSession(user *User, r *http.Request) (*Session, erro
 	return session, nil
 }
 
+// idleSessionTimeout defines the maximum allowed idle time before a session is invalidated.
+const idleSessionTimeout = 30 * time.Minute
+
 // ValidateSession validates a session token.
 func (s *AuthService) ValidateSession(token string) (*Session, error) {
 	ctx := context.Background()
@@ -1049,6 +1086,13 @@ func (s *AuthService) ValidateSession(token string) (*Session, error) {
 			return nil, errors.New("session expired")
 		}
 		return nil, fmt.Errorf("failed to get session: %w", err)
+	}
+
+	// Check idle session timeout
+	if time.Since(session.LastActiveAt) > idleSessionTimeout {
+		// Delete the idle session
+		_ = s.sessionStorage.Delete(ctx, token)
+		return nil, errors.New("session expired due to inactivity")
 	}
 
 	// Update last active time
@@ -1118,11 +1162,14 @@ func (s *AuthService) logAudit(action AuditAction, userID, username, tenantID, r
 
 	s.mu.Lock()
 	s.auditLog = append(s.auditLog, entry)
-	// Keep last 10000 entries
+	// Keep last 10000 entries in memory
 	if len(s.auditLog) > 10000 {
 		s.auditLog = s.auditLog[len(s.auditLog)-10000:]
 	}
 	s.mu.Unlock()
+
+	// Persist to audit log file (append-only JSON lines)
+	s.persistAuditEntry(entry)
 
 	s.logger.Info("audit log",
 		"action", action,
@@ -1130,6 +1177,24 @@ func (s *AuthService) logAudit(action AuditAction, userID, username, tenantID, r
 		"resource", resource,
 		"success", success,
 	)
+}
+
+// persistAuditEntry writes an audit entry to the append-only audit log file.
+func (s *AuthService) persistAuditEntry(entry *AuditLogEntry) {
+	data, err := json.Marshal(entry)
+	if err != nil {
+		s.logger.Error("failed to marshal audit entry", "error", err)
+		return
+	}
+
+	f, err := os.OpenFile("/var/log/boundary-siem/audit.jsonl", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		// Fall back silently — in-memory log is still available
+		return
+	}
+	defer f.Close()
+
+	f.Write(append(data, '\n'))
 }
 
 // getUserByIDLocked finds a user by ID. Caller must hold at least a read lock.
@@ -1211,6 +1276,12 @@ func (s *AuthService) Middleware(next http.Handler) http.Handler {
 		user := s.getUserByIDLocked(session.UserID)
 		s.mu.RUnlock()
 
+		// Reject disabled or deleted users
+		if user == nil || user.Disabled {
+			http.Error(w, "Account disabled", http.StatusForbidden)
+			return
+		}
+
 		// Add user to context
 		ctx := context.WithValue(r.Context(), ContextKeyUser, user)
 		ctx = context.WithValue(ctx, ContextKeySession, session)
@@ -1245,7 +1316,11 @@ func extractToken(r *http.Request) string {
 	if strings.HasPrefix(auth, "Bearer ") {
 		return strings.TrimPrefix(auth, "Bearer ")
 	}
-	return r.URL.Query().Get("token")
+	// Check session cookie as a safe alternative (never accept tokens via URL query params)
+	if cookie, err := r.Cookie("session_token"); err == nil {
+		return cookie.Value
+	}
+	return ""
 }
 
 func isPublicEndpoint(path string) bool {

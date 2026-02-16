@@ -7,16 +7,79 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/smtp"
+	"net/url"
 	"strings"
 	"time"
 
 	"boundary-siem/internal/correlation"
 )
+
+// validateWebhookURL validates that a URL is safe for server-side requests (SSRF protection).
+func validateWebhookURL(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %w", err)
+	}
+
+	// Only allow HTTP and HTTPS schemes
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("unsupported scheme %q: only http and https are allowed", u.Scheme)
+	}
+
+	hostname := u.Hostname()
+	if hostname == "" {
+		return fmt.Errorf("URL must have a hostname")
+	}
+
+	// Resolve hostname to check for private IPs.
+	// If DNS resolution fails, allow the URL — it will fail at send time.
+	// This prevents blocking valid URLs in environments with restricted DNS.
+	ips, err := net.LookupIP(hostname)
+	if err == nil {
+		for _, ip := range ips {
+			if isPrivateIP(ip) {
+				return fmt.Errorf("webhook URL resolves to private/reserved IP %s", ip)
+			}
+		}
+	}
+
+	return nil
+}
+
+// isPrivateIP checks if an IP address is in a private or reserved range.
+func isPrivateIP(ip net.IP) bool {
+	privateRanges := []struct {
+		network *net.IPNet
+	}{
+		{parseCIDR("127.0.0.0/8")},
+		{parseCIDR("10.0.0.0/8")},
+		{parseCIDR("172.16.0.0/12")},
+		{parseCIDR("192.168.0.0/16")},
+		{parseCIDR("169.254.0.0/16")},
+		{parseCIDR("0.0.0.0/8")},
+		{parseCIDR("::1/128")},
+		{parseCIDR("fd00::/8")},
+		{parseCIDR("fe80::/10")},
+	}
+
+	for _, r := range privateRanges {
+		if r.network.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func parseCIDR(cidr string) *net.IPNet {
+	_, network, _ := net.ParseCIDR(cidr)
+	return network
+}
 
 // WebhookChannel sends alerts via HTTP webhook.
 type WebhookChannel struct {
@@ -27,10 +90,28 @@ type WebhookChannel struct {
 }
 
 // NewWebhookChannel creates a new webhook channel.
-func NewWebhookChannel(name, url string, headers map[string]string) *WebhookChannel {
+// Returns an error if the URL targets a private/reserved IP range (SSRF protection).
+func NewWebhookChannel(name, rawURL string, headers map[string]string) (*WebhookChannel, error) {
+	if err := validateWebhookURL(rawURL); err != nil {
+		return nil, fmt.Errorf("invalid webhook URL: %w", err)
+	}
+
 	return &WebhookChannel{
 		name:    name,
-		url:     url,
+		url:     rawURL,
+		headers: headers,
+		client: &http.Client{
+			Timeout: 10 * time.Second,
+		},
+	}, nil
+}
+
+// NewWebhookChannelForTest creates a webhook channel without SSRF validation.
+// Only for use in tests with httptest servers on localhost.
+func NewWebhookChannelForTest(name, rawURL string, headers map[string]string) *WebhookChannel {
+	return &WebhookChannel{
+		name:    name,
+		url:     rawURL,
 		headers: headers,
 		client: &http.Client{
 			Timeout: 10 * time.Second,
@@ -376,9 +457,21 @@ func (l *LogChannel) Name() string {
 }
 
 func (l *LogChannel) Send(ctx context.Context, alert *Alert) error {
-	l.logger("ALERT [%s] %s - %s (rule=%s, events=%d, tags=%v)",
-		alert.Severity, alert.Title, alert.Description,
-		alert.RuleID, alert.EventCount, alert.Tags)
+	// Use structured logging to prevent log injection via alert fields
+	slog.Warn("ALERT",
+		"severity", string(alert.Severity),
+		"title", alert.Title,
+		"description", alert.Description,
+		"rule_id", alert.RuleID,
+		"event_count", alert.EventCount,
+		"tags", alert.Tags,
+	)
+	// Also call the configured logger for backward compatibility
+	if l.logger != nil {
+		l.logger("ALERT [%s] %s - %s (rule=%s, events=%d)",
+			alert.Severity, alert.Title, alert.Description,
+			alert.RuleID, alert.EventCount)
+	}
 	return nil
 }
 
@@ -392,7 +485,6 @@ type EmailConfig struct {
 	To          []string
 	UseTLS      bool
 	UseSTARTTLS bool
-	SkipVerify  bool // Skip TLS certificate verification (not recommended for production)
 }
 
 // EmailChannel sends alerts via SMTP email.
@@ -445,11 +537,7 @@ func (e *EmailChannel) sendMail(ctx context.Context, msg []byte) error {
 	if e.config.UseTLS {
 		// Direct TLS connection (SMTPS on port 465)
 		tlsConfig := &tls.Config{
-			ServerName:         e.config.SMTPHost,
-			InsecureSkipVerify: e.config.SkipVerify,
-		}
-		if e.config.SkipVerify {
-			slog.Warn("SECURITY WARNING: TLS certificate verification is disabled for SMTP - this is NOT recommended for production")
+			ServerName: e.config.SMTPHost,
 		}
 		conn, err = tls.DialWithDialer(dialer, "tcp", addr, tlsConfig)
 	} else {
@@ -471,11 +559,7 @@ func (e *EmailChannel) sendMail(ctx context.Context, msg []byte) error {
 	if e.config.UseSTARTTLS && !e.config.UseTLS {
 		if ok, _ := client.Extension("STARTTLS"); ok {
 			tlsConfig := &tls.Config{
-				ServerName:         e.config.SMTPHost,
-				InsecureSkipVerify: e.config.SkipVerify,
-			}
-			if e.config.SkipVerify {
-				slog.Warn("SECURITY WARNING: TLS certificate verification is disabled for SMTP STARTTLS - this is NOT recommended for production")
+				ServerName: e.config.SMTPHost,
 			}
 			if err := client.StartTLS(tlsConfig); err != nil {
 				return fmt.Errorf("STARTTLS failed: %w", err)
@@ -598,15 +682,24 @@ func (e *EmailChannel) buildHTMLBody(alert *Alert) string {
 	severityColor := e.severityColor(alert.Severity)
 	severityBgColor := e.severityBgColor(alert.Severity)
 
+	// HTML-escape all user-controlled alert fields to prevent HTML injection
+	safeTitle := html.EscapeString(alert.Title)
+	safeDescription := html.EscapeString(alert.Description)
+	safeRuleID := html.EscapeString(alert.RuleID)
+
 	var mitreSection string
 	if alert.MITRE != nil {
 		techniquesRow := ""
 		if len(alert.MITRE.Techniques) > 0 {
+			safeTechniques := make([]string, len(alert.MITRE.Techniques))
+			for i, t := range alert.MITRE.Techniques {
+				safeTechniques[i] = html.EscapeString(t)
+			}
 			techniquesRow = fmt.Sprintf(`
 					<tr>
 						<td style="padding: 5px 0; color: #6c757d;">Related:</td>
 						<td style="padding: 5px 0; color: #212529;">%s</td>
-					</tr>`, strings.Join(alert.MITRE.Techniques, ", "))
+					</tr>`, strings.Join(safeTechniques, ", "))
 		}
 		mitreSection = fmt.Sprintf(`
 		<tr>
@@ -624,8 +717,8 @@ func (e *EmailChannel) buildHTMLBody(alert *Alert) string {
 					%s
 				</table>
 			</td>
-		</tr>`, alert.MITRE.TacticName, alert.MITRE.TacticID,
-			alert.MITRE.TechniqueID, techniquesRow)
+		</tr>`, html.EscapeString(alert.MITRE.TacticName), html.EscapeString(alert.MITRE.TacticID),
+			html.EscapeString(alert.MITRE.TechniqueID), techniquesRow)
 	}
 
 	var tagsSection string
@@ -634,7 +727,7 @@ func (e *EmailChannel) buildHTMLBody(alert *Alert) string {
 		for _, tag := range alert.Tags {
 			tagBadges = append(tagBadges, fmt.Sprintf(
 				`<span style="display: inline-block; padding: 2px 8px; margin: 2px; background-color: #e9ecef; border-radius: 3px; font-size: 12px;">%s</span>`,
-				tag))
+				html.EscapeString(tag)))
 		}
 		tagsSection = fmt.Sprintf(`
 		<tr>
@@ -713,11 +806,11 @@ func (e *EmailChannel) buildHTMLBody(alert *Alert) string {
 </body>
 </html>`,
 		severityColor,
-		severityBgColor, severityColor, string(alert.Severity),
-		alert.Title,
-		alert.Description,
+		severityBgColor, severityColor, html.EscapeString(string(alert.Severity)),
+		safeTitle,
+		safeDescription,
 		alert.ID.String(),
-		alert.RuleID,
+		safeRuleID,
 		alert.CreatedAt.Format("2006-01-02 15:04:05 UTC"),
 		alert.EventCount,
 		tagsSection,
