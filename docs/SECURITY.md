@@ -519,7 +519,7 @@ curl localhost:8080/metrics | grep syslog_buffer
 
 | Version | Date | Changes |
 |---------|------|---------|
-| 1.0.0 | 2024-01 | Initial security features |
-| 1.1.0 | 2024-01 | Added TPM 2.0 support |
-| 1.2.0 | 2024-01 | Container isolation improvements |
+| 1.0.0 | 2026-01 | Initial security features |
+| 1.1.0 | 2026-01 | Added TPM 2.0 support |
+| 1.2.0 | 2026-01 | Container isolation improvements |
 | 1.3.0 | 2026-01 | Added CI/CD security scanning (gosec, govulncheck) |

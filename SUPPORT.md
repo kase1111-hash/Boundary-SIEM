@@ -81,7 +81,7 @@ lsof -i :8080
 curl http://localhost:8080/health
 
 # Specify server URL when running TUI
-./bin/boundary-siem --server http://localhost:8080
+./bin/boundary-siem -server http://localhost:8080
 ```
 
 ### Configuration Issues
@@ -92,7 +92,7 @@ curl http://localhost:8080/health
 ls configs/config.yaml
 
 # Or set environment variable
-export BOUNDARY_CONFIG_PATH=/path/to/config.yaml
+export SIEM_CONFIG_PATH=/path/to/config.yaml
 ```
 
 **Problem**: Admin password not set

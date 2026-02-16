@@ -10,7 +10,7 @@ High-speed Ingestion: Handles CEF, JSON, syslog, Kafka, and NatLangChain semanti
 
 Scalable Storage: Built on ClickHouse with tiered retention (hot → warm → cold → S3).
 
-Intelligent Correlation: 120+ rules covering smart contracts, cross-chain exploits, validator anomalies, and DeFi abuse.
+Intelligent Correlation: 143+ rules covering smart contracts, cross-chain exploits, validator anomalies, and DeFi abuse.
 
 SOAR Automation: Native playbooks and webhook orchestration for instant, policy-driven response.
 

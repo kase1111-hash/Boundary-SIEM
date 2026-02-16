@@ -52,34 +52,40 @@ Security scans run automatically on:
 
 ## Local Scanning
 
+Security scanning targets are defined in `Makefile.security`. You can use them
+with `make -f Makefile.security <target>`, or add `include Makefile.security`
+to the main `Makefile` to use them directly.
+
+The main `Makefile` also provides a basic `make security` target that runs gosec.
+
 ### Prerequisites
 
 Install security scanning tools:
 
 ```bash
-make security-install-tools
+make -f Makefile.security security-install-tools
 ```
 
 ### Run All Scans
 
 ```bash
-make security-scan
+make -f Makefile.security security-scan
 ```
 
 ### Individual Scans
 
 ```bash
 # Go vulnerability check
-make security-govulncheck
+make -f Makefile.security security-govulncheck
 
 # Security code analysis
-make security-gosec
+make -f Makefile.security security-gosec
 
 # Check for secrets
-make security-check-secrets
+make -f Makefile.security security-check-secrets
 
 # Generate comprehensive report
-make security-report
+make -f Makefile.security security-report
 ```
 
 ### Quick CI Check
@@ -87,7 +93,7 @@ make security-report
 For fast feedback in CI pipelines:
 
 ```bash
-make security-quick
+make -f Makefile.security security-quick
 ```
 
 ## Scan Results
@@ -229,5 +235,5 @@ Regular security practices:
 See `Makefile.security` for all available targets:
 
 ```bash
-make security-help
+make -f Makefile.security security-help
 ```
