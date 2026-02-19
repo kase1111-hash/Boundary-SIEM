@@ -30,7 +30,7 @@ ingest:
     tcp:
       enabled: true
       address: ":5515"
-      tls_enabled: false  # Enable TLS for production security
+      tls_enabled: false  # SECURITY WARNING: Set tls_enabled: true for production
       tls_cert_file: "certs/server.crt"
       tls_key_file: "certs/server.key"
       max_connections: 1000
@@ -69,7 +69,7 @@ validation:
 
 auth:
   api_key_header: X-API-Key
-  enabled: false
+  enabled: true  # SECURITY: Authentication is enabled by default
   # api_keys:
   #   - sk_test_development
 
@@ -86,11 +86,11 @@ storage:
       - "localhost:9000"
     database: siem
     username: default
-    password: ""
+    password: ""  # SECURITY WARNING: Configure a strong password for production
     max_open_conns: 10
     max_idle_conns: 5
     conn_max_lifetime: 1h
-    tls_enabled: false
+    tls_enabled: false  # SECURITY WARNING: Enable TLS for production
     dial_timeout: 10s
   batch_writer:
     batch_size: 1000
