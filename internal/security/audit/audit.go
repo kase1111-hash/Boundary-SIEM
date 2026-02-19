@@ -233,6 +233,12 @@ type AuditLoggerConfig struct {
 
 	// OnTamperDetected is called when tampering is detected.
 	OnTamperDetected func(entry *AuditEntry, err error)
+
+	// KeyProvider optionally provides the HMAC signing key from an external
+	// source (e.g., HashiCorp Vault, AWS KMS, or a secrets manager).
+	// When set, the file-based key at LogPath/.audit.key is not used.
+	// The function must return a 32-byte key.
+	KeyProvider func() ([]byte, error)
 }
 
 // DefaultAuditLoggerConfig returns sensible defaults.
@@ -299,10 +305,23 @@ func NewAuditLogger(config *AuditLoggerConfig, logger *slog.Logger) (*AuditLogge
 		return nil, fmt.Errorf("failed to create audit log directory: %w", err)
 	}
 
-	// Load or generate HMAC key
-	hmacKey, err := loadOrGenerateHMACKey(config.LogPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to initialize HMAC key: %w", err)
+	// Load HMAC key: prefer external KeyProvider, fall back to file-based key
+	var hmacKey []byte
+	var err error
+	if config.KeyProvider != nil {
+		hmacKey, err = config.KeyProvider()
+		if err != nil {
+			return nil, fmt.Errorf("failed to get HMAC key from provider: %w", err)
+		}
+		if len(hmacKey) != 32 {
+			return nil, fmt.Errorf("HMAC key from provider must be 32 bytes, got %d", len(hmacKey))
+		}
+		logger.Info("audit HMAC key loaded from external provider")
+	} else {
+		hmacKey, err = loadOrGenerateHMACKey(config.LogPath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to initialize HMAC key: %w", err)
+		}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
