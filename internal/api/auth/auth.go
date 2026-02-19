@@ -570,13 +570,33 @@ func (s *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 	// Set CSRF token cookie
 	s.csrf.SetToken(w, csrfToken)
 
+	// Set session token as HttpOnly cookie (not accessible to JavaScript)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_token",
+		Value:    session.Token,
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  session.ExpiresAt,
+	})
+
+	// Set refresh token as HttpOnly cookie scoped to auth endpoints
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    session.RefreshToken,
+		Path:     "/api/auth",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		Expires:  session.ExpiresAt.Add(24 * time.Hour),
+	})
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"token":         session.Token,
-		"refresh_token": session.RefreshToken,
-		"expires_at":    session.ExpiresAt,
-		"user":          user,
-		"csrf_token":    csrfToken,
+		"expires_at": session.ExpiresAt,
+		"user":       user,
+		"csrf_token": csrfToken,
 	})
 }
 
@@ -617,6 +637,26 @@ func (s *AuthService) handleLogout(w http.ResponseWriter, r *http.Request) {
 
 	// Clear CSRF token cookie on logout
 	s.csrf.ClearToken(w)
+
+	// Clear session cookies
+	http.SetCookie(w, &http.Cookie{
+		Name:     "session_token",
+		Value:    "",
+		Path:     "/",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
+	http.SetCookie(w, &http.Cookie{
+		Name:     "refresh_token",
+		Value:    "",
+		Path:     "/api/auth",
+		HttpOnly: true,
+		Secure:   true,
+		SameSite: http.SameSiteStrictMode,
+		MaxAge:   -1,
+	})
 
 	w.WriteHeader(http.StatusOK)
 	json.NewEncoder(w).Encode(map[string]string{"status": "logged out"})
