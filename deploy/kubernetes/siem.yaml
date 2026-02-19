@@ -328,6 +328,68 @@ spec:
     interval: 15s
 
 ---
+# NetworkPolicy: restrict SIEM pod network access to least-privilege
+# Allows intra-namespace traffic (Kafka, ClickHouse), DNS, and HTTPS egress
+# for alert channels (Slack, PagerDuty, Telegram) and threat intel feeds.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: siem-network-policy
+  namespace: boundary-siem
+spec:
+  podSelector:
+    matchLabels:
+      app: siem
+  policyTypes:
+    - Egress
+    - Ingress
+  ingress:
+    # Allow intra-namespace traffic (between SIEM pods, from Kafka/ClickHouse)
+    - from:
+        - podSelector: {}
+      ports:
+        - port: 8080
+          protocol: TCP
+        - port: 9090
+          protocol: TCP
+        - port: 7946
+          protocol: TCP
+        - port: 7946
+          protocol: UDP
+    # Allow external event ingestion on HTTP port
+    - from: []
+      ports:
+        - port: 8080
+          protocol: TCP
+  egress:
+    # Allow intra-namespace traffic (to Kafka, ClickHouse, peer SIEM pods)
+    - to:
+        - podSelector: {}
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector: {}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+    # Allow HTTPS egress for alert channels and threat intelligence feeds
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 169.254.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+
+---
 apiVersion: v1
 kind: Secret
 metadata:
