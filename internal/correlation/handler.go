@@ -1,6 +1,8 @@
 package correlation
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -8,9 +10,16 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
+
+// computeContentHash returns a hex-encoded SHA256 hash of the rule content.
+func computeContentHash(content []byte) string {
+	h := sha256.Sum256(content)
+	return hex.EncodeToString(h[:])
+}
 
 // RuleHandler provides HTTP handlers for rule management.
 type RuleHandler struct {
@@ -74,6 +83,18 @@ func (h *RuleHandler) LoadCustomRules() error {
 			slog.Error("failed to parse rule file", "file", entry.Name(), "error", err)
 			continue
 		}
+
+		// Compute and verify content hash for tamper detection
+		currentHash := computeContentHash(data)
+		if rule.ContentHash != "" && rule.ContentHash != currentHash {
+			slog.Warn("rule file content hash mismatch — possible tampering",
+				"rule_id", rule.ID,
+				"file", entry.Name(),
+				"expected_hash", rule.ContentHash,
+				"actual_hash", currentHash,
+			)
+		}
+		rule.ContentHash = currentHash
 
 		h.mu.Lock()
 		h.customRules[rule.ID] = rule
@@ -194,6 +215,12 @@ func (h *RuleHandler) HandleCreateRule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Set provenance metadata
+	now := time.Now()
+	rule.CreatedAt = now
+	rule.UpdatedAt = now
+	rule.ContentHash = computeContentHash(body)
+
 	// Add to engine
 	if err := h.engine.AddRule(rule); err != nil {
 		h.writeError(w, http.StatusBadRequest, "add_error", err.Error())
@@ -273,6 +300,16 @@ func (h *RuleHandler) HandleUpdateRule(w http.ResponseWriter, r *http.Request) {
 
 	// Force the ID to match the URL
 	rule.ID = ruleID
+
+	// Preserve original creation provenance, update modification metadata
+	h.mu.RLock()
+	if oldRule, ok := h.customRules[ruleID]; ok {
+		rule.CreatedBy = oldRule.CreatedBy
+		rule.CreatedAt = oldRule.CreatedAt
+	}
+	h.mu.RUnlock()
+	rule.UpdatedAt = time.Now()
+	rule.ContentHash = computeContentHash(body)
 
 	// Remove old rule and add updated one
 	h.engine.RemoveRule(ruleID)
