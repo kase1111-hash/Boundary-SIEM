@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"net/http"
 	"os"
 	"strings"
@@ -19,6 +20,10 @@ import (
 
 	"golang.org/x/crypto/bcrypt"
 )
+
+// cryptoRandInt is an alias for crypto/rand.Int, used for generating
+// unbiased random integers. Declared as a variable for testability.
+var cryptoRandInt = rand.Int
 
 // AuthProvider defines authentication provider types.
 type AuthProvider string
@@ -505,12 +510,18 @@ func writeJSONError(w http.ResponseWriter, statusCode int, code, message string)
 	})
 }
 
+// maxAuthBodySize limits request body size on auth endpoints to prevent
+// memory exhaustion attacks. 1 MB is generous for auth payloads.
+const maxAuthBodySize = 1 * 1024 * 1024
+
 // handleLogin handles login requests.
 func (s *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		writeJSONError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "Only POST method is allowed")
 		return
 	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxAuthBodySize)
 
 	var req struct {
 		Username string `json:"username"`
@@ -710,6 +721,8 @@ func (s *AuthService) handleUsers(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		r.Body = http.MaxBytesReader(w, r.Body, maxAuthBodySize)
+
 		// Use a restricted request struct to prevent clients from setting PasswordHash directly
 		var req struct {
 			Username string   `json:"username"`
@@ -818,6 +831,8 @@ func (s *AuthService) handleTenants(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusForbidden, "CSRF_INVALID", "CSRF validation failed")
 			return
 		}
+
+		r.Body = http.MaxBytesReader(w, r.Body, maxAuthBodySize)
 
 		var tenant Tenant
 		if err := json.NewDecoder(r.Body).Decode(&tenant); err != nil {
@@ -1395,36 +1410,44 @@ func generateSecurePassword(length int) (string, error) {
 	return string(password), nil
 }
 
-// randInt returns a cryptographically secure random integer in [0, max).
+// randInt returns a cryptographically secure random integer in [0, max)
+// using math/big to avoid modulo bias.
 func randInt(max int) int {
 	if max <= 0 {
 		return 0
 	}
 
-	// Calculate how many bits we need
-	nBig := make([]byte, 4)
-	_, err := rand.Read(nBig)
+	nBig, err := cryptoRandInt(rand.Reader, big.NewInt(int64(max)))
 	if err != nil {
-		return 0
+		// Crypto failure is critical — panic rather than silently returning biased output
+		panic(fmt.Sprintf("crypto/rand failed: %v", err))
 	}
 
-	n := int(nBig[0]) | int(nBig[1])<<8 | int(nBig[2])<<16 | int(nBig[3])<<24
-	if n < 0 {
-		n = -n
-	}
-
-	return n % max
+	return int(nBig.Int64())
 }
 
 func getClientIP(r *http.Request) string {
+	// Use the rightmost IP in X-Forwarded-For to prevent client-controlled spoofing.
+	// The rightmost entry is set by the trusted proxy closest to the server and
+	// cannot be forged by the client (the client can only prepend entries).
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 		parts := strings.Split(xff, ",")
-		return strings.TrimSpace(parts[0])
+		for i := len(parts) - 1; i >= 0; i-- {
+			ip := strings.TrimSpace(parts[i])
+			if ip != "" {
+				return ip
+			}
+		}
 	}
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
 		return xri
 	}
-	return strings.Split(r.RemoteAddr, ":")[0]
+	// Use net.SplitHostPort for correct parsing (handles IPv6)
+	host := r.RemoteAddr
+	if idx := strings.LastIndex(host, ":"); idx != -1 {
+		host = host[:idx]
+	}
+	return host
 }
 
 // writePasswordToSecureFile writes a generated password to a secure file with restricted permissions.
