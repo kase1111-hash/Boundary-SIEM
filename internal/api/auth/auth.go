@@ -648,37 +648,17 @@ func (s *AuthService) handleSession(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleOAuthCallback handles OAuth callback.
+// OAuth integration is not yet implemented — return 501 to prevent unauthenticated access.
 func (s *AuthService) handleOAuthCallback(w http.ResponseWriter, r *http.Request) {
-	code := r.URL.Query().Get("code")
-	state := r.URL.Query().Get("state")
-	provider := r.URL.Query().Get("provider")
-
-	if code == "" || state == "" {
-		http.Error(w, "Missing OAuth parameters", http.StatusBadRequest)
-		return
-	}
-
-	s.logger.Info("OAuth callback received", "provider", provider, "state", state)
-	// OAuth token exchange would happen here
-	http.Redirect(w, r, "/dashboard", http.StatusFound)
+	s.logger.Warn("OAuth callback called but OAuth is not implemented")
+	writeJSONError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "OAuth authentication is not yet implemented")
 }
 
 // handleSAMLACS handles SAML Assertion Consumer Service.
+// SAML integration is not yet implemented — return 501 to prevent unauthenticated access.
 func (s *AuthService) handleSAMLACS(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	samlResponse := r.FormValue("SAMLResponse")
-	if samlResponse == "" {
-		http.Error(w, "Missing SAML response", http.StatusBadRequest)
-		return
-	}
-
-	s.logger.Info("SAML ACS received")
-	// SAML response validation would happen here
-	http.Redirect(w, r, "/dashboard", http.StatusFound)
+	s.logger.Warn("SAML ACS called but SAML is not implemented")
+	writeJSONError(w, http.StatusNotImplemented, "NOT_IMPLEMENTED", "SAML authentication is not yet implemented")
 }
 
 // handleUsers manages users.
