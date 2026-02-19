@@ -943,7 +943,7 @@ func (t *TelegramChannel) Send(ctx context.Context, alert *Alert) error {
 		text += fmt.Sprintf("\n*Tags:* %s", strings.Join(escapedTags, ", "))
 	}
 
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.botToken)
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.botToken)
 	payload := map[string]interface{}{
 		"chat_id":    t.chatID,
 		"text":       text,
@@ -955,15 +955,16 @@ func (t *TelegramChannel) Send(ctx context.Context, alert *Alert) error {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(data))
 	if err != nil {
-		return err
+		return fmt.Errorf("telegram request failed: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return err
+		// Mask error to avoid leaking bot token in URL
+		return fmt.Errorf("telegram request failed: connection error")
 	}
 	defer resp.Body.Close()
 
