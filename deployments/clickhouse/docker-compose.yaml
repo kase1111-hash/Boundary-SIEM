@@ -16,7 +16,7 @@ services:
     environment:
       - CLICKHOUSE_DB=siem
       - CLICKHOUSE_USER=siem
-      - CLICKHOUSE_PASSWORD=siem_password
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in .env or environment}
       - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
     ulimits:
       nofile:
