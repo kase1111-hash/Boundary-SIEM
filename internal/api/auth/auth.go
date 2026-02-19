@@ -14,6 +14,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -905,6 +906,23 @@ func (s *AuthService) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Parse pagination parameters
+	limit := 100
+	offset := 0
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			limit = parsed
+		}
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	if v := r.URL.Query().Get("offset"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed >= 0 {
+			offset = parsed
+		}
+	}
+
 	s.mu.RLock()
 	entries := make([]*AuditLogEntry, len(s.auditLog))
 	copy(entries, s.auditLog)
@@ -915,8 +933,25 @@ func (s *AuthService) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 		entries[i], entries[j] = entries[j], entries[i]
 	}
 
+	// Apply pagination
+	total := len(entries)
+	if offset >= total {
+		entries = []*AuditLogEntry{}
+	} else {
+		end := offset + limit
+		if end > total {
+			end = total
+		}
+		entries = entries[offset:end]
+	}
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(entries)
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"entries": entries,
+		"total":   total,
+		"limit":   limit,
+		"offset":  offset,
+	})
 }
 
 // AuthError represents an authentication error with additional context.
