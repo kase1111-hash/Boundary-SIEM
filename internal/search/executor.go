@@ -592,7 +592,12 @@ func (e *Executor) orderDirection(desc bool) string {
 }
 
 // TimeHistogram returns event counts over time.
+// The query must have TenantID set for tenant isolation.
 func (e *Executor) TimeHistogram(ctx context.Context, query *Query, interval string) (*AggregationResult, error) {
+	if query.TenantID == "" {
+		return nil, fmt.Errorf("tenant_id is required for time histogram queries")
+	}
+
 	// Map interval to ClickHouse function
 	var intervalFunc string
 	switch strings.ToLower(interval) {
@@ -656,7 +661,12 @@ func (e *Executor) TimeHistogram(ctx context.Context, query *Query, interval str
 var MaxTopN = 10000
 
 // TopN returns top N values for a field.
+// The query must have TenantID set for tenant isolation.
 func (e *Executor) TopN(ctx context.Context, query *Query, field string, n int) (*AggregationResult, error) {
+	if query.TenantID == "" {
+		return nil, fmt.Errorf("tenant_id is required for top-n queries")
+	}
+
 	column, _ := MapField(field)
 	column = e.sanitizeColumn(column)
 
@@ -710,7 +720,12 @@ type ExplainResult struct {
 }
 
 // Explain returns the ClickHouse query plan for a search query.
+// The query must have TenantID set for tenant isolation.
 func (e *Executor) Explain(ctx context.Context, query *Query) (*ExplainResult, error) {
+	if query.TenantID == "" {
+		return nil, fmt.Errorf("tenant_id is required for explain queries")
+	}
+
 	whereClause, args := e.buildWhereClause(query)
 
 	selectSQL := fmt.Sprintf(`

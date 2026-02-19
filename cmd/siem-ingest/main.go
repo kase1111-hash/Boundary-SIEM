@@ -13,6 +13,7 @@ import (
 
 	"boundary-siem/internal/alerting"
 	"boundary-siem/internal/config"
+	siemErrors "boundary-siem/internal/errors"
 	"boundary-siem/internal/consumer"
 	"boundary-siem/internal/correlation"
 	detectionrules "boundary-siem/internal/detection/rules"
@@ -56,6 +57,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Enable production mode by default; only disable in dev mode
+	devMode := os.Getenv("SIEM_DEV_MODE") == "true"
+	siemErrors.SetProductionMode(!devMode)
+	if devMode {
+		slog.Warn("running in DEVELOPMENT mode — error sanitization is disabled")
+	}
+
 	// Run startup diagnostics
 	ctx := context.Background()
 	diagnostics := startup.NewDiagnostics(cfg, logger)
@@ -63,11 +71,28 @@ func main() {
 
 	// Check for critical errors
 	if diagnostics.HasErrors() {
-		if os.Getenv("SIEM_IGNORE_ERRORS") != "true" {
-			slog.Error("startup diagnostics failed - set SIEM_IGNORE_ERRORS=true to override")
+		if os.Getenv("SIEM_IGNORE_ERRORS") == "true" && devMode {
+			slog.Warn("ignoring startup errors due to SIEM_IGNORE_ERRORS=true (dev mode only)")
+		} else {
+			slog.Error("startup diagnostics failed — resolve errors before starting (SIEM_IGNORE_ERRORS only works with SIEM_DEV_MODE=true)")
 			os.Exit(1)
 		}
-		slog.Warn("ignoring startup errors due to SIEM_IGNORE_ERRORS=true")
+	}
+
+	// Security warnings for insecure default configurations
+	if !cfg.Auth.Enabled {
+		slog.Warn("API authentication is DISABLED — not recommended for production")
+	}
+	if cfg.Storage.Enabled {
+		if cfg.Storage.ClickHouse.Password == "" {
+			slog.Warn("ClickHouse password is empty — configure a strong password for production")
+		}
+		if !cfg.Storage.ClickHouse.TLSEnabled {
+			slog.Warn("ClickHouse TLS is disabled — enable tls_enabled for production")
+		}
+	}
+	if cfg.Ingest.CEF.TCP.Enabled && !cfg.Ingest.CEF.TCP.TLSEnabled {
+		slog.Warn("CEF TCP ingestion is running without TLS — enable tls_enabled for production")
 	}
 
 	slog.Info("configuration loaded",

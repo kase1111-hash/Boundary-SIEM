@@ -914,7 +914,7 @@ func TestGetClientIP(t *testing.T) {
 			setupReq: func(r *http.Request) {
 				r.Header.Set("X-Forwarded-For", "203.0.113.1, 198.51.100.1, 192.0.2.1")
 			},
-			wantIP: "203.0.113.1",
+			wantIP: "192.0.2.1", // Rightmost IP: set by trusted proxy, not spoofable by client
 		},
 		{
 			name: "X-Real-IP",

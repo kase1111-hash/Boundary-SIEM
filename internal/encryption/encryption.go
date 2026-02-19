@@ -47,16 +47,25 @@ type Config struct {
 	Logger *slog.Logger
 }
 
+// saltSize is the size of the random salt used for key derivation.
+const saltSize = 16
+
+// legacySalt is the static salt used in older versions for backward compatibility.
+var legacySalt = []byte("boundary-siem-encryption-v1")
+
 // Engine provides encryption and decryption operations.
 type Engine struct {
 	enabled    bool
 	masterKey  []byte
+	salt       []byte // random salt used for this engine's key derivation
 	keyVersion int
 	logger     *slog.Logger
 	mu         sync.RWMutex
 
 	// Key rotation support: map of version to key for backward compatibility
 	oldKeys map[int][]byte
+	// Legacy key derived with static salt for decrypting old data
+	legacyKey []byte
 }
 
 // NewEngine creates a new encryption engine.
@@ -77,8 +86,17 @@ func NewEngine(cfg *Config) (*Engine, error) {
 		return nil, fmt.Errorf("%w: master key is required when encryption is enabled", ErrInvalidKey)
 	}
 
-	// Derive a 32-byte key from the master key using SHA-256
-	derivedKey := deriveKey(cfg.MasterKey)
+	// Generate random salt for key derivation
+	salt := make([]byte, saltSize)
+	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
+		return nil, fmt.Errorf("failed to generate salt: %w", err)
+	}
+
+	// Derive key with random salt
+	derivedKey := deriveKey(cfg.MasterKey, salt)
+
+	// Also derive legacy key for backward-compatible decryption of old data
+	legacyDerivedKey := deriveKey(cfg.MasterKey, legacySalt)
 
 	logger := cfg.Logger
 	if logger == nil {
@@ -93,17 +111,18 @@ func NewEngine(cfg *Config) (*Engine, error) {
 	return &Engine{
 		enabled:    true,
 		masterKey:  derivedKey,
+		salt:       salt,
 		keyVersion: cfg.KeyVersion,
 		logger:     logger,
 		oldKeys:    make(map[int][]byte),
+		legacyKey:  legacyDerivedKey,
 	}, nil
 }
 
 // deriveKey derives a 32-byte encryption key from the master key using
-// iterated HMAC-SHA256 (100,000 rounds) with an application-specific salt.
+// iterated HMAC-SHA256 (100,000 rounds) with the provided salt.
 // This provides proper key stretching without requiring external dependencies.
-func deriveKey(masterKey []byte) []byte {
-	salt := []byte("boundary-siem-encryption-v1")
+func deriveKey(masterKey []byte, salt []byte) []byte {
 	key := masterKey
 	for i := 0; i < 100000; i++ {
 		h := hmac.New(sha256.New, salt)
@@ -162,12 +181,14 @@ func (e *Engine) encryptLocked(plaintext []byte) (string, error) {
 	// Encrypt plaintext
 	ciphertext := gcm.Seal(nil, nonce, plaintext, nil)
 
-	// Format: [version:1byte][nonce][ciphertext]
-	// This allows for key rotation by storing the version
-	data := make([]byte, 1+len(nonce)+len(ciphertext))
+	// Format: [version:1byte][saltLen:1byte][salt][nonce][ciphertext]
+	// Salt is embedded so decryption can re-derive the correct key.
+	data := make([]byte, 1+1+len(e.salt)+len(nonce)+len(ciphertext))
 	data[0] = byte(e.keyVersion)
-	copy(data[1:], nonce)
-	copy(data[1+len(nonce):], ciphertext)
+	data[1] = byte(len(e.salt))
+	copy(data[2:], e.salt)
+	copy(data[2+len(e.salt):], nonce)
+	copy(data[2+len(e.salt)+len(nonce):], ciphertext)
 
 	// Return base64-encoded result
 	return base64.StdEncoding.EncodeToString(data), nil
@@ -198,7 +219,7 @@ func (e *Engine) decryptLocked(encodedCiphertext string) ([]byte, error) {
 		return nil, fmt.Errorf("%w: invalid base64: %v", ErrInvalidCiphertext, err)
 	}
 
-	// Check minimum length: version(1) + nonce(12) + ciphertext(>=0) + tag(16)
+	// Minimum length check: version(1) + nonce(12) + tag(16) = 29
 	if len(data) < 29 {
 		return nil, fmt.Errorf("%w: data too short", ErrInvalidCiphertext)
 	}
@@ -206,23 +227,31 @@ func (e *Engine) decryptLocked(encodedCiphertext string) ([]byte, error) {
 	// Extract version
 	version := int(data[0])
 
-	// Select appropriate key for decryption
+	// Determine if this is new format (with embedded salt) or legacy format.
+	// New format: [version:1][saltLen:1][salt][nonce][ciphertext]
+	// Legacy format: [version:1][nonce][ciphertext]
 	var decryptionKey []byte
-	if version == e.keyVersion {
-		decryptionKey = e.masterKey
+	var payloadStart int
+
+	saltLen := int(data[1])
+	if saltLen > 0 && saltLen <= 32 && len(data) >= 2+saltLen+12+16 {
+		// New format with embedded salt
+		embeddedSalt := data[2 : 2+saltLen]
+		decryptionKey = deriveKey(e.masterKey, embeddedSalt)
+		payloadStart = 2 + saltLen
 	} else {
-		// Try to use old key for backward compatibility
-		if oldKey, exists := e.oldKeys[version]; exists {
+		// Legacy format (no salt field) — use legacy key derived with static salt
+		payloadStart = 1
+		if e.legacyKey != nil {
+			decryptionKey = e.legacyKey
+		} else if version == e.keyVersion {
+			decryptionKey = e.masterKey
+		} else if oldKey, exists := e.oldKeys[version]; exists {
 			decryptionKey = oldKey
 			e.logger.Debug("using old key for decryption",
 				"stored_version", version,
 				"current_version", e.keyVersion)
 		} else {
-			e.logger.Warn("key version mismatch - no old key available",
-				"stored_version", version,
-				"current_version", e.keyVersion,
-				"available_old_versions", len(e.oldKeys))
-			// Fall back to current key (may fail if data was encrypted with different key)
 			decryptionKey = e.masterKey
 		}
 	}
@@ -243,12 +272,12 @@ func (e *Engine) decryptLocked(encodedCiphertext string) ([]byte, error) {
 
 	// Extract nonce and ciphertext
 	nonceSize := gcm.NonceSize()
-	if len(data) < 1+nonceSize {
+	if len(data) < payloadStart+nonceSize {
 		return nil, fmt.Errorf("%w: insufficient data for nonce", ErrInvalidCiphertext)
 	}
 
-	nonce := data[1 : 1+nonceSize]
-	ciphertext := data[1+nonceSize:]
+	nonce := data[payloadStart : payloadStart+nonceSize]
+	ciphertext := data[payloadStart+nonceSize:]
 
 	// Decrypt
 	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
@@ -302,12 +331,19 @@ func (e *Engine) RotateKey(newMasterKey []byte, newVersion int) error {
 	// Store current key as old key for backward compatibility
 	e.oldKeys[e.keyVersion] = e.masterKey
 
-	// Derive new key
-	derivedKey := deriveKey(newMasterKey)
+	// Generate new random salt
+	newSalt := make([]byte, saltSize)
+	if _, err := io.ReadFull(rand.Reader, newSalt); err != nil {
+		return fmt.Errorf("failed to generate salt for key rotation: %w", err)
+	}
 
-	// Update to new key and version
+	// Derive new key with new salt
+	derivedKey := deriveKey(newMasterKey, newSalt)
+
+	// Update to new key, salt, and version
 	oldVersion := e.keyVersion
 	e.masterKey = derivedKey
+	e.salt = newSalt
 	e.keyVersion = newVersion
 
 	e.logger.Info("encryption key rotated",

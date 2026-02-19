@@ -14,16 +14,37 @@ import type {
 
 const BASE = "";
 
+const MUTATING_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
+
+function getCsrfToken(): string | undefined {
+  const match = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith("XSRF-TOKEN="));
+  return match ? decodeURIComponent(match.split("=")[1]) : undefined;
+}
+
 async function request<T>(
   path: string,
   init?: RequestInit,
 ): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...((init?.headers as Record<string, string>) ?? {}),
+  };
+
+  // Attach CSRF token for state-changing requests
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (MUTATING_METHODS.has(method)) {
+    const csrf = getCsrfToken();
+    if (csrf) {
+      headers["X-CSRF-Token"] = csrf;
+    }
+  }
+
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
+    credentials: "include",
+    headers,
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
