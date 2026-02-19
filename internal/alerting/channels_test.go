@@ -3,6 +3,8 @@ package alerting
 import (
 	"context"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -440,5 +442,191 @@ func TestWebhookChannel(t *testing.T) {
 
 	if ch.Name() != "test-webhook" {
 		t.Errorf("expected name 'test-webhook', got %s", ch.Name())
+	}
+}
+
+func TestSanitizeAlert(t *testing.T) {
+	tests := []struct {
+		name        string
+		alert       *Alert
+		wantMasked  bool
+		checkField  string
+		checkAbsent string // substring that should NOT appear after sanitization
+	}{
+		{
+			name: "alert with API key in description",
+			alert: &Alert{
+				ID:          uuid.New(),
+				Title:       "Credential Leak Detected",
+				Description: "Found api_key='sk_live_abc123xyz789' in log entry",
+				Severity:    correlation.SeverityHigh,
+				CreatedAt:   time.Now(),
+			},
+			wantMasked:  true,
+			checkField:  "Description",
+			checkAbsent: "sk_live_abc123xyz789",
+		},
+		{
+			name: "alert with Bearer token in title",
+			alert: &Alert{
+				ID:          uuid.New(),
+				Title:       "Authorization: Bearer eyJhbGciOiJIUzI1NiJ9.payload.sig",
+				Description: "Normal description",
+				Severity:    correlation.SeverityMedium,
+				CreatedAt:   time.Now(),
+			},
+			wantMasked:  true,
+			checkField:  "Title",
+			checkAbsent: "eyJhbGciOiJIUzI1NiJ9",
+		},
+		{
+			name: "alert with AWS key in tags",
+			alert: &Alert{
+				ID:          uuid.New(),
+				Title:       "AWS Key Exposure",
+				Description: "Found in config",
+				Severity:    correlation.SeverityHigh,
+				Tags:        []string{"aws", "AKIAIOSFODNN7EXAMPLE"},
+				CreatedAt:   time.Now(),
+			},
+			wantMasked:  true,
+			checkField:  "Tags",
+			checkAbsent: "AKIAIOSFODNN7EXAMPLE",
+		},
+		{
+			name: "clean alert is unchanged",
+			alert: &Alert{
+				ID:          uuid.New(),
+				Title:       "Normal Alert",
+				Description: "Nothing sensitive here",
+				Severity:    correlation.SeverityLow,
+				Tags:        []string{"normal"},
+				CreatedAt:   time.Now(),
+			},
+			wantMasked: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sanitized := sanitizeAlert(tt.alert)
+
+			// Original alert must not be modified
+			if sanitized == tt.alert {
+				t.Error("sanitizeAlert should return a new alert, not the original")
+			}
+
+			if tt.wantMasked && tt.checkAbsent != "" {
+				var fieldValue string
+				switch tt.checkField {
+				case "Title":
+					fieldValue = sanitized.Title
+				case "Description":
+					fieldValue = sanitized.Description
+				case "Tags":
+					fieldValue = strings.Join(sanitized.Tags, " ")
+				}
+				if strings.Contains(fieldValue, tt.checkAbsent) {
+					t.Errorf("%s still contains sensitive value %q after sanitization", tt.checkField, tt.checkAbsent)
+				}
+			}
+
+			if !tt.wantMasked {
+				if sanitized.Title != tt.alert.Title {
+					t.Errorf("clean alert title was modified: got %q, want %q", sanitized.Title, tt.alert.Title)
+				}
+				if sanitized.Description != tt.alert.Description {
+					t.Errorf("clean alert description was modified")
+				}
+			}
+		})
+	}
+}
+
+func TestEscapeSlackText(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"normal text", "normal text"},
+		{"<script>alert('xss')</script>", "&lt;script&gt;alert('xss')&lt;/script&gt;"},
+		{"A & B", "A &amp; B"},
+		{"<@U12345> mentioned", "&lt;@U12345&gt; mentioned"},
+		{"link: <http://evil.com|Click>", "link: &lt;http://evil.com|Click&gt;"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := escapeSlackText(tt.input)
+			if result != tt.expected {
+				t.Errorf("escapeSlackText(%q) = %q, want %q", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSanitizeDiscordText(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		contains string // should NOT contain this after sanitization
+	}{
+		{
+			name:     "strips @everyone",
+			input:    "Alert: @everyone server is down",
+			contains: "@everyone",
+		},
+		{
+			name:     "strips @here",
+			input:    "@here check this alert",
+			contains: "@here",
+		},
+		{
+			name:  "normal text unchanged",
+			input: "Normal alert description",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := sanitizeDiscordText(tt.input)
+			if tt.contains != "" && strings.Contains(result, tt.contains) {
+				t.Errorf("sanitizeDiscordText(%q) still contains %q", tt.input, tt.contains)
+			}
+			if tt.contains == "" && result != tt.input {
+				t.Errorf("sanitizeDiscordText(%q) = %q, expected unchanged", tt.input, result)
+			}
+		})
+	}
+}
+
+func TestWebhookSendSanitizesSecrets(t *testing.T) {
+	// Verify the full pipeline: WebhookChannel.Send masks secrets in the JSON payload
+	var receivedBody string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body := make([]byte, r.ContentLength)
+		r.Body.Read(body)
+		receivedBody = string(body)
+		w.WriteHeader(200)
+	}))
+	defer server.Close()
+
+	ch := NewWebhookChannelForTest("test", server.URL, nil)
+	alert := &Alert{
+		ID:          uuid.New(),
+		Title:       "Leaked Key",
+		Description: "Found token='sk_live_51234abcdef' in event",
+		Severity:    correlation.SeverityHigh,
+		EventCount:  1,
+		CreatedAt:   time.Now(),
+	}
+
+	err := ch.Send(context.Background(), alert)
+	if err != nil {
+		t.Fatalf("Send failed: %v", err)
+	}
+
+	if strings.Contains(receivedBody, "sk_live_51234abcdef") {
+		t.Error("webhook payload still contains the secret after sanitization")
 	}
 }

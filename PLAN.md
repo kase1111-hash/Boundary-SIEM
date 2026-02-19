@@ -2,6 +2,10 @@
 
 Based on `SECURITY_AUDIT_CHECKLIST.md` (2026-02-19 audit). Ordered by commit grouping for minimal merge conflicts and logical dependency.
 
+## Completion Status: **12/20 findings resolved** :white_check_mark:
+
+All CRITICAL (1), HIGH (3), and most MEDIUM (7) findings have been resolved across 10 implementation commits plus 1 test commit. See `SECURITY_AUDIT_CHECKLIST.md` for the updated audit report.
+
 ---
 
 ## Commit 1: Wire outbound secret scanning into all alert channels
@@ -233,19 +237,20 @@ This makes the tamper-evident system the primary audit backend while the in-memo
 
 ## Implementation Order
 
-| Commit | Findings Fixed | Severity | Files Changed |
-|--------|---------------|----------|---------------|
-| 1 | F-2.3a, F-2.3b | CRITICAL, MEDIUM | `internal/alerting/channels.go` |
-| 2 | F-2.1a | MEDIUM | `internal/alerting/channels.go` |
-| 3 | F-1.1a | HIGH | `deployments/clickhouse/docker-compose.yaml`, `.gitignore` |
-| 4 | F-2.2a, F-3.1a, F-2.2b | HIGH, HIGH, MEDIUM | `internal/api/auth/auth.go` |
-| 5 | F-1.2a | MEDIUM | `deploy/kubernetes/siem.yaml` |
-| 6 | F-1.1c | LOW | `.gitignore` |
-| 7 | F-3.4a | MEDIUM | `.github/workflows/security.yaml` |
-| 8 | F-2.4a | MEDIUM | `internal/correlation/handler.go` |
-| 9 | F-2.3b | MEDIUM | `internal/alerting/channels.go` |
-| 10 | F-3.1b | MEDIUM | `internal/security/audit/audit.go` |
-| 11 | F-2.1a supplement | LOW | `internal/alerting/channels.go` |
+| Commit | Findings Fixed | Severity | Files Changed | Status |
+|--------|---------------|----------|---------------|--------|
+| 1 | F-2.3a, F-2.3b | CRITICAL, MEDIUM | `internal/alerting/channels.go` | :white_check_mark: Done |
+| 2 | F-2.1a | MEDIUM | `internal/alerting/channels.go` | :white_check_mark: Done |
+| 3 | F-1.1a | HIGH | `deployments/clickhouse/docker-compose.yaml`, `.gitignore` | :white_check_mark: Done |
+| 4 | F-2.2a, F-3.1a, F-2.2b | HIGH, HIGH, MEDIUM | `internal/api/auth/auth.go` | :white_check_mark: Done |
+| 5 | F-1.2a | MEDIUM | `deploy/kubernetes/siem.yaml` | :white_check_mark: Done |
+| 6 | F-1.1c | LOW | `.gitignore` | :white_check_mark: Done |
+| 7 | F-3.4a | MEDIUM | `.github/workflows/security.yml` | :white_check_mark: Done |
+| 8 | F-2.4a | MEDIUM | `internal/correlation/handler.go`, `rule.go` | :white_check_mark: Done |
+| 9 | F-2.3b | MEDIUM | `internal/alerting/channels.go` | :white_check_mark: Done |
+| 10 | F-3.1b | MEDIUM | `internal/security/audit/audit.go` | :white_check_mark: Done |
+| 11 | F-2.1a supplement | LOW | `internal/alerting/channels.go` | :white_check_mark: Folded into Commit 2 |
+| Tests | Coverage for Commits 1-10 | — | `channels_test.go`, `handler_test.go`, `auth_test.go` | :white_check_mark: Done |
 
 ### Findings NOT addressed (intentionally deferred)
 
