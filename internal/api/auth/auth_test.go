@@ -727,8 +727,16 @@ func TestHandleLogin(t *testing.T) {
 				var resp map[string]interface{}
 				json.NewDecoder(w.Body).Decode(&resp)
 
-				if _, ok := resp["token"]; !ok {
-					t.Error("expected token in response")
+				// Session token is now set as an HttpOnly cookie, not in JSON body
+				var hasSessionCookie bool
+				for _, cookie := range w.Result().Cookies() {
+					if cookie.Name == "session_token" && cookie.Value != "" {
+						hasSessionCookie = true
+						break
+					}
+				}
+				if !hasSessionCookie {
+					t.Error("expected session_token cookie in response")
 				}
 				if _, ok := resp["user"]; !ok {
 					t.Error("expected user in response")

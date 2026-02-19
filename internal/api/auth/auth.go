@@ -220,17 +220,50 @@ type SAMLConfig struct {
 }
 
 // AuthService provides authentication and authorization services.
+// SecurityAuditLogger is the interface for tamper-evident audit logging.
+// This matches *audit.AuditLogger from internal/security/audit without
+// creating a direct import dependency, allowing the caller to wire it in.
+type SecurityAuditLogger interface {
+	LogEvent(ctx context.Context, event *SecurityAuditEvent) error
+}
+
+// SecurityAuditEvent mirrors audit.AuditEvent for decoupled integration.
+type SecurityAuditEvent struct {
+	Type       string
+	Severity   string
+	Message    string
+	Data       map[string]interface{}
+	Actor      string
+	ActorIP    string
+	ActorType  string
+	Target     string
+	TargetType string
+	Success    bool
+	Error      string
+}
+
 type AuthService struct {
-	mu             sync.RWMutex
-	users          map[string]*User
-	sessionStorage SessionStorage  // Now using SessionStorage interface
-	csrf           *CSRFProtection // CSRF protection
-	tenants        map[string]*Tenant
-	auditLog       []*AuditLogEntry
-	oauthConfigs   map[string]*OAuthConfig
-	samlConfigs    map[string]*SAMLConfig
-	rolePerms      map[Role][]Permission
-	logger         *slog.Logger
+	mu                  sync.RWMutex
+	users               map[string]*User
+	sessionStorage      SessionStorage  // Now using SessionStorage interface
+	csrf                *CSRFProtection // CSRF protection
+	tenants             map[string]*Tenant
+	auditLog            []*AuditLogEntry
+	oauthConfigs        map[string]*OAuthConfig
+	samlConfigs         map[string]*SAMLConfig
+	rolePerms           map[Role][]Permission
+	logger              *slog.Logger
+	securityAuditLogger SecurityAuditLogger // optional tamper-evident audit backend
+}
+
+// SetSecurityAuditLogger configures the tamper-evident audit backend.
+// When set, auth audit entries are forwarded to this logger in addition
+// to the in-memory ring buffer, and raw JSONL persistence is skipped
+// (the security audit logger handles its own signed, rotated persistence).
+func (s *AuthService) SetSecurityAuditLogger(logger SecurityAuditLogger) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.securityAuditLogger = logger
 }
 
 // Config holds auth service configuration.
@@ -1213,8 +1246,32 @@ func (s *AuthService) getPermissionsForRoles(roles []Role) []Permission {
 	return permissions
 }
 
+// mapAuditActionToEventType maps auth audit actions to security audit event types.
+func mapAuditActionToEventType(action AuditAction) string {
+	switch action {
+	case AuditActionLogin:
+		return "auth.success"
+	case AuditActionLoginFailed:
+		return "auth.failure"
+	case AuditActionLogout:
+		return "auth.logout"
+	case AuditActionPasswordChange, AuditActionMFAEnabled, AuditActionMFADisabled:
+		return "auth.success"
+	case AuditActionUserCreated, AuditActionUserUpdated, AuditActionUserDeleted,
+		AuditActionRoleAssigned, AuditActionRoleRemoved:
+		return "access.granted"
+	case AuditActionAPIKeyCreated, AuditActionAPIKeyRevoked:
+		return "auth.success"
+	case AuditActionRuleCreated, AuditActionRuleUpdated, AuditActionRuleDeleted:
+		return "access.granted"
+	default:
+		return "access.granted"
+	}
+}
+
 // logAudit creates an audit log entry.
 func (s *AuthService) logAudit(action AuditAction, userID, username, tenantID, resource, resourceID string, r *http.Request, success bool, errorMsg string) {
+	clientIP := getClientIP(r)
 	entry := &AuditLogEntry{
 		ID:         generateID(),
 		Timestamp:  time.Now(),
@@ -1224,7 +1281,7 @@ func (s *AuthService) logAudit(action AuditAction, userID, username, tenantID, r
 		Action:     action,
 		Resource:   resource,
 		ResourceID: resourceID,
-		IPAddress:  getClientIP(r),
+		IPAddress:  clientIP,
 		UserAgent:  r.UserAgent(),
 		Success:    success,
 		ErrorMsg:   errorMsg,
@@ -1236,10 +1293,45 @@ func (s *AuthService) logAudit(action AuditAction, userID, username, tenantID, r
 	if len(s.auditLog) > 10000 {
 		s.auditLog = s.auditLog[len(s.auditLog)-10000:]
 	}
+	auditLogger := s.securityAuditLogger
 	s.mu.Unlock()
 
-	// Persist to audit log file (append-only JSON lines)
-	s.persistAuditEntry(entry)
+	// Forward to tamper-evident audit logger when available
+	if auditLogger != nil {
+		severity := "info"
+		if !success {
+			severity = "warning"
+		}
+		if action == AuditActionLoginFailed {
+			severity = "warning"
+		}
+
+		event := &SecurityAuditEvent{
+			Type:       mapAuditActionToEventType(action),
+			Severity:   severity,
+			Message:    fmt.Sprintf("auth: %s on %s", action, resource),
+			Actor:      userID,
+			ActorIP:    clientIP,
+			ActorType:  "user",
+			Target:     resource,
+			TargetType: resourceID,
+			Success:    success,
+			Error:      errorMsg,
+			Data: map[string]interface{}{
+				"username":  username,
+				"tenant_id": tenantID,
+				"action":    string(action),
+			},
+		}
+		if err := auditLogger.LogEvent(r.Context(), event); err != nil {
+			s.logger.Error("failed to write to security audit log", "error", err)
+		}
+	}
+
+	// Persist to fallback JSONL file only when security audit logger is not configured
+	if auditLogger == nil {
+		s.persistAuditEntry(entry)
+	}
 
 	s.logger.Info("audit log",
 		"action", action,
