@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"boundary-siem/internal/correlation"
+	"boundary-siem/internal/logging"
 )
 
 // validateWebhookURL validates that a URL is safe for server-side requests (SSRF protection).
@@ -81,6 +82,37 @@ func parseCIDR(cidr string) *net.IPNet {
 	return network
 }
 
+// sanitizeAlert returns a shallow copy of the alert with sensitive patterns
+// masked in all free-text fields. This prevents secrets embedded in event data
+// (e.g., leaked API keys in syslog messages) from being forwarded to external
+// notification channels.
+func sanitizeAlert(alert *Alert) *Alert {
+	sanitized := *alert
+
+	original := alert.Title + alert.Description + alert.GroupKey + strings.Join(alert.Tags, "")
+
+	sanitized.Title = logging.MaskSensitivePatterns(sanitized.Title)
+	sanitized.Description = logging.MaskSensitivePatterns(sanitized.Description)
+	sanitized.GroupKey = logging.MaskSensitivePatterns(sanitized.GroupKey)
+
+	if len(sanitized.Tags) > 0 {
+		tags := make([]string, len(sanitized.Tags))
+		for i, tag := range sanitized.Tags {
+			tags[i] = logging.MaskSensitivePatterns(tag)
+		}
+		sanitized.Tags = tags
+	}
+
+	masked := sanitized.Title + sanitized.Description + sanitized.GroupKey + strings.Join(sanitized.Tags, "")
+	if masked != original {
+		slog.Warn("sensitive data masked in outbound alert",
+			"alert_id", alert.ID.String(),
+		)
+	}
+
+	return &sanitized
+}
+
 // WebhookChannel sends alerts via HTTP webhook.
 type WebhookChannel struct {
 	name    string
@@ -124,6 +156,7 @@ func (w *WebhookChannel) Name() string {
 }
 
 func (w *WebhookChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	payload, err := json.Marshal(alert)
 	if err != nil {
 		return fmt.Errorf("failed to marshal alert: %w", err)
@@ -178,6 +211,7 @@ func (s *SlackChannel) Name() string {
 }
 
 func (s *SlackChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	color := s.severityColor(alert.Severity)
 
 	payload := map[string]interface{}{
@@ -287,6 +321,7 @@ func (d *DiscordChannel) Name() string {
 }
 
 func (d *DiscordChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	color := d.severityColor(alert.Severity)
 
 	payload := map[string]interface{}{
@@ -381,6 +416,7 @@ func (p *PagerDutyChannel) Name() string {
 }
 
 func (p *PagerDutyChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	severity := p.mapSeverity(alert.Severity)
 
 	payload := map[string]interface{}{
@@ -457,6 +493,7 @@ func (l *LogChannel) Name() string {
 }
 
 func (l *LogChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	// Use structured logging to prevent log injection via alert fields
 	slog.Warn("ALERT",
 		"severity", string(alert.Severity),
@@ -513,6 +550,7 @@ func (e *EmailChannel) Name() string {
 }
 
 func (e *EmailChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	// Build email content
 	subject := fmt.Sprintf("[%s] %s", strings.ToUpper(string(alert.Severity)), alert.Title)
 	htmlBody := e.buildHTMLBody(alert)
@@ -871,6 +909,7 @@ func (t *TelegramChannel) Name() string {
 }
 
 func (t *TelegramChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	emoji := t.severityEmoji(alert.Severity)
 	text := fmt.Sprintf(`%s *[%s] %s*
 
