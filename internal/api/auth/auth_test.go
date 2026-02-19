@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -727,8 +728,16 @@ func TestHandleLogin(t *testing.T) {
 				var resp map[string]interface{}
 				json.NewDecoder(w.Body).Decode(&resp)
 
-				if _, ok := resp["token"]; !ok {
-					t.Error("expected token in response")
+				// Session token is now set as an HttpOnly cookie, not in JSON body
+				var hasSessionCookie bool
+				for _, cookie := range w.Result().Cookies() {
+					if cookie.Name == "session_token" && cookie.Value != "" {
+						hasSessionCookie = true
+						break
+					}
+				}
+				if !hasSessionCookie {
+					t.Error("expected session_token cookie in response")
 				}
 				if _, ok := resp["user"]; !ok {
 					t.Error("expected user in response")
@@ -1114,4 +1123,99 @@ func TestMultiTenancyIsolation(t *testing.T) {
 	if user.TenantID != "tenant2" {
 		t.Errorf("expected TenantID tenant2, got %s", user.TenantID)
 	}
+}
+
+// mockSecurityAuditLogger records events for testing the SecurityAuditLogger integration.
+type mockSecurityAuditLogger struct {
+	mu     sync.Mutex
+	events []*SecurityAuditEvent
+}
+
+func (m *mockSecurityAuditLogger) LogEvent(_ context.Context, event *SecurityAuditEvent) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.events = append(m.events, event)
+	return nil
+}
+
+func (m *mockSecurityAuditLogger) Events() []*SecurityAuditEvent {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := make([]*SecurityAuditEvent, len(m.events))
+	copy(cp, m.events)
+	return cp
+}
+
+func TestSecurityAuditLoggerIntegration(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	svc := newTestAuthService(logger)
+
+	mock := &mockSecurityAuditLogger{}
+	svc.SetSecurityAuditLogger(mock)
+
+	t.Run("successful login forwards event", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]string{
+			"username": "admin",
+			"password": testAdminPassword,
+		})
+		req := httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		svc.handleLogin(w, req)
+
+		if w.Code != http.StatusOK {
+			t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		events := mock.Events()
+		if len(events) == 0 {
+			t.Fatal("expected at least one audit event after login")
+		}
+
+		last := events[len(events)-1]
+		if last.Type != "auth.success" {
+			t.Errorf("expected event type 'auth.success', got %q", last.Type)
+		}
+		if !last.Success {
+			t.Error("expected Success=true for valid login")
+		}
+		if last.Data["username"] != "admin" {
+			t.Errorf("expected username 'admin' in Data, got %v", last.Data["username"])
+		}
+	})
+
+	t.Run("failed login forwards warning event", func(t *testing.T) {
+		before := len(mock.Events())
+
+		body, _ := json.Marshal(map[string]string{
+			"username": "admin",
+			"password": "wrong-password",
+		})
+		req := httptest.NewRequest("POST", "/api/auth/login", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+
+		svc.handleLogin(w, req)
+
+		if w.Code != http.StatusUnauthorized {
+			t.Fatalf("expected 401, got %d", w.Code)
+		}
+
+		events := mock.Events()
+		if len(events) <= before {
+			t.Fatal("expected a new audit event after failed login")
+		}
+
+		last := events[len(events)-1]
+		if last.Type != "auth.failure" {
+			t.Errorf("expected event type 'auth.failure', got %q", last.Type)
+		}
+		if last.Severity != "warning" {
+			t.Errorf("expected severity 'warning', got %q", last.Severity)
+		}
+		if last.Success {
+			t.Error("expected Success=false for failed login")
+		}
+	})
 }

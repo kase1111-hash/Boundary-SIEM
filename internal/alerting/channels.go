@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"boundary-siem/internal/correlation"
+	"boundary-siem/internal/logging"
 )
 
 // validateWebhookURL validates that a URL is safe for server-side requests (SSRF protection).
@@ -81,6 +82,37 @@ func parseCIDR(cidr string) *net.IPNet {
 	return network
 }
 
+// sanitizeAlert returns a shallow copy of the alert with sensitive patterns
+// masked in all free-text fields. This prevents secrets embedded in event data
+// (e.g., leaked API keys in syslog messages) from being forwarded to external
+// notification channels.
+func sanitizeAlert(alert *Alert) *Alert {
+	sanitized := *alert
+
+	original := alert.Title + alert.Description + alert.GroupKey + strings.Join(alert.Tags, "")
+
+	sanitized.Title = logging.MaskSensitivePatterns(sanitized.Title)
+	sanitized.Description = logging.MaskSensitivePatterns(sanitized.Description)
+	sanitized.GroupKey = logging.MaskSensitivePatterns(sanitized.GroupKey)
+
+	if len(sanitized.Tags) > 0 {
+		tags := make([]string, len(sanitized.Tags))
+		for i, tag := range sanitized.Tags {
+			tags[i] = logging.MaskSensitivePatterns(tag)
+		}
+		sanitized.Tags = tags
+	}
+
+	masked := sanitized.Title + sanitized.Description + sanitized.GroupKey + strings.Join(sanitized.Tags, "")
+	if masked != original {
+		slog.Warn("sensitive data masked in outbound alert",
+			"alert_id", alert.ID.String(),
+		)
+	}
+
+	return &sanitized
+}
+
 // WebhookChannel sends alerts via HTTP webhook.
 type WebhookChannel struct {
 	name    string
@@ -124,6 +156,7 @@ func (w *WebhookChannel) Name() string {
 }
 
 func (w *WebhookChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	payload, err := json.Marshal(alert)
 	if err != nil {
 		return fmt.Errorf("failed to marshal alert: %w", err)
@@ -178,6 +211,7 @@ func (s *SlackChannel) Name() string {
 }
 
 func (s *SlackChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	color := s.severityColor(alert.Severity)
 
 	payload := map[string]interface{}{
@@ -186,10 +220,10 @@ func (s *SlackChannel) Send(ctx context.Context, alert *Alert) error {
 		"attachments": []map[string]interface{}{
 			{
 				"color":  color,
-				"title":  fmt.Sprintf("[%s] %s", strings.ToUpper(string(alert.Severity)), alert.Title),
-				"text":   alert.Description,
+				"title":  fmt.Sprintf("[%s] %s", strings.ToUpper(string(alert.Severity)), escapeSlackText(alert.Title)),
+				"text":   escapeSlackText(alert.Description),
 				"fields": s.buildFields(alert),
-				"footer": fmt.Sprintf("Alert ID: %s | Rule: %s", alert.ID.String()[:8], alert.RuleID),
+				"footer": fmt.Sprintf("Alert ID: %s | Rule: %s", alert.ID.String()[:8], escapeSlackText(alert.RuleID)),
 				"ts":     alert.CreatedAt.Unix(),
 			},
 		},
@@ -243,20 +277,24 @@ func (s *SlackChannel) buildFields(alert *Alert) []map[string]interface{} {
 
 	if alert.GroupKey != "" {
 		fields = append(fields, map[string]interface{}{
-			"title": "Group", "value": alert.GroupKey, "short": true,
+			"title": "Group", "value": escapeSlackText(alert.GroupKey), "short": true,
 		})
 	}
 
 	if len(alert.Tags) > 0 {
+		escapedTags := make([]string, len(alert.Tags))
+		for i, tag := range alert.Tags {
+			escapedTags[i] = escapeSlackText(tag)
+		}
 		fields = append(fields, map[string]interface{}{
-			"title": "Tags", "value": strings.Join(alert.Tags, ", "), "short": false,
+			"title": "Tags", "value": strings.Join(escapedTags, ", "), "short": false,
 		})
 	}
 
 	if alert.MITRE != nil {
 		fields = append(fields, map[string]interface{}{
 			"title": "MITRE ATT&CK",
-			"value": fmt.Sprintf("%s (%s)", alert.MITRE.TacticName, alert.MITRE.TechniqueID),
+			"value": fmt.Sprintf("%s (%s)", escapeSlackText(alert.MITRE.TacticName), escapeSlackText(alert.MITRE.TechniqueID)),
 			"short": false,
 		})
 	}
@@ -287,18 +325,19 @@ func (d *DiscordChannel) Name() string {
 }
 
 func (d *DiscordChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	color := d.severityColor(alert.Severity)
 
 	payload := map[string]interface{}{
 		"username": d.username,
 		"embeds": []map[string]interface{}{
 			{
-				"title":       fmt.Sprintf("[%s] %s", strings.ToUpper(string(alert.Severity)), alert.Title),
-				"description": alert.Description,
+				"title":       fmt.Sprintf("[%s] %s", strings.ToUpper(string(alert.Severity)), sanitizeDiscordText(alert.Title)),
+				"description": sanitizeDiscordText(alert.Description),
 				"color":       color,
 				"fields":      d.buildFields(alert),
 				"footer": map[string]interface{}{
-					"text": fmt.Sprintf("Alert ID: %s | Rule: %s", alert.ID.String()[:8], alert.RuleID),
+					"text": fmt.Sprintf("Alert ID: %s | Rule: %s", alert.ID.String()[:8], sanitizeDiscordText(alert.RuleID)),
 				},
 				"timestamp": alert.CreatedAt.Format(time.RFC3339),
 			},
@@ -352,8 +391,12 @@ func (d *DiscordChannel) buildFields(alert *Alert) []map[string]interface{} {
 	}
 
 	if len(alert.Tags) > 0 {
+		escapedTags := make([]string, len(alert.Tags))
+		for i, tag := range alert.Tags {
+			escapedTags[i] = sanitizeDiscordText(tag)
+		}
 		fields = append(fields, map[string]interface{}{
-			"name": "Tags", "value": strings.Join(alert.Tags, ", "), "inline": false,
+			"name": "Tags", "value": strings.Join(escapedTags, ", "), "inline": false,
 		})
 	}
 
@@ -381,6 +424,7 @@ func (p *PagerDutyChannel) Name() string {
 }
 
 func (p *PagerDutyChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	severity := p.mapSeverity(alert.Severity)
 
 	payload := map[string]interface{}{
@@ -457,6 +501,7 @@ func (l *LogChannel) Name() string {
 }
 
 func (l *LogChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	// Use structured logging to prevent log injection via alert fields
 	slog.Warn("ALERT",
 		"severity", string(alert.Severity),
@@ -513,6 +558,7 @@ func (e *EmailChannel) Name() string {
 }
 
 func (e *EmailChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	// Build email content
 	subject := fmt.Sprintf("[%s] %s", strings.ToUpper(string(alert.Severity)), alert.Title)
 	htmlBody := e.buildHTMLBody(alert)
@@ -871,6 +917,7 @@ func (t *TelegramChannel) Name() string {
 }
 
 func (t *TelegramChannel) Send(ctx context.Context, alert *Alert) error {
+	alert = sanitizeAlert(alert)
 	emoji := t.severityEmoji(alert.Severity)
 	text := fmt.Sprintf(`%s *[%s] %s*
 
@@ -889,14 +936,18 @@ func (t *TelegramChannel) Send(ctx context.Context, alert *Alert) error {
 	)
 
 	if len(alert.Tags) > 0 {
-		text += fmt.Sprintf("\n*Tags:* %s", strings.Join(alert.Tags, ", "))
+		escapedTags := make([]string, len(alert.Tags))
+		for i, tag := range alert.Tags {
+			escapedTags[i] = escapeMarkdown(tag)
+		}
+		text += fmt.Sprintf("\n*Tags:* %s", strings.Join(escapedTags, ", "))
 	}
 
-	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.botToken)
+	apiURL := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", t.botToken)
 	payload := map[string]interface{}{
 		"chat_id":    t.chatID,
 		"text":       text,
-		"parse_mode": "Markdown",
+		"parse_mode": "MarkdownV2",
 	}
 
 	data, err := json.Marshal(payload)
@@ -904,15 +955,16 @@ func (t *TelegramChannel) Send(ctx context.Context, alert *Alert) error {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "POST", url, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, "POST", apiURL, bytes.NewReader(data))
 	if err != nil {
-		return err
+		return fmt.Errorf("telegram request failed: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := t.client.Do(req)
 	if err != nil {
-		return err
+		// Mask error to avoid leaking bot token in URL
+		return fmt.Errorf("telegram request failed: connection error")
 	}
 	defer resp.Body.Close()
 
@@ -961,4 +1013,21 @@ func escapeMarkdown(s string) string {
 		"!", "\\!",
 	)
 	return replacer.Replace(s)
+}
+
+// escapeSlackText neutralizes Slack mrkdwn injection by escaping angle brackets
+// (which Slack interprets as links/mentions) and ampersands.
+func escapeSlackText(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
+}
+
+// sanitizeDiscordText strips Discord-specific injection patterns like
+// @everyone/@here pings that could be abused via attacker-crafted event data.
+func sanitizeDiscordText(s string) string {
+	s = strings.ReplaceAll(s, "@everyone", "@\u200beveryone")
+	s = strings.ReplaceAll(s, "@here", "@\u200bhere")
+	return s
 }

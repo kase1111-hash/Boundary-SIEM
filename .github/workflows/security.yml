@@ -54,6 +54,38 @@ jobs:
       - name: Run govulncheck
         run: govulncheck ./...
 
+  secret-scanning:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: TruffleHog secret scan
+        uses: trufflesecurity/trufflehog@main
+        with:
+          extra_args: --only-verified
+
+  frontend-audit:
+    name: Frontend Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Run npm audit
+        working-directory: web
+        run: npm audit --audit-level=high
+
   dependency-review:
     name: Dependency Review
     runs-on: ubuntu-latest

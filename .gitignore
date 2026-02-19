@@ -34,6 +34,17 @@ Thumbs.db
 .env.local
 *.local
 
+# Certificates and private keys
+certs/
+*.pem
+*.key
+*.p12
+*.crt
+*.csr
+
+# Deployment secrets
+deployments/**/.env
+
 # Logs
 *.log
 logs/

@@ -61,6 +61,13 @@ type Rule struct {
 	Metadata        map[string]any     `yaml:"metadata,omitempty"`
 	DependsOn       []string           `yaml:"depends_on,omitempty" json:"depends_on,omitempty"` // Rule IDs that must fire first (chaining)
 	Baseline        *BaselineConfig    `yaml:"baseline,omitempty" json:"baseline,omitempty"`     // Adaptive threshold config
+
+	// Provenance tracking — populated when rules are created/updated via API
+	CreatedBy   string    `yaml:"-" json:"created_by,omitempty"`
+	CreatedAt   time.Time `yaml:"-" json:"created_at,omitempty"`
+	UpdatedBy   string    `yaml:"-" json:"updated_by,omitempty"`
+	UpdatedAt   time.Time `yaml:"-" json:"updated_at,omitempty"`
+	ContentHash string    `yaml:"-" json:"content_hash,omitempty"` // SHA256 of rule definition
 }
 
 // Conditions holds match conditions for a rule.
