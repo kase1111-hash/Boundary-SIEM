@@ -180,22 +180,40 @@ func (p *GethParser) parseGethTimestamp(ts string) (time.Time, error) {
 		return time.Time{}, fmt.Errorf("invalid date format")
 	}
 
-	month, _ := strconv.Atoi(dateParts[0])
-	day, _ := strconv.Atoi(dateParts[1])
+	month, err := strconv.Atoi(dateParts[0])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid month %q: %w", dateParts[0], err)
+	}
+	day, err := strconv.Atoi(dateParts[1])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid day %q: %w", dateParts[1], err)
+	}
 
 	timeParts := strings.Split(parts[1], ":")
 	if len(timeParts) < 3 {
 		return time.Time{}, fmt.Errorf("invalid time format")
 	}
 
-	hour, _ := strconv.Atoi(timeParts[0])
-	minute, _ := strconv.Atoi(timeParts[1])
+	hour, err := strconv.Atoi(timeParts[0])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid hour %q: %w", timeParts[0], err)
+	}
+	minute, err := strconv.Atoi(timeParts[1])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid minute %q: %w", timeParts[1], err)
+	}
 
 	secParts := strings.Split(timeParts[2], ".")
-	second, _ := strconv.Atoi(secParts[0])
+	second, err := strconv.Atoi(secParts[0])
+	if err != nil {
+		return time.Time{}, fmt.Errorf("invalid second %q: %w", secParts[0], err)
+	}
 	var milli int
 	if len(secParts) > 1 {
-		milli, _ = strconv.Atoi(secParts[1])
+		milli, err = strconv.Atoi(secParts[1])
+		if err != nil {
+			return time.Time{}, fmt.Errorf("invalid millisecond %q: %w", secParts[1], err)
+		}
 	}
 
 	return time.Date(now.Year(), time.Month(month), day, hour, minute, second, milli*1000000, time.UTC), nil

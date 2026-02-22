@@ -12,6 +12,7 @@ import {
 import type { AlertStatus, Severity } from "../types/api";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { StatusBadge } from "../components/StatusBadge";
+import { useToast } from "../components/Toast";
 
 // --- AlertList ---
 
@@ -21,9 +22,10 @@ export const AlertListPage: React.FC = () => {
   const [page, setPage] = useState(0);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const queryClient = useQueryClient();
+  const { addToast } = useToast();
   const limit = 25;
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, refetch } = useQuery({
     queryKey: ["alerts", statusFilter, severityFilter, page],
     queryFn: () =>
       listAlerts({
@@ -44,7 +46,9 @@ export const AlertListPage: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
       setSelected(new Set());
+      addToast(`${selected.size} alert(s) acknowledged`, "success");
     },
+    onError: () => addToast("Failed to acknowledge alerts", "error"),
   });
 
   const bulkResolve = useMutation({
@@ -56,7 +60,9 @@ export const AlertListPage: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
       setSelected(new Set());
+      addToast(`${selected.size} alert(s) resolved`, "success");
     },
+    onError: () => addToast("Failed to resolve alerts", "error"),
   });
 
   const toggleSelect = (id: string) => {
@@ -138,7 +144,17 @@ export const AlertListPage: React.FC = () => {
 
       {/* Alert table */}
       <div className="bg-gray-800 rounded-lg overflow-hidden">
-        {isLoading ? (
+        {isError ? (
+          <div className="p-8 text-center">
+            <p className="text-red-400 mb-2">Failed to load alerts</p>
+            <button
+              onClick={() => refetch()}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-500"
+            >
+              Retry
+            </button>
+          </div>
+        ) : isLoading ? (
           <div className="p-8 text-center text-gray-500">Loading alerts...</div>
         ) : (
           <table className="w-full text-sm">
@@ -256,10 +272,16 @@ export const AlertDetailPage: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const { addToast } = useToast();
   const [noteContent, setNoteContent] = useState("");
   const [assignee, setAssignee] = useState("");
 
-  const { data: alert, isLoading } = useQuery({
+  const {
+    data: alert,
+    isLoading,
+    isError,
+    refetch,
+  } = useQuery({
     queryKey: ["alert", id],
     queryFn: () => getAlert(id!),
     enabled: !!id,
@@ -270,7 +292,9 @@ export const AlertDetailPage: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["alert", id] });
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      addToast("Alert acknowledged", "success");
     },
+    onError: () => addToast("Failed to acknowledge alert", "error"),
   });
 
   const resolveMutation = useMutation({
@@ -278,7 +302,9 @@ export const AlertDetailPage: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["alert", id] });
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
+      addToast("Alert resolved", "success");
     },
+    onError: () => addToast("Failed to resolve alert", "error"),
   });
 
   const noteMutation = useMutation({
@@ -286,7 +312,9 @@ export const AlertDetailPage: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["alert", id] });
       setNoteContent("");
+      addToast("Note added", "success");
     },
+    onError: () => addToast("Failed to add note", "error"),
   });
 
   const assignMutation = useMutation({
@@ -294,12 +322,27 @@ export const AlertDetailPage: React.FC = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["alert", id] });
       setAssignee("");
+      addToast(`Alert assigned to ${assignee}`, "success");
     },
+    onError: () => addToast("Failed to assign alert", "error"),
   });
 
   if (isLoading) {
     return (
       <div className="text-gray-500 text-center py-12">Loading alert...</div>
+    );
+  }
+  if (isError) {
+    return (
+      <div className="text-center py-12">
+        <p className="text-red-400 mb-2">Failed to load alert</p>
+        <button
+          onClick={() => refetch()}
+          className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-500"
+        >
+          Retry
+        </button>
+      </div>
     );
   }
   if (!alert) {

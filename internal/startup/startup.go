@@ -520,7 +520,8 @@ func (d *Diagnostics) checkStorage(ctx context.Context) {
 		host = d.cfg.Storage.ClickHouse.Hosts[0]
 	}
 
-	conn, err := net.DialTimeout("tcp", host, 5*time.Second)
+	dialer := net.Dialer{}
+	conn, err := dialer.DialContext(checkCtx, "tcp", host)
 	if err != nil {
 		d.addResult(DiagnosticResult{
 			Name:    "clickhouse_connectivity",
@@ -537,9 +538,6 @@ func (d *Diagnostics) checkStorage(ctx context.Context) {
 			Details: map[string]string{"host": host},
 		})
 	}
-
-	// Use context to avoid unused variable warning
-	_ = checkCtx
 }
 
 func (d *Diagnostics) printSummary() {

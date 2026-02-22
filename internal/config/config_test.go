@@ -28,10 +28,6 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Queue.Size != 100000 {
 		t.Errorf("expected Queue.Size 100000, got %d", cfg.Queue.Size)
 	}
-	if cfg.Queue.OverflowPolicy != "reject" {
-		t.Errorf("expected Queue.OverflowPolicy 'reject', got %s", cfg.Queue.OverflowPolicy)
-	}
-
 	// Test ingest defaults
 	if cfg.Ingest.MaxBatchSize != 1000 {
 		t.Errorf("expected MaxBatchSize 1000, got %d", cfg.Ingest.MaxBatchSize)

@@ -37,7 +37,11 @@ const MetricCard: React.FC<{
 );
 
 export const DashboardPage: React.FC = () => {
-  const { data: stats } = useQuery({
+  const {
+    data: stats,
+    isError: statsError,
+    refetch: refetchStats,
+  } = useQuery({
     queryKey: ["event-stats"],
     queryFn: () => getEventStats(),
     refetchInterval: 30_000,
@@ -79,6 +83,20 @@ export const DashboardPage: React.FC = () => {
   return (
     <div className="space-y-6">
       <h2 className="text-xl font-semibold text-white">Dashboard</h2>
+
+      {statsError && (
+        <div className="bg-gray-800 border border-red-800 rounded-lg px-4 py-3 flex items-center justify-between">
+          <span className="text-red-400 text-sm">
+            Failed to load dashboard data
+          </span>
+          <button
+            onClick={() => refetchStats()}
+            className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-500"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {/* Top metrics */}
       <div className="grid grid-cols-4 gap-4">

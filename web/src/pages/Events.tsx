@@ -136,7 +136,7 @@ export const EventsPage: React.FC = () => {
     [queryStr],
   );
 
-  const { data, isLoading, isFetching } = useQuery({
+  const { data, isLoading, isFetching, isError, refetch } = useQuery({
     queryKey: ["search", submittedQuery, page],
     queryFn: () =>
       searchEvents({
@@ -337,7 +337,17 @@ export const EventsPage: React.FC = () => {
       )}
 
       {/* Results table */}
-      {isLoading ? (
+      {isError ? (
+        <div className="bg-gray-800 rounded-lg p-8 text-center">
+          <p className="text-red-400 mb-2">Search failed</p>
+          <button
+            onClick={() => refetch()}
+            className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-500"
+          >
+            Retry
+          </button>
+        </div>
+      ) : isLoading ? (
         <div className="bg-gray-800 rounded-lg p-8 text-center text-gray-500">
           Searching...
         </div>
