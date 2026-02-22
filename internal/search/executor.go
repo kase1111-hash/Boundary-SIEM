@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -161,7 +162,9 @@ func (e *Executor) Search(ctx context.Context, query *Query) (*SearchResponse, e
 
 		if metadataJSON != "" {
 			r.Metadata = make(map[string]interface{})
-			json.Unmarshal([]byte(metadataJSON), &r.Metadata)
+			if err := json.Unmarshal([]byte(metadataJSON), &r.Metadata); err != nil {
+				slog.Warn("failed to unmarshal event metadata", "event_id", r.EventID, "error", err)
+			}
 		}
 
 		results = append(results, &r)
@@ -348,7 +351,9 @@ func (e *Executor) GetEvent(ctx context.Context, eventID uuid.UUID) (*SearchResu
 
 	if metadataJSON != "" {
 		r.Metadata = make(map[string]interface{})
-		json.Unmarshal([]byte(metadataJSON), &r.Metadata)
+		if err := json.Unmarshal([]byte(metadataJSON), &r.Metadata); err != nil {
+			slog.Warn("failed to unmarshal event metadata", "event_id", r.EventID, "error", err)
+		}
 	}
 
 	return &r, nil

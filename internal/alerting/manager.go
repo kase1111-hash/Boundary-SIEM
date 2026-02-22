@@ -222,7 +222,10 @@ func (m *Manager) persistAlert(ctx context.Context, alert *Alert) error {
 		string(mitreJSON),
 		string(metadataJSON),
 	)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to persist alert %s: %w", alert.ID, err)
+	}
+	return nil
 }
 
 // sendNotifications sends alert to all channels.
@@ -532,7 +535,9 @@ func (m *Manager) AcknowledgeAlert(ctx context.Context, id uuid.UUID, user strin
 			WHERE id = ?
 		`
 		_, err := m.db.ExecContext(ctx, query, StatusAcknowledged, now, user, now, id.String())
-		return err
+		if err != nil {
+			return fmt.Errorf("failed to acknowledge alert %s: %w", id, err)
+		}
 	}
 	return nil
 }

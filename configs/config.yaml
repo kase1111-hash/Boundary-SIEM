@@ -60,7 +60,6 @@ ingest:
 
 queue:
   size: 100000
-  overflow_policy: reject
 
 validation:
   max_event_age: 168h     # 7 days
@@ -102,10 +101,6 @@ storage:
     critical_ttl: 8760h     # 365 days
     quarantine_ttl: 720h    # 30 days
     alerts_ttl: 8760h       # 365 days
-    archive_enabled: false
-    archive_bucket: "boundary-siem-archive"
-    archive_region: "us-east-1"
-    archive_prefix: "data/"
 
 # Consumer configuration
 consumer:
