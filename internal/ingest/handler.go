@@ -119,6 +119,7 @@ func (h *Handler) HandleEvents(w http.ResponseWriter, r *http.Request) {
 
 	for i, input := range req.Events {
 		event := h.convertInput(input)
+		event.RequestID = requestID
 
 		// Validate event
 		if err := h.validator.Validate(event); err != nil {

@@ -211,11 +211,15 @@ func (e *Executor) Aggregate(ctx context.Context, query *Query, field string, ag
 		`, column, whereClause, column)
 
 	case "sum", "avg", "min", "max":
+		safeFn, ok := sanitizeAggFunction(aggType)
+		if !ok {
+			return nil, fmt.Errorf("unsupported aggregation function: %s", aggType)
+		}
 		sqlQuery = fmt.Sprintf(`
 			SELECT %s(%s) as value
 			FROM events
 			%s
-		`, strings.ToUpper(aggType), column, whereClause)
+		`, safeFn, column, whereClause)
 
 	case "histogram":
 		// Time-based histogram
@@ -537,6 +541,21 @@ func (e *Executor) buildMetadataClause(cond Condition) (string, []interface{}) {
 	}
 }
 
+// validAggFunctions is an allowlist of valid SQL aggregation functions.
+var validAggFunctions = map[string]bool{
+	"SUM": true, "AVG": true, "MIN": true, "MAX": true,
+	"COUNT": true, "COUNT_DISTINCT": true,
+}
+
+// sanitizeAggFunction validates and returns a safe aggregation function name.
+func sanitizeAggFunction(fn string) (string, bool) {
+	upper := strings.ToUpper(fn)
+	if validAggFunctions[upper] {
+		return upper, true
+	}
+	return "", false
+}
+
 // validColumns is an allowlist of known safe column names for SQL queries.
 var validColumns = map[string]bool{
 	"event_id":       true,
@@ -559,6 +578,7 @@ var validColumns = map[string]bool{
 	"actor_ip":       true,
 	"metadata":       true,
 	"schema_version": true,
+	"request_id":     true,
 }
 
 // sanitizeColumn ensures column name is a known valid column.
@@ -567,6 +587,10 @@ func (e *Executor) sanitizeColumn(column string) string {
 	if validColumns[column] {
 		return column
 	}
+	slog.Warn("unknown column name rejected, using safe fallback",
+		"requested", truncateForLog(column, 100),
+		"fallback", "timestamp",
+	)
 	return "timestamp"
 }
 

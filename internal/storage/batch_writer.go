@@ -157,7 +157,7 @@ func (bw *BatchWriter) insertBatch(events []*schema.Event) error {
 			source_product, source_host, source_instance_id, source_version,
 			actor_type, actor_id, actor_name, actor_email, actor_ip,
 			action, target, outcome, severity,
-			schema_version, raw, metadata
+			schema_version, request_id, raw, metadata
 		)
 	`)
 	if err != nil {
@@ -216,6 +216,7 @@ func (bw *BatchWriter) insertBatch(events []*schema.Event) error {
 			string(event.Outcome),
 			uint8(event.Severity),
 			event.SchemaVersion,
+			event.RequestID,
 			event.Raw,
 			string(metadata),
 		)
