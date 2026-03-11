@@ -220,16 +220,22 @@ func main() {
 	}
 
 	// Initialize correlation engine with detection rules
-	corrEngine := correlation.NewEngine(correlation.DefaultEngineConfig())
+	corrCfg := correlation.EngineConfig{
+		MaxStateEntries:  cfg.Correlation.MaxStateEntries,
+		StateCleanupFreq: cfg.Correlation.StateCleanupFreq,
+		WorkerCount:      cfg.Correlation.WorkerCount,
+		DedupWindow:      cfg.Correlation.DedupWindow,
+		EventChannelSize: cfg.Correlation.EventChannelSize,
+		AlertChannelSize: cfg.Correlation.AlertChannelSize,
+	}
+	corrEngine := correlation.NewEngine(corrCfg)
 	for _, rule := range detectionrules.GetAllRules() {
 		if err := corrEngine.AddRule(rule); err != nil {
 			slog.Warn("failed to add detection rule", "rule_id", rule.ID, "error", err)
 		}
 	}
 
-	// Initialize baseline engine for adaptive thresholds
-	baselineEngine := correlation.NewBaselineEngine()
-	slog.Info("baseline engine initialized")
+	slog.Info("baseline engine initialized (integrated into correlation engine)")
 
 	// Initialize alert manager
 	alertMgr := alerting.NewManager(alerting.DefaultManagerConfig(), nil)
@@ -255,9 +261,6 @@ func main() {
 
 	// Start correlation engine
 	corrEngine.Start(ctx)
-
-	// Suppress unused variable warning for baseline engine (used by rules at runtime)
-	_ = baselineEngine
 
 	// Initialize escalation engine
 	escalationEngine := alerting.NewEscalationEngine(alertMgr)

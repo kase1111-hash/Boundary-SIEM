@@ -26,6 +26,7 @@ type Config struct {
 	Logging         LoggingConfig         `yaml:"logging"`
 	Storage         StorageConfig         `yaml:"storage"`
 	Consumer        ConsumerConfig        `yaml:"consumer"`
+	Correlation     CorrelationEngineConfig `yaml:"correlation"`
 	Secrets         SecretsConfig         `yaml:"secrets"`
 	Encryption      EncryptionConfig      `yaml:"encryption"`
 	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers"`
@@ -95,6 +96,16 @@ type ConsumerConfig struct {
 	Workers      int           `yaml:"workers"`
 	PollInterval time.Duration `yaml:"poll_interval"`
 	ShutdownWait time.Duration `yaml:"shutdown_wait"`
+}
+
+// CorrelationConfig holds correlation engine settings.
+type CorrelationEngineConfig struct {
+	MaxStateEntries  int           `yaml:"max_state_entries"`  // Maximum entries per rule state
+	StateCleanupFreq time.Duration `yaml:"state_cleanup_freq"` // How often to clean expired state
+	WorkerCount      int           `yaml:"worker_count"`       // Number of correlation workers
+	DedupWindow      time.Duration `yaml:"dedup_window"`       // Alert deduplication window
+	EventChannelSize int           `yaml:"event_channel_size"` // Event channel buffer size
+	AlertChannelSize int           `yaml:"alert_channel_size"` // Alert channel buffer size
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -447,6 +458,14 @@ func DefaultConfig() *Config {
 			Workers:      4,
 			PollInterval: 10 * time.Millisecond,
 			ShutdownWait: 30 * time.Second,
+		},
+		Correlation: CorrelationEngineConfig{
+			MaxStateEntries:  100000,
+			StateCleanupFreq: 30 * time.Second,
+			WorkerCount:      4,
+			DedupWindow:      15 * time.Minute,
+			EventChannelSize: 10000,
+			AlertChannelSize: 1000,
 		},
 		Secrets: SecretsConfig{
 			EnableVault:    false,                  // Vault disabled by default

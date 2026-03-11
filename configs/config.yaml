@@ -108,3 +108,12 @@ consumer:
   poll_interval: 10ms
   shutdown_wait: 30s
 
+# Correlation engine configuration
+correlation:
+  max_state_entries: 100000    # Maximum entries per rule state
+  state_cleanup_freq: 30s      # How often to clean expired state
+  worker_count: 4              # Number of correlation workers
+  dedup_window: 15m            # Alert deduplication window (0 = use per-rule window)
+  event_channel_size: 10000    # Event channel buffer size
+  alert_channel_size: 1000     # Alert channel buffer size
+

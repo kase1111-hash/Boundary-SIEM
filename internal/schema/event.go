@@ -30,6 +30,7 @@ type Event struct {
 	SchemaVersion string    `json:"schema_version"`
 	ReceivedAt    time.Time `json:"received_at"`
 	TenantID      string    `json:"tenant_id"`
+	RequestID     string    `json:"request_id,omitempty"` // Traces event back to ingest request
 }
 
 // Source identifies where the event originated.

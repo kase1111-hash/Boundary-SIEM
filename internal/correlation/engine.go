@@ -55,6 +55,9 @@ type EngineConfig struct {
 	MaxStateEntries  int           // Maximum entries per rule state
 	StateCleanupFreq time.Duration // How often to clean expired state
 	WorkerCount      int           // Number of correlation workers
+	DedupWindow      time.Duration // Alert deduplication window (0 = use rule window)
+	EventChannelSize int           // Event channel buffer size
+	AlertChannelSize int           // Alert channel buffer size
 }
 
 // DefaultEngineConfig returns default engine configuration.
@@ -63,6 +66,9 @@ func DefaultEngineConfig() EngineConfig {
 		MaxStateEntries:  100000,
 		StateCleanupFreq: 30 * time.Second,
 		WorkerCount:      4,
+		DedupWindow:      0, // Use per-rule window by default
+		EventChannelSize: 10000,
+		AlertChannelSize: 1000,
 	}
 }
 
@@ -72,6 +78,7 @@ type Engine struct {
 	rules    map[string]*Rule
 	states   map[string]*RuleState
 	handlers []AlertHandler
+	baseline *BaselineEngine
 	mu       sync.RWMutex
 	eventCh  chan *schema.Event
 	alertCh  chan *Alert
@@ -103,14 +110,28 @@ type Window struct {
 
 // NewEngine creates a new correlation engine.
 func NewEngine(config EngineConfig) *Engine {
-	return &Engine{
-		config:  config,
-		rules:   make(map[string]*Rule),
-		states:  make(map[string]*RuleState),
-		eventCh: make(chan *schema.Event, 10000),
-		alertCh: make(chan *Alert, 1000),
-		stopCh:  make(chan struct{}),
+	eventChSize := config.EventChannelSize
+	if eventChSize <= 0 {
+		eventChSize = 10000
 	}
+	alertChSize := config.AlertChannelSize
+	if alertChSize <= 0 {
+		alertChSize = 1000
+	}
+	return &Engine{
+		config:   config,
+		rules:    make(map[string]*Rule),
+		states:   make(map[string]*RuleState),
+		baseline: NewBaselineEngine(),
+		eventCh:  make(chan *schema.Event, eventChSize),
+		alertCh:  make(chan *Alert, alertChSize),
+		stopCh:   make(chan struct{}),
+	}
+}
+
+// Baseline returns the engine's baseline engine for external metric recording.
+func (e *Engine) Baseline() *BaselineEngine {
+	return e.baseline
 }
 
 // AddRule adds a correlation rule.
@@ -150,11 +171,24 @@ func (e *Engine) AddHandler(handler AlertHandler) {
 }
 
 // ProcessEvent queues an event for correlation processing.
+// Applies backpressure by blocking for up to 100ms before dropping.
 func (e *Engine) ProcessEvent(event *schema.Event) {
 	select {
 	case e.eventCh <- event:
+		return
 	default:
-		slog.Warn("correlation event channel full, dropping event")
+	}
+
+	// Backpressure: wait briefly before dropping
+	timer := time.NewTimer(100 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case e.eventCh <- event:
+	case <-timer.C:
+		slog.Warn("correlation event channel full after backpressure, dropping event",
+			"channel_len", len(e.eventCh),
+			"channel_cap", cap(e.eventCh),
+		)
 	}
 }
 
@@ -221,6 +255,7 @@ func (e *Engine) processEvent(ctx context.Context, event *schema.Event) {
 }
 
 // matchesRuleConditions checks if event matches rule's Conditions struct.
+// All match conditions are ANDed together (all must match).
 func (e *Engine) matchesRuleConditions(event *schema.Event, conditions Conditions) bool {
 	for _, cond := range conditions.Match {
 		value := e.getEventField(event, cond.Field)
@@ -228,6 +263,40 @@ func (e *Engine) matchesRuleConditions(event *schema.Event, conditions Condition
 			return false
 		}
 	}
+	return true
+}
+
+// matchConditionTree evaluates a Condition including nested And/Or sub-conditions.
+func (e *Engine) matchConditionTree(event *schema.Event, cond Condition) bool {
+	// Evaluate the leaf condition itself (if Field is set)
+	if cond.Field != "" {
+		value := e.getEventField(event, cond.Field)
+		if !cond.Match(value) {
+			return false
+		}
+	}
+
+	// Evaluate AND sub-conditions: all must match
+	for _, sub := range cond.And {
+		if !e.matchConditionTree(event, sub) {
+			return false
+		}
+	}
+
+	// Evaluate OR sub-conditions: at least one must match
+	if len(cond.Or) > 0 {
+		orMatched := false
+		for _, sub := range cond.Or {
+			if e.matchConditionTree(event, sub) {
+				orMatched = true
+				break
+			}
+		}
+		if !orMatched {
+			return false
+		}
+	}
+
 	return true
 }
 
@@ -281,8 +350,7 @@ func matchValue(eventValue any, operator string, expected any) bool {
 
 func (e *Engine) matchesConditions(event *schema.Event, conditions []Condition) bool {
 	for _, cond := range conditions {
-		value := e.getEventField(event, cond.Field)
-		if !cond.Match(value) {
+		if !e.matchConditionTree(event, cond) {
 			return false
 		}
 	}
@@ -397,7 +465,7 @@ func (e *Engine) evaluateRule(ctx context.Context, rule *Rule, event *schema.Eve
 	var fired bool
 	switch rule.Type {
 	case RuleTypeThreshold:
-		fired = e.evaluateThreshold(window, rule)
+		fired = e.evaluateThreshold(window, rule, groupKey)
 	case RuleTypeSequence:
 		fired = e.evaluateSequence(window, rule, event)
 	case RuleTypeAggregate:
@@ -405,6 +473,13 @@ func (e *Engine) evaluateRule(ctx context.Context, rule *Rule, event *schema.Eve
 	case RuleTypeAbsence:
 		// For absence rules, the trigger event resets the absence timer.
 		// Mark that we've seen the expected event in this window.
+		if !window.AbsenceSeen {
+			slog.Debug("absence rule: expected event seen, resetting timer",
+				"rule_id", rule.ID,
+				"group_key", groupKey,
+				"window_start", window.StartTime,
+			)
+		}
 		window.AbsenceSeen = true
 	}
 
@@ -418,11 +493,30 @@ func (e *Engine) evaluateRule(ctx context.Context, rule *Rule, event *schema.Eve
 		state.lastFire[groupKey] = now
 
 		alert := e.createAlert(rule, window, groupKey)
-		select {
-		case e.alertCh <- alert:
-		default:
-			slog.Warn("alert channel full, dropping alert", "rule_id", rule.ID)
-		}
+		e.sendAlert(alert)
+	}
+}
+
+// sendAlert sends an alert with backpressure, blocking briefly before dropping.
+func (e *Engine) sendAlert(alert *Alert) {
+	select {
+	case e.alertCh <- alert:
+		return
+	default:
+	}
+
+	// Backpressure: wait briefly before dropping
+	timer := time.NewTimer(200 * time.Millisecond)
+	defer timer.Stop()
+	select {
+	case e.alertCh <- alert:
+	case <-timer.C:
+		slog.Warn("alert channel full after backpressure, dropping alert",
+			"rule_id", alert.RuleID,
+			"alert_id", alert.ID,
+			"channel_len", len(e.alertCh),
+			"channel_cap", cap(e.alertCh),
+		)
 	}
 }
 
@@ -439,13 +533,31 @@ func (e *Engine) buildGroupKey(event *schema.Event, groupBy []string) string {
 	return fmt.Sprintf("%v", parts)
 }
 
-func (e *Engine) evaluateThreshold(window *Window, rule *Rule) bool {
+func (e *Engine) evaluateThreshold(window *Window, rule *Rule, groupKey string) bool {
 	if rule.Threshold == nil {
 		return false
 	}
 
 	count := window.Count
 	threshold := rule.Threshold.Count
+
+	// Record metric for baseline learning
+	if e.baseline != nil {
+		e.baseline.Record(rule.ID, groupKey, "event_count", float64(count))
+	}
+
+	// Use adaptive threshold if baseline config is set and baseline is ready
+	if rule.Baseline != nil && e.baseline != nil {
+		if adaptiveThreshold, active := e.baseline.AdaptiveThreshold(rule.ID, groupKey, rule.Baseline); active {
+			threshold = int(adaptiveThreshold)
+			slog.Debug("using adaptive threshold",
+				"rule_id", rule.ID,
+				"group_key", groupKey,
+				"static_threshold", rule.Threshold.Count,
+				"adaptive_threshold", threshold,
+			)
+		}
+	}
 
 	switch rule.Threshold.Operator {
 	case "gt", ">":
@@ -751,14 +863,15 @@ func (e *Engine) checkAbsenceRules() {
 				state.lastFire[groupKey] = now
 
 				alert := e.createAlert(rule, window, groupKey)
-				select {
-				case e.alertCh <- alert:
-				default:
-					slog.Warn("alert channel full, dropping absence alert", "rule_id", rule.ID)
-				}
+				e.sendAlert(alert)
 			}
 
 			// Reset the window for the next period
+			slog.Debug("absence rule: resetting window for next period",
+				"rule_id", rule.ID,
+				"group_key", groupKey,
+				"was_seen", window.AbsenceSeen,
+			)
 			window.AbsenceSeen = false
 			window.StartTime = now
 			window.Events = window.Events[:0]

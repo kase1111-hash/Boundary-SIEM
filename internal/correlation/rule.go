@@ -208,6 +208,14 @@ func (r *Rule) Validate() error {
 		if r.Absence == nil {
 			return fmt.Errorf("absence config required for absence rules")
 		}
+		if len(r.Absence.ExpectedConditions) == 0 {
+			return fmt.Errorf("absence rules require at least one expected_condition")
+		}
+		for i, cond := range r.Absence.ExpectedConditions {
+			if cond.Field == "" {
+				return fmt.Errorf("absence expected_condition %d: field is required", i)
+			}
+		}
 	case RuleTypeCustom:
 		// Custom rules have no specific requirements
 	default:
