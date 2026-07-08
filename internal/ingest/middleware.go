@@ -182,4 +182,3 @@ func corsMiddleware(next http.Handler, corsCfg config.CORSConfig) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
-

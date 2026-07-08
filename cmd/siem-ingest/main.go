@@ -13,10 +13,10 @@ import (
 
 	"boundary-siem/internal/alerting"
 	"boundary-siem/internal/config"
-	siemErrors "boundary-siem/internal/errors"
 	"boundary-siem/internal/consumer"
 	"boundary-siem/internal/correlation"
 	detectionrules "boundary-siem/internal/detection/rules"
+	siemErrors "boundary-siem/internal/errors"
 	"boundary-siem/internal/ingest"
 	"boundary-siem/internal/ingest/cef"
 	"boundary-siem/internal/ingest/evm"

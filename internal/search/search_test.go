@@ -1071,10 +1071,10 @@ func TestParseDuration_ExtraCases(t *testing.T) {
 		{"now-30m", true},
 		{"now-7d", true},
 		{"now-1s", true},
-		{"NOW-1h", true},   // case insensitive
-		{"Now-24h", true},  // mixed case
-		{"now-", false},    // trailing dash, no duration
-		{"now/d", false},   // unsupported Elasticsearch-style rounding
+		{"NOW-1h", true},  // case insensitive
+		{"Now-24h", true}, // mixed case
+		{"now-", false},   // trailing dash, no duration
+		{"now/d", false},  // unsupported Elasticsearch-style rounding
 		{"yesterday", false},
 		{"", false},
 	}

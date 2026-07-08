@@ -243,7 +243,6 @@ func getClientIP(r *http.Request, trustProxy bool) string {
 	return ip
 }
 
-
 // GetRateLimitStats returns rate limiting statistics.
 func GetRateLimitStats() (allowed, limited uint64) {
 	return atomic.LoadUint64(&rateLimitAllowed), atomic.LoadUint64(&rateLimitedTotal)

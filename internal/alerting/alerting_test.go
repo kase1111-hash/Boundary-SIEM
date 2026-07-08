@@ -683,7 +683,7 @@ func TestTelegramChannelConfig(t *testing.T) {
 func TestWebhookChannelConfig(t *testing.T) {
 	headers := map[string]string{
 		"Authorization": "Bearer test-token",
-		"X-Source":       "boundary-siem",
+		"X-Source":      "boundary-siem",
 	}
 	ch, err := NewWebhookChannel("my-webhook", "https://example.com/hook", headers)
 	if err != nil {

@@ -14,10 +14,10 @@ import (
 type DeliveryStatus string
 
 const (
-	DeliveryPending   DeliveryStatus = "pending"
-	DeliverySent      DeliveryStatus = "sent"
-	DeliveryFailed    DeliveryStatus = "failed"
-	DeliveryRetrying  DeliveryStatus = "retrying"
+	DeliveryPending    DeliveryStatus = "pending"
+	DeliverySent       DeliveryStatus = "sent"
+	DeliveryFailed     DeliveryStatus = "failed"
+	DeliveryRetrying   DeliveryStatus = "retrying"
 	DeliveryDeadLetter DeliveryStatus = "dead_letter"
 )
 

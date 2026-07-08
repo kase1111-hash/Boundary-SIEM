@@ -323,9 +323,9 @@ func TestApplyEnvOverrides(t *testing.T) {
 func TestLoadAuthFromEnv(t *testing.T) {
 	// Save and restore env vars
 	original := map[string]string{
-		"BOUNDARY_ADMIN_USERNAME":        os.Getenv("BOUNDARY_ADMIN_USERNAME"),
-		"BOUNDARY_ADMIN_PASSWORD":        os.Getenv("BOUNDARY_ADMIN_PASSWORD"),
-		"BOUNDARY_ADMIN_EMAIL":           os.Getenv("BOUNDARY_ADMIN_EMAIL"),
+		"BOUNDARY_ADMIN_USERNAME":          os.Getenv("BOUNDARY_ADMIN_USERNAME"),
+		"BOUNDARY_ADMIN_PASSWORD":          os.Getenv("BOUNDARY_ADMIN_PASSWORD"),
+		"BOUNDARY_ADMIN_EMAIL":             os.Getenv("BOUNDARY_ADMIN_EMAIL"),
 		"BOUNDARY_REQUIRE_PASSWORD_CHANGE": os.Getenv("BOUNDARY_REQUIRE_PASSWORD_CHANGE"),
 	}
 	defer func() {
@@ -372,4 +372,3 @@ func TestValidate_WithPassword(t *testing.T) {
 		t.Errorf("expected no error for strong password, got: %v", err)
 	}
 }
-
