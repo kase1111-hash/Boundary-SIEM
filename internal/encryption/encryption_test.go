@@ -408,9 +408,10 @@ func TestConcurrentEncryption(t *testing.T) {
 // TestDeriveKey tests key derivation.
 func TestDeriveKey(t *testing.T) {
 	masterKey := []byte("test-master-key")
+	salt := []byte("test-salt")
 
-	key1 := deriveKey(masterKey)
-	key2 := deriveKey(masterKey)
+	key1 := deriveKey(masterKey, salt)
+	key2 := deriveKey(masterKey, salt)
 
 	// Same input should produce same output
 	if !bytes.Equal(key1, key2) {
@@ -423,9 +424,15 @@ func TestDeriveKey(t *testing.T) {
 	}
 
 	// Different input should produce different output
-	differentKey := deriveKey([]byte("different-key"))
+	differentKey := deriveKey([]byte("different-key"), salt)
 	if bytes.Equal(key1, differentKey) {
 		t.Error("different inputs should produce different derived keys")
+	}
+
+	// Different salt should produce different output
+	differentSaltKey := deriveKey(masterKey, []byte("other-salt"))
+	if bytes.Equal(key1, differentSaltKey) {
+		t.Error("different salts should produce different derived keys")
 	}
 }
 

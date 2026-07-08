@@ -2,6 +2,7 @@
 package encryption
 
 import (
+	"bytes"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -55,12 +56,13 @@ var legacySalt = []byte("boundary-siem-encryption-v1")
 
 // Engine provides encryption and decryption operations.
 type Engine struct {
-	enabled    bool
-	masterKey  []byte
-	salt       []byte // random salt used for this engine's key derivation
-	keyVersion int
-	logger     *slog.Logger
-	mu         sync.RWMutex
+	enabled      bool
+	rawMasterKey []byte // original master key, needed to re-derive keys for embedded salts
+	masterKey    []byte // key derived from rawMasterKey and salt, used for encryption
+	salt         []byte // random salt used for this engine's key derivation
+	keyVersion   int
+	logger       *slog.Logger
+	mu           sync.RWMutex
 
 	// Key rotation support: map of version to key for backward compatibility
 	oldKeys map[int][]byte
@@ -109,13 +111,14 @@ func NewEngine(cfg *Config) (*Engine, error) {
 		"algorithm", "AES-256-GCM")
 
 	return &Engine{
-		enabled:    true,
-		masterKey:  derivedKey,
-		salt:       salt,
-		keyVersion: cfg.KeyVersion,
-		logger:     logger,
-		oldKeys:    make(map[int][]byte),
-		legacyKey:  legacyDerivedKey,
+		enabled:      true,
+		rawMasterKey: cfg.MasterKey,
+		masterKey:    derivedKey,
+		salt:         salt,
+		keyVersion:   cfg.KeyVersion,
+		logger:       logger,
+		oldKeys:      make(map[int][]byte),
+		legacyKey:    legacyDerivedKey,
 	}, nil
 }
 
@@ -237,8 +240,20 @@ func (e *Engine) decryptLocked(encodedCiphertext string) ([]byte, error) {
 	if saltLen > 0 && saltLen <= 32 && len(data) >= 2+saltLen+12+16 {
 		// New format with embedded salt
 		embeddedSalt := data[2 : 2+saltLen]
-		decryptionKey = deriveKey(e.masterKey, embeddedSalt)
 		payloadStart = 2 + saltLen
+		switch {
+		case version == e.keyVersion && bytes.Equal(embeddedSalt, e.salt):
+			// Encrypted by this engine instance — reuse the derived key.
+			decryptionKey = e.masterKey
+		case e.oldKeys[version] != nil:
+			// Rotated key retained in this process; its salt is embedded
+			// in ciphertexts of that version, so the stored derived key applies.
+			decryptionKey = e.oldKeys[version]
+		default:
+			// Different salt (e.g. data from a previous process lifetime) —
+			// re-derive from the raw master key with the embedded salt.
+			decryptionKey = deriveKey(e.rawMasterKey, embeddedSalt)
+		}
 	} else {
 		// Legacy format (no salt field) — use legacy key derived with static salt
 		payloadStart = 1
@@ -342,6 +357,7 @@ func (e *Engine) RotateKey(newMasterKey []byte, newVersion int) error {
 
 	// Update to new key, salt, and version
 	oldVersion := e.keyVersion
+	e.rawMasterKey = newMasterKey
 	e.masterKey = derivedKey
 	e.salt = newSalt
 	e.keyVersion = newVersion
