@@ -27,27 +27,27 @@ type Config struct {
 	Enabled      bool          `yaml:"enabled"`
 	Chains       []ChainConfig `yaml:"chains"`
 	PollInterval time.Duration `yaml:"poll_interval"`
-	BatchSize    int           `yaml:"batch_size"`    // max blocks per poll
-	StartBlock   string        `yaml:"start_block"`   // "latest", "earliest", or block number
+	BatchSize    int           `yaml:"batch_size"`  // max blocks per poll
+	StartBlock   string        `yaml:"start_block"` // "latest", "earliest", or block number
 }
 
 // ChainConfig defines a single EVM chain to poll.
 type ChainConfig struct {
-	Name     string `yaml:"name"`     // e.g., "ethereum", "polygon"
-	ChainID  int64  `yaml:"chain_id"` // e.g., 1, 137
-	RPCURL   string `yaml:"rpc_url"`
-	Enabled  bool   `yaml:"enabled"`
+	Name    string `yaml:"name"`     // e.g., "ethereum", "polygon"
+	ChainID int64  `yaml:"chain_id"` // e.g., 1, 137
+	RPCURL  string `yaml:"rpc_url"`
+	Enabled bool   `yaml:"enabled"`
 }
 
 // Poller polls EVM JSON-RPC endpoints for blocks and logs.
 type Poller struct {
-	config     Config
-	queue      *queue.RingBuffer
-	client     *http.Client
-	chains     []chainState
-	mu         sync.Mutex
-	stopCh     chan struct{}
-	wg         sync.WaitGroup
+	config Config
+	queue  *queue.RingBuffer
+	client *http.Client
+	chains []chainState
+	mu     sync.Mutex
+	stopCh chan struct{}
+	wg     sync.WaitGroup
 }
 
 type chainState struct {

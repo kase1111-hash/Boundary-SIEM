@@ -16,20 +16,20 @@ import (
 
 // Config holds the complete application configuration.
 type Config struct {
-	Server          ServerConfig          `yaml:"server"`
-	Ingest          IngestConfig          `yaml:"ingest"`
-	Queue           QueueConfig           `yaml:"queue"`
-	Validation      ValidationConfig      `yaml:"validation"`
-	Auth            AuthConfig            `yaml:"auth"`
-	CORS            CORSConfig            `yaml:"cors"`
-	RateLimit       RateLimitConfig       `yaml:"rate_limit"`
-	Logging         LoggingConfig         `yaml:"logging"`
-	Storage         StorageConfig         `yaml:"storage"`
-	Consumer        ConsumerConfig        `yaml:"consumer"`
+	Server          ServerConfig            `yaml:"server"`
+	Ingest          IngestConfig            `yaml:"ingest"`
+	Queue           QueueConfig             `yaml:"queue"`
+	Validation      ValidationConfig        `yaml:"validation"`
+	Auth            AuthConfig              `yaml:"auth"`
+	CORS            CORSConfig              `yaml:"cors"`
+	RateLimit       RateLimitConfig         `yaml:"rate_limit"`
+	Logging         LoggingConfig           `yaml:"logging"`
+	Storage         StorageConfig           `yaml:"storage"`
+	Consumer        ConsumerConfig          `yaml:"consumer"`
 	Correlation     CorrelationEngineConfig `yaml:"correlation"`
-	Secrets         SecretsConfig         `yaml:"secrets"`
-	Encryption      EncryptionConfig      `yaml:"encryption"`
-	SecurityHeaders SecurityHeadersConfig `yaml:"security_headers"`
+	Secrets         SecretsConfig           `yaml:"secrets"`
+	Encryption      EncryptionConfig        `yaml:"encryption"`
+	SecurityHeaders SecurityHeadersConfig   `yaml:"security_headers"`
 }
 
 // RateLimitConfig holds rate limiting settings.
@@ -66,7 +66,7 @@ type StorageConfig struct {
 type RetentionConfig struct {
 	EventsTTL     time.Duration `yaml:"events_ttl"`     // TTL for main events table
 	CriticalTTL   time.Duration `yaml:"critical_ttl"`   // TTL for critical events
-	QuarantineTTL time.Duration `yaml:"quarantine_ttl"`  // TTL for quarantined events
+	QuarantineTTL time.Duration `yaml:"quarantine_ttl"` // TTL for quarantined events
 	AlertsTTL     time.Duration `yaml:"alerts_ttl"`     // TTL for alerts
 }
 
@@ -451,7 +451,7 @@ func DefaultConfig() *Config {
 				EventsTTL:     90 * 24 * time.Hour,  // 90 days
 				CriticalTTL:   365 * 24 * time.Hour, // 1 year
 				QuarantineTTL: 30 * 24 * time.Hour,  // 30 days
-				AlertsTTL:     365 * 24 * time.Hour,  // 1 year
+				AlertsTTL:     365 * 24 * time.Hour, // 1 year
 			},
 		},
 		Consumer: ConsumerConfig{

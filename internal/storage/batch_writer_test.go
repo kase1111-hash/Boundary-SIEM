@@ -24,16 +24,16 @@ type mockConn struct {
 	prepareBatchFunc func(ctx context.Context, query string, opts ...driver.PrepareBatchOption) (driver.Batch, error)
 }
 
-func (m *mockConn) Contributors() []string                                              { return nil }
-func (m *mockConn) ServerVersion() (*driver.ServerVersion, error)                       { return nil, nil }
-func (m *mockConn) Select(_ context.Context, _ any, _ string, _ ...any) error           { return nil }
-func (m *mockConn) Query(_ context.Context, _ string, _ ...any) (driver.Rows, error)    { return nil, nil }
-func (m *mockConn) QueryRow(_ context.Context, _ string, _ ...any) driver.Row           { return nil }
-func (m *mockConn) Exec(_ context.Context, _ string, _ ...any) error                    { return nil }
-func (m *mockConn) AsyncInsert(_ context.Context, _ string, _ bool, _ ...any) error     { return nil }
-func (m *mockConn) Ping(_ context.Context) error                                        { return nil }
-func (m *mockConn) Stats() driver.Stats                                                 { return driver.Stats{} }
-func (m *mockConn) Close() error                                                        { return nil }
+func (m *mockConn) Contributors() []string                                           { return nil }
+func (m *mockConn) ServerVersion() (*driver.ServerVersion, error)                    { return nil, nil }
+func (m *mockConn) Select(_ context.Context, _ any, _ string, _ ...any) error        { return nil }
+func (m *mockConn) Query(_ context.Context, _ string, _ ...any) (driver.Rows, error) { return nil, nil }
+func (m *mockConn) QueryRow(_ context.Context, _ string, _ ...any) driver.Row        { return nil }
+func (m *mockConn) Exec(_ context.Context, _ string, _ ...any) error                 { return nil }
+func (m *mockConn) AsyncInsert(_ context.Context, _ string, _ bool, _ ...any) error  { return nil }
+func (m *mockConn) Ping(_ context.Context) error                                     { return nil }
+func (m *mockConn) Stats() driver.Stats                                              { return driver.Stats{} }
+func (m *mockConn) Close() error                                                     { return nil }
 
 func (m *mockConn) PrepareBatch(ctx context.Context, query string, opts ...driver.PrepareBatchOption) (driver.Batch, error) {
 	if m.prepareBatchFunc != nil {
@@ -48,7 +48,7 @@ type mockBatch struct {
 	sendFunc    func() error
 }
 
-func (m *mockBatch) Abort() error    { return nil }
+func (m *mockBatch) Abort() error { return nil }
 func (m *mockBatch) Append(_ ...any) error {
 	m.mu.Lock()
 	m.appendCount++

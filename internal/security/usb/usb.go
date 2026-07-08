@@ -196,6 +196,12 @@ type Monitor struct {
 	pollInterval time.Duration
 	netlink      *netlinkSocket
 	onEvent      func(*Event)
+
+	// sendMu guards sends on events against close(events) in Stop:
+	// senders hold the read lock, Stop takes the write lock before closing.
+	sendMu   sync.RWMutex
+	closed   bool
+	stopOnce sync.Once
 }
 
 // Config holds monitor configuration.
@@ -281,13 +287,21 @@ func (m *Monitor) Start() error {
 	return nil
 }
 
-// Stop stops the USB monitor.
+// Stop stops the USB monitor. It is safe to call multiple times.
 func (m *Monitor) Stop() {
-	m.cancel()
-	if m.netlink != nil {
-		m.netlink.close()
-	}
-	close(m.events)
+	m.stopOnce.Do(func() {
+		m.cancel()
+		if m.netlink != nil {
+			m.netlink.close()
+		}
+
+		// Block until no emitEvent is mid-send, then close the channel so
+		// in-flight sends can never hit a closed channel.
+		m.sendMu.Lock()
+		m.closed = true
+		close(m.events)
+		m.sendMu.Unlock()
+	})
 }
 
 // Events returns the event channel.
@@ -701,12 +715,16 @@ func (m *Monitor) AuthorizeDevice(sysPath string) error {
 
 // emitEvent sends an event to listeners.
 func (m *Monitor) emitEvent(event *Event) {
-	// Send to channel (non-blocking)
-	select {
-	case m.events <- event:
-	default:
-		m.logger.Warn("event channel full, dropping event")
+	// Send to channel (non-blocking), unless the monitor has been stopped
+	m.sendMu.RLock()
+	if !m.closed {
+		select {
+		case m.events <- event:
+		default:
+			m.logger.Warn("event channel full, dropping event")
+		}
 	}
+	m.sendMu.RUnlock()
 
 	// Call callback if set
 	m.mu.RLock()

@@ -15,6 +15,42 @@ import (
 	"boundary-siem/internal/api/reports"
 )
 
+// testAdminPassword is the admin password used by tests. The auth service no
+// longer ships a hard-coded default password; tests provide one via the
+// BOUNDARY_ADMIN_PASSWORD environment variable before constructing the service.
+const testAdminPassword = "Admin@123!Test"
+
+// newTestAuthService creates an auth service whose default admin user has a
+// known password.
+func newTestAuthService(t *testing.T, logger *slog.Logger) *auth.AuthService {
+	t.Helper()
+	t.Setenv("BOUNDARY_ADMIN_PASSWORD", testAdminPassword)
+	return auth.NewAuthService(logger)
+}
+
+// loginTestAdmin logs in as the default admin and returns the session token.
+// The login endpoint delivers the token via an HttpOnly session_token cookie
+// rather than in the JSON body.
+func loginTestAdmin(t *testing.T, mux *http.ServeMux) string {
+	t.Helper()
+	body := `{"username": "admin", "password": "` + testAdminPassword + `", "tenant_id": "default"}`
+	req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("login failed with status %d", rec.Code)
+	}
+	for _, cookie := range rec.Result().Cookies() {
+		if cookie.Name == "session_token" {
+			return cookie.Value
+		}
+	}
+	t.Fatal("expected session_token cookie in login response")
+	return ""
+}
+
 // Dashboard API Tests
 
 func TestDashboardAPI(t *testing.T) {
@@ -206,7 +242,7 @@ func TestDashboardWidgetTypes(t *testing.T) {
 
 func TestAuthService(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	svc := auth.NewAuthService(logger)
+	svc := newTestAuthService(t, logger)
 
 	t.Run("GetDefaultUser", func(t *testing.T) {
 		user, exists := svc.GetUser("admin")
@@ -230,7 +266,7 @@ func TestAuthService(t *testing.T) {
 
 	t.Run("Authenticate", func(t *testing.T) {
 		// Test with correct default password
-		user, err := svc.Authenticate("admin", "Admin@123!", "default")
+		user, err := svc.Authenticate("admin", testAdminPassword, "default")
 		if err != nil {
 			t.Fatalf("authentication failed: %v", err)
 		}
@@ -354,13 +390,13 @@ func TestAuthService(t *testing.T) {
 
 func TestAuthHTTPEndpoints(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	svc := auth.NewAuthService(logger)
+	svc := newTestAuthService(t, logger)
 	mux := http.NewServeMux()
 	svc.RegisterRoutes(mux)
 
 	t.Run("POST /api/auth/login", func(t *testing.T) {
 		// Test successful login with correct password
-		body := `{"username": "admin", "password": "Admin@123!", "tenant_id": "default"}`
+		body := `{"username": "admin", "password": "` + testAdminPassword + `", "tenant_id": "default"}`
 		req := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(body))
 		req.Header.Set("Content-Type", "application/json")
 		rec := httptest.NewRecorder()
@@ -375,8 +411,19 @@ func TestAuthHTTPEndpoints(t *testing.T) {
 			t.Fatalf("failed to decode response: %v", err)
 		}
 
-		if result["token"] == nil {
-			t.Error("expected token in response")
+		if result["csrf_token"] == nil {
+			t.Error("expected csrf_token in response")
+		}
+
+		// The session token is delivered via an HttpOnly cookie, not the body
+		var sessionCookie bool
+		for _, cookie := range rec.Result().Cookies() {
+			if cookie.Name == "session_token" && cookie.Value != "" {
+				sessionCookie = true
+			}
+		}
+		if !sessionCookie {
+			t.Error("expected session_token cookie in response")
 		}
 	})
 
@@ -392,8 +439,11 @@ func TestAuthHTTPEndpoints(t *testing.T) {
 		}
 	})
 
+	token := loginTestAdmin(t, mux)
+
 	t.Run("GET /api/users", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/users", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -413,6 +463,7 @@ func TestAuthHTTPEndpoints(t *testing.T) {
 
 	t.Run("GET /api/tenants", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/tenants", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -432,6 +483,7 @@ func TestAuthHTTPEndpoints(t *testing.T) {
 
 	t.Run("GET /api/audit", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/audit", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 
@@ -443,7 +495,7 @@ func TestAuthHTTPEndpoints(t *testing.T) {
 
 func TestAuthRoles(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	svc := auth.NewAuthService(logger)
+	svc := newTestAuthService(t, logger)
 
 	roles := []auth.Role{
 		auth.RoleAdmin,
@@ -718,7 +770,7 @@ func TestFullAPIIntegration(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
 	dashboardAPI := dashboard.NewDashboardAPI()
-	authSvc := auth.NewAuthService(logger)
+	authSvc := newTestAuthService(t, logger)
 	reportSvc := reports.NewReportService()
 
 	mux := http.NewServeMux()
@@ -728,20 +780,9 @@ func TestFullAPIIntegration(t *testing.T) {
 
 	// Test login and get session
 	t.Run("LoginAndGetSession", func(t *testing.T) {
-		// Login with correct default password
-		loginBody := `{"username": "admin", "password": "Admin@123!", "tenant_id": "default"}`
-		loginReq := httptest.NewRequest("POST", "/api/auth/login", strings.NewReader(loginBody))
-		loginReq.Header.Set("Content-Type", "application/json")
-		loginRec := httptest.NewRecorder()
-		mux.ServeHTTP(loginRec, loginReq)
-
-		if loginRec.Code != http.StatusOK {
-			t.Fatalf("login failed with status %d", loginRec.Code)
-		}
-
-		var loginResult map[string]interface{}
-		json.NewDecoder(loginRec.Body).Decode(&loginResult)
-		token := loginResult["token"].(string)
+		// Login with correct default password; the session token arrives
+		// via the session_token cookie
+		token := loginTestAdmin(t, mux)
 
 		// Get session
 		sessionReq := httptest.NewRequest("GET", "/api/auth/session", nil)

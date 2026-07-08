@@ -14,11 +14,11 @@ import (
 
 // EscalationPolicy defines how unacknowledged alerts escalate over time.
 type EscalationPolicy struct {
-	ID       string           `yaml:"id" json:"id"`
-	Name     string           `yaml:"name" json:"name"`
-	Enabled  bool             `yaml:"enabled" json:"enabled"`
+	ID       string                `yaml:"id" json:"id"`
+	Name     string                `yaml:"name" json:"name"`
+	Enabled  bool                  `yaml:"enabled" json:"enabled"`
 	Severity *correlation.Severity `yaml:"severity,omitempty" json:"severity,omitempty"` // nil = all severities
-	Rules    []EscalationRule `yaml:"rules" json:"rules"`
+	Rules    []EscalationRule      `yaml:"rules" json:"rules"`
 }
 
 // EscalationRule defines a single escalation step.
@@ -30,15 +30,15 @@ type EscalationRule struct {
 
 // SuppressionWindow defines a time window during which alerting is suppressed.
 type SuppressionWindow struct {
-	ID          string     `yaml:"id" json:"id"`
-	Name        string     `yaml:"name" json:"name"`
-	Enabled     bool       `yaml:"enabled" json:"enabled"`
-	StartTime   time.Time  `yaml:"start_time" json:"start_time"`
-	EndTime     time.Time  `yaml:"end_time" json:"end_time"`
-	RuleIDs     []string   `yaml:"rule_ids,omitempty" json:"rule_ids,omitempty"`     // Empty = all rules
-	Severities  []string   `yaml:"severities,omitempty" json:"severities,omitempty"` // Empty = all severities
-	CreatedBy   string     `yaml:"created_by" json:"created_by"`
-	Description string     `yaml:"description" json:"description"`
+	ID          string    `yaml:"id" json:"id"`
+	Name        string    `yaml:"name" json:"name"`
+	Enabled     bool      `yaml:"enabled" json:"enabled"`
+	StartTime   time.Time `yaml:"start_time" json:"start_time"`
+	EndTime     time.Time `yaml:"end_time" json:"end_time"`
+	RuleIDs     []string  `yaml:"rule_ids,omitempty" json:"rule_ids,omitempty"`     // Empty = all rules
+	Severities  []string  `yaml:"severities,omitempty" json:"severities,omitempty"` // Empty = all severities
+	CreatedBy   string    `yaml:"created_by" json:"created_by"`
+	Description string    `yaml:"description" json:"description"`
 }
 
 // EscalationEngine monitors alerts and triggers escalations.

@@ -43,15 +43,15 @@ type BaselineConfig struct {
 
 // BaselineEngine computes rolling statistics for rule metrics.
 type BaselineEngine struct {
-	mu       sync.RWMutex
-	metrics  map[string]*metricStore // key: ruleID:groupKey:metric
-	started  time.Time
+	mu      sync.RWMutex
+	metrics map[string]*metricStore // key: ruleID:groupKey:metric
+	started time.Time
 }
 
 type metricStore struct {
-	mu       sync.Mutex
-	samples  []timedSample
-	maxAge   time.Duration
+	mu      sync.Mutex
+	samples []timedSample
+	maxAge  time.Duration
 }
 
 type timedSample struct {
