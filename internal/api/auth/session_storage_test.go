@@ -2,9 +2,18 @@ package auth
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 )
+
+// mustStore stores a session and fails the test if storage rejects it.
+func mustStore(t *testing.T, ctx context.Context, storage SessionStorage, session *Session) {
+	t.Helper()
+	if err := storage.Store(ctx, session); err != nil {
+		t.Fatalf("failed to store session %q: %v", session.ID, err)
+	}
+}
 
 // TestMemorySessionStorage_Store tests storing sessions in memory.
 func TestMemorySessionStorage_Store(t *testing.T) {
@@ -59,7 +68,7 @@ func TestMemorySessionStorage_Get(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
 
-	storage.Store(ctx, session)
+	mustStore(t, ctx, storage, session)
 
 	retrieved, err := storage.Get(ctx, session.Token)
 	if err != nil {
@@ -83,7 +92,7 @@ func TestMemorySessionStorage_GetExpired(t *testing.T) {
 		ExpiresAt: time.Now().Add(-1 * time.Hour), // Expired 1 hour ago
 	}
 
-	storage.Store(ctx, session)
+	mustStore(t, ctx, storage, session)
 
 	// Attempt to get expired session
 	_, err := storage.Get(ctx, session.Token)
@@ -105,7 +114,7 @@ func TestMemorySessionStorage_Delete(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
 
-	storage.Store(ctx, session)
+	mustStore(t, ctx, storage, session)
 
 	// Verify session exists
 	_, err := storage.Get(ctx, session.Token)
@@ -156,9 +165,9 @@ func TestMemorySessionStorage_DeleteByUserID(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
 
-	storage.Store(ctx, session1)
-	storage.Store(ctx, session2)
-	storage.Store(ctx, session3)
+	mustStore(t, ctx, storage, session1)
+	mustStore(t, ctx, storage, session2)
+	mustStore(t, ctx, storage, session3)
 
 	// Delete all sessions for user-123
 	err := storage.DeleteByUserID(ctx, userID)
@@ -213,9 +222,9 @@ func TestMemorySessionStorage_GetByUserID(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
 
-	storage.Store(ctx, session1)
-	storage.Store(ctx, session2)
-	storage.Store(ctx, session3)
+	mustStore(t, ctx, storage, session1)
+	mustStore(t, ctx, storage, session2)
+	mustStore(t, ctx, storage, session3)
 
 	// Get sessions for user-123
 	sessions, err := storage.GetByUserID(ctx, userID)
@@ -254,7 +263,7 @@ func TestMemorySessionStorage_UpdateActivity(t *testing.T) {
 		LastActiveAt: initialTime,
 	}
 
-	storage.Store(ctx, session)
+	mustStore(t, ctx, storage, session)
 
 	// Wait a bit to ensure time difference
 	time.Sleep(10 * time.Millisecond)
@@ -295,7 +304,7 @@ func TestMemorySessionStorage_Count(t *testing.T) {
 			CreatedAt: time.Now(),
 			ExpiresAt: time.Now().Add(1 * time.Hour),
 		}
-		storage.Store(ctx, session)
+		mustStore(t, ctx, storage, session)
 	}
 
 	count, err = storage.Count(ctx)
@@ -313,7 +322,7 @@ func TestMemorySessionStorage_Count(t *testing.T) {
 		CreatedAt: time.Now().Add(-2 * time.Hour),
 		ExpiresAt: time.Now().Add(-1 * time.Hour),
 	}
-	storage.Store(ctx, expiredSession)
+	mustStore(t, ctx, storage, expiredSession)
 
 	count, err = storage.Count(ctx)
 	if err != nil {
@@ -345,8 +354,8 @@ func TestMemorySessionStorage_CleanupExpired(t *testing.T) {
 		ExpiresAt: time.Now().Add(-1 * time.Hour),
 	}
 
-	storage.Store(ctx, validSession)
-	storage.Store(ctx, expiredSession)
+	mustStore(t, ctx, storage, validSession)
+	mustStore(t, ctx, storage, expiredSession)
 
 	// Cleanup expired sessions
 	err := storage.CleanupExpired(ctx)
@@ -419,6 +428,43 @@ func TestRedisSessionStorage_Mock(t *testing.T) {
 	}
 }
 
+// TestRedisSessionStorage_DoesNotPersistRefreshToken verifies the refresh
+// token is kept out of the serialized session written to Redis.
+func TestRedisSessionStorage_DoesNotPersistRefreshToken(t *testing.T) {
+	mockClient := NewMockRedisClient()
+	storage := NewRedisSessionStorage(mockClient, "test", 24*time.Hour)
+	ctx := context.Background()
+
+	session := &Session{
+		ID:           "session-123",
+		UserID:       "user-456",
+		Token:        "token-abc",
+		RefreshToken: "refresh-xyz",
+		CreatedAt:    time.Now(),
+		ExpiresAt:    time.Now().Add(1 * time.Hour),
+	}
+	mustStore(t, ctx, storage, session)
+
+	raw, err := mockClient.Get(ctx, storage.sessionKey(session.Token))
+	if err != nil {
+		t.Fatalf("expected stored session payload, got error: %v", err)
+	}
+	if strings.Contains(string(raw), session.RefreshToken) {
+		t.Errorf("refresh token persisted in session payload: %s", raw)
+	}
+
+	retrieved, err := storage.Get(ctx, session.Token)
+	if err != nil {
+		t.Fatalf("expected to retrieve session, got error: %v", err)
+	}
+	if retrieved.Token != session.Token {
+		t.Errorf("expected Token %s, got %s", session.Token, retrieved.Token)
+	}
+	if retrieved.RefreshToken != "" {
+		t.Errorf("expected no refresh token after round-trip, got %q", retrieved.RefreshToken)
+	}
+}
+
 // TestRedisSessionStorage_GetByUserID tests getting sessions by user ID.
 func TestRedisSessionStorage_GetByUserID(t *testing.T) {
 	mockClient := NewMockRedisClient()
@@ -443,8 +489,8 @@ func TestRedisSessionStorage_GetByUserID(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
 
-	storage.Store(ctx, session1)
-	storage.Store(ctx, session2)
+	mustStore(t, ctx, storage, session1)
+	mustStore(t, ctx, storage, session2)
 
 	// Get sessions by user ID
 	sessions, err := storage.GetByUserID(ctx, userID)
@@ -481,8 +527,8 @@ func TestRedisSessionStorage_DeleteByUserID(t *testing.T) {
 		ExpiresAt: time.Now().Add(1 * time.Hour),
 	}
 
-	storage.Store(ctx, session1)
-	storage.Store(ctx, session2)
+	mustStore(t, ctx, storage, session1)
+	mustStore(t, ctx, storage, session2)
 
 	// Delete all user sessions
 	err := storage.DeleteByUserID(ctx, userID)

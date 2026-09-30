@@ -141,7 +141,7 @@ type Session struct {
 	UserID       string       `json:"user_id"`
 	TenantID     string       `json:"tenant_id"`
 	Token        string       `json:"token"`
-	RefreshToken string       `json:"refresh_token,omitempty"`
+	RefreshToken string       `json:"-"` // Sent to the client only in its HttpOnly cookie; never serialized (Redis session storage, API responses)
 	Provider     AuthProvider `json:"provider"`
 	IPAddress    string       `json:"ip_address"`
 	UserAgent    string       `json:"user_agent"`
@@ -538,10 +538,12 @@ type APIError struct {
 func writeJSONError(w http.ResponseWriter, statusCode int, code, message string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	json.NewEncoder(w).Encode(APIError{
+	if err := json.NewEncoder(w).Encode(APIError{
 		Code:    code,
 		Message: message,
-	})
+	}); err != nil {
+		slog.Error("failed to write error response", "error", err)
+	}
 }
 
 // maxAuthBodySize limits request body size on auth endpoints to prevent
@@ -627,11 +629,13 @@ func (s *AuthService) handleLogin(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"expires_at": session.ExpiresAt,
 		"user":       user,
 		"csrf_token": csrfToken,
-	})
+	}); err != nil {
+		s.logger.Error("failed to write login response", "error", err)
+	}
 }
 
 // handleLogout handles logout requests.
@@ -693,7 +697,9 @@ func (s *AuthService) handleLogout(w http.ResponseWriter, r *http.Request) {
 	})
 
 	w.WriteHeader(http.StatusOK)
-	json.NewEncoder(w).Encode(map[string]string{"status": "logged out"})
+	if err := json.NewEncoder(w).Encode(map[string]string{"status": "logged out"}); err != nil {
+		s.logger.Error("failed to write logout response", "error", err)
+	}
 }
 
 // handleSession returns current session info.
@@ -715,10 +721,12 @@ func (s *AuthService) handleSession(w http.ResponseWriter, r *http.Request) {
 	s.mu.RUnlock()
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"session": session,
 		"user":    user,
-	})
+	}); err != nil {
+		s.logger.Error("failed to write session response", "error", err)
+	}
 }
 
 // handleOAuthCallback handles OAuth callback.
@@ -766,7 +774,9 @@ func (s *AuthService) handleUsers(w http.ResponseWriter, r *http.Request) {
 		s.mu.RUnlock()
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(users)
+		if err := json.NewEncoder(w).Encode(users); err != nil {
+			s.logger.Error("failed to write users response", "error", err)
+		}
 
 	case http.MethodPost:
 		// Validate CSRF token for state-changing operation
@@ -839,7 +849,9 @@ func (s *AuthService) handleUsers(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(user)
+		if err := json.NewEncoder(w).Encode(user); err != nil {
+			s.logger.Error("failed to write user response", "error", err)
+		}
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -877,7 +889,9 @@ func (s *AuthService) handleTenants(w http.ResponseWriter, r *http.Request) {
 		s.mu.RUnlock()
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(tenants)
+		if err := json.NewEncoder(w).Encode(tenants); err != nil {
+			s.logger.Error("failed to write tenants response", "error", err)
+		}
 
 	case http.MethodPost:
 		// Validate CSRF token for state-changing operation
@@ -906,7 +920,9 @@ func (s *AuthService) handleTenants(w http.ResponseWriter, r *http.Request) {
 
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(tenant)
+		if err := json.NewEncoder(w).Encode(tenant); err != nil {
+			s.logger.Error("failed to write tenant response", "error", err)
+		}
 
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -979,12 +995,14 @@ func (s *AuthService) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
+	if err := json.NewEncoder(w).Encode(map[string]interface{}{
 		"entries": entries,
 		"total":   total,
 		"limit":   limit,
 		"offset":  offset,
-	})
+	}); err != nil {
+		s.logger.Error("failed to write audit log response", "error", err)
+	}
 }
 
 // AuthError represents an authentication error with additional context.
@@ -1356,7 +1374,9 @@ func (s *AuthService) persistAuditEntry(entry *AuditLogEntry) {
 	}
 	defer f.Close()
 
-	f.Write(append(data, '\n'))
+	if _, err := f.Write(append(data, '\n')); err != nil {
+		s.logger.Error("failed to persist audit entry", "error", err)
+	}
 }
 
 // getUserByIDLocked finds a user by ID. Caller must hold at least a read lock.
@@ -1597,13 +1617,17 @@ func getClientIP(r *http.Request) string {
 	return host
 }
 
+// adminBootstrapDir is the directory that receives the generated admin password file.
+// It is a variable only so tests can redirect it away from the system location.
+var adminBootstrapDir = "/var/lib/boundary-siem"
+
 // writePasswordToSecureFile writes a generated password to a secure file with restricted permissions.
 // The file is created with 0600 permissions (read/write for owner only) to prevent unauthorized access.
 func writePasswordToSecureFile(username, password string) error {
 	// Create secure directory if it doesn't exist
-	secureDir := "/var/lib/boundary-siem"
+	secureDir := adminBootstrapDir
 	if err := os.MkdirAll(secureDir, 0700); err != nil {
-		// Fallback to current directory if /var/lib is not writable
+		// Fallback to current directory if the secure directory is not writable
 		secureDir = "."
 	}
 

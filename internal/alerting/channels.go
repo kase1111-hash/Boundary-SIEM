@@ -657,15 +657,15 @@ func (e *EmailChannel) buildMIMEMessage(subject, textBody, htmlBody string) []by
 	boundary := "boundary-siem-alert-" + fmt.Sprintf("%d", time.Now().UnixNano())
 
 	// Headers
-	buf.WriteString(fmt.Sprintf("From: %s\r\n", e.config.From))
-	buf.WriteString(fmt.Sprintf("To: %s\r\n", strings.Join(e.config.To, ", ")))
-	buf.WriteString(fmt.Sprintf("Subject: =?UTF-8?B?%s?=\r\n", base64.StdEncoding.EncodeToString([]byte(subject))))
+	fmt.Fprintf(&buf, "From: %s\r\n", e.config.From)
+	fmt.Fprintf(&buf, "To: %s\r\n", strings.Join(e.config.To, ", "))
+	fmt.Fprintf(&buf, "Subject: =?UTF-8?B?%s?=\r\n", base64.StdEncoding.EncodeToString([]byte(subject)))
 	buf.WriteString("MIME-Version: 1.0\r\n")
-	buf.WriteString(fmt.Sprintf("Content-Type: multipart/alternative; boundary=\"%s\"\r\n", boundary))
+	fmt.Fprintf(&buf, "Content-Type: multipart/alternative; boundary=\"%s\"\r\n", boundary)
 	buf.WriteString("\r\n")
 
 	// Plain text part
-	buf.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	fmt.Fprintf(&buf, "--%s\r\n", boundary)
 	buf.WriteString("Content-Type: text/plain; charset=UTF-8\r\n")
 	buf.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
 	buf.WriteString("\r\n")
@@ -673,7 +673,7 @@ func (e *EmailChannel) buildMIMEMessage(subject, textBody, htmlBody string) []by
 	buf.WriteString("\r\n")
 
 	// HTML part
-	buf.WriteString(fmt.Sprintf("--%s\r\n", boundary))
+	fmt.Fprintf(&buf, "--%s\r\n", boundary)
 	buf.WriteString("Content-Type: text/html; charset=UTF-8\r\n")
 	buf.WriteString("Content-Transfer-Encoding: quoted-printable\r\n")
 	buf.WriteString("\r\n")
@@ -681,7 +681,7 @@ func (e *EmailChannel) buildMIMEMessage(subject, textBody, htmlBody string) []by
 	buf.WriteString("\r\n")
 
 	// End boundary
-	buf.WriteString(fmt.Sprintf("--%s--\r\n", boundary))
+	fmt.Fprintf(&buf, "--%s--\r\n", boundary)
 
 	return buf.Bytes()
 }
@@ -689,32 +689,32 @@ func (e *EmailChannel) buildMIMEMessage(subject, textBody, htmlBody string) []by
 func (e *EmailChannel) buildTextBody(alert *Alert) string {
 	var buf bytes.Buffer
 
-	buf.WriteString(fmt.Sprintf("SECURITY ALERT: %s\n", alert.Title))
-	buf.WriteString(fmt.Sprintf("Severity: %s\n", strings.ToUpper(string(alert.Severity))))
-	buf.WriteString(fmt.Sprintf("Time: %s\n", alert.CreatedAt.Format("2006-01-02 15:04:05 UTC")))
+	fmt.Fprintf(&buf, "SECURITY ALERT: %s\n", alert.Title)
+	fmt.Fprintf(&buf, "Severity: %s\n", strings.ToUpper(string(alert.Severity)))
+	fmt.Fprintf(&buf, "Time: %s\n", alert.CreatedAt.Format("2006-01-02 15:04:05 UTC"))
 	buf.WriteString("\n")
-	buf.WriteString(fmt.Sprintf("Description:\n%s\n", alert.Description))
+	fmt.Fprintf(&buf, "Description:\n%s\n", alert.Description)
 	buf.WriteString("\n")
 	buf.WriteString("Details:\n")
-	buf.WriteString(fmt.Sprintf("  - Alert ID: %s\n", alert.ID.String()))
-	buf.WriteString(fmt.Sprintf("  - Rule ID: %s\n", alert.RuleID))
-	buf.WriteString(fmt.Sprintf("  - Event Count: %d\n", alert.EventCount))
+	fmt.Fprintf(&buf, "  - Alert ID: %s\n", alert.ID.String())
+	fmt.Fprintf(&buf, "  - Rule ID: %s\n", alert.RuleID)
+	fmt.Fprintf(&buf, "  - Event Count: %d\n", alert.EventCount)
 
 	if alert.GroupKey != "" {
-		buf.WriteString(fmt.Sprintf("  - Group Key: %s\n", alert.GroupKey))
+		fmt.Fprintf(&buf, "  - Group Key: %s\n", alert.GroupKey)
 	}
 
 	if len(alert.Tags) > 0 {
-		buf.WriteString(fmt.Sprintf("  - Tags: %s\n", strings.Join(alert.Tags, ", ")))
+		fmt.Fprintf(&buf, "  - Tags: %s\n", strings.Join(alert.Tags, ", "))
 	}
 
 	if alert.MITRE != nil {
 		buf.WriteString("\n")
 		buf.WriteString("MITRE ATT&CK:\n")
-		buf.WriteString(fmt.Sprintf("  - Tactic: %s (%s)\n", alert.MITRE.TacticName, alert.MITRE.TacticID))
-		buf.WriteString(fmt.Sprintf("  - Technique: %s\n", alert.MITRE.TechniqueID))
+		fmt.Fprintf(&buf, "  - Tactic: %s (%s)\n", alert.MITRE.TacticName, alert.MITRE.TacticID)
+		fmt.Fprintf(&buf, "  - Technique: %s\n", alert.MITRE.TechniqueID)
 		if len(alert.MITRE.Techniques) > 0 {
-			buf.WriteString(fmt.Sprintf("  - Related Techniques: %s\n", strings.Join(alert.MITRE.Techniques, ", ")))
+			fmt.Fprintf(&buf, "  - Related Techniques: %s\n", strings.Join(alert.MITRE.Techniques, ", "))
 		}
 	}
 

@@ -515,7 +515,9 @@ func TestAuthRoles(t *testing.T) {
 				Roles:    []auth.Role{role},
 				TenantID: "default",
 			}
-			svc.CreateUser(user)
+			if err := svc.CreateUser(user); err != nil {
+				t.Fatalf("failed to create user with role %s: %v", role, err)
+			}
 
 			created, exists := svc.GetUser(user.ID)
 			if !exists {

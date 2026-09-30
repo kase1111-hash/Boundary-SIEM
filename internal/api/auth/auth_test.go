@@ -53,6 +53,8 @@ func newTestAuthService(logger *slog.Logger) *AuthService {
 
 // TestNewAuthService tests the creation of a new auth service.
 func TestNewAuthService(t *testing.T) {
+	// No admin password is configured, so one is generated and written out.
+	useTempAdminBootstrapDir(t)
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
 	svc := NewAuthService(logger)
 
@@ -224,7 +226,9 @@ func TestAuthenticate_AccountLockoutExpiry(t *testing.T) {
 
 	// Lock the account
 	for i := 0; i < maxFailedAttempts; i++ {
-		svc.Authenticate("admin", "wrongpassword", "default")
+		if _, err := svc.Authenticate("admin", "wrongpassword", "default"); err == nil {
+			t.Fatal("expected authentication with wrong password to fail")
+		}
 	}
 
 	// Manually expire the lockout (simulate time passage)
@@ -294,13 +298,19 @@ func TestAuthenticate_TimingAttackResistance(t *testing.T) {
 	for i := 0; i < iterations; i++ {
 		// Measure time for non-existent user
 		start1 := time.Now()
-		svc.Authenticate("nonexistent", "password123", "default")
+		_, err1 := svc.Authenticate("nonexistent", "password123", "default")
 		duration1Total += time.Since(start1)
+		if err1 == nil {
+			t.Fatal("expected authentication of non-existent user to fail")
+		}
 
 		// Measure time for existing user with wrong password
 		start2 := time.Now()
-		svc.Authenticate("admin", "wrongpassword", "default")
+		_, err2 := svc.Authenticate("admin", "wrongpassword", "default")
 		duration2Total += time.Since(start2)
+		if err2 == nil {
+			t.Fatal("expected authentication with wrong password to fail")
+		}
 	}
 
 	avgDuration1 := duration1Total / iterations
@@ -656,6 +666,38 @@ func TestCreateTenant(t *testing.T) {
 	}
 }
 
+// TestHandleSession_OmitsRefreshToken verifies the session endpoint never
+// returns the refresh token, which is only delivered via its HttpOnly cookie.
+func TestHandleSession_OmitsRefreshToken(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	svc := newTestAuthService(logger)
+
+	user, err := svc.Authenticate("admin", testAdminPassword, "default")
+	if err != nil {
+		t.Fatalf("authentication failed: %v", err)
+	}
+	session, err := svc.CreateSession(user, httptest.NewRequest(http.MethodPost, "/api/auth/login", nil))
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+	if session.RefreshToken == "" {
+		t.Fatal("expected a refresh token to be generated")
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+	req.Header.Set("Authorization", "Bearer "+session.Token)
+	w := httptest.NewRecorder()
+	svc.handleSession(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, w.Code)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, session.RefreshToken) || strings.Contains(body, "refresh_token") {
+		t.Errorf("session response exposes the refresh token: %s", body)
+	}
+}
+
 // TestHandleLogin tests the login HTTP handler.
 func TestHandleLogin(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
@@ -726,7 +768,9 @@ func TestHandleLogin(t *testing.T) {
 
 			if tt.wantToken {
 				var resp map[string]interface{}
-				json.NewDecoder(w.Body).Decode(&resp)
+				if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+					t.Fatalf("failed to decode login response: %v", err)
+				}
 
 				// Session token is now set as an HttpOnly cookie, not in JSON body
 				var hasSessionCookie bool
@@ -877,7 +921,9 @@ func TestRequirePermission(t *testing.T) {
 		TenantID:     "default",
 		Provider:     AuthProviderLocal,
 	}
-	svc.CreateUser(viewer)
+	if err := svc.CreateUser(viewer); err != nil {
+		t.Fatalf("failed to create viewer user: %v", err)
+	}
 
 	// Test with permission viewer has (read)
 	handler1 := svc.RequirePermission(PermissionRead)(testHandler)
@@ -1095,7 +1141,9 @@ func TestMultiTenancyIsolation(t *testing.T) {
 			RetentionDays:   30,
 		},
 	}
-	svc.CreateTenant(tenant2)
+	if err := svc.CreateTenant(tenant2); err != nil {
+		t.Fatalf("failed to create tenant2: %v", err)
+	}
 
 	// Create user in tenant2
 	passwordHash, _ := HashPassword("Test@123")
@@ -1107,7 +1155,9 @@ func TestMultiTenancyIsolation(t *testing.T) {
 		TenantID:     "tenant2",
 		Provider:     AuthProviderLocal,
 	}
-	svc.CreateUser(tenant2User)
+	if err := svc.CreateUser(tenant2User); err != nil {
+		t.Fatalf("failed to create tenant2 user: %v", err)
+	}
 
 	// Try to authenticate tenant2 user with default tenant
 	_, err := svc.Authenticate("tenant2user", "Test@123", "default")

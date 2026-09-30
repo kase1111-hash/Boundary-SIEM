@@ -4,9 +4,21 @@ import (
 	"bytes"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// useTempAdminBootstrapDir redirects the generated admin password file to a
+// per-test directory so tests neither need root nor write into the source tree.
+func useTempAdminBootstrapDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	orig := adminBootstrapDir
+	adminBootstrapDir = dir
+	t.Cleanup(func() { adminBootstrapDir = orig })
+	return dir
+}
 
 // TestPasswordStrengthValidation tests the password strength validation function.
 func TestPasswordStrengthValidation(t *testing.T) {
@@ -215,6 +227,7 @@ func TestInitDefaultUsers_WithEnvironmentVariable(t *testing.T) {
 func TestInitDefaultUsers_RandomPassword(t *testing.T) {
 	// Ensure env var is not set
 	os.Unsetenv("BOUNDARY_ADMIN_PASSWORD")
+	passwordDir := useTempAdminBootstrapDir(t)
 
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
@@ -245,6 +258,15 @@ func TestInitDefaultUsers_RandomPassword(t *testing.T) {
 	logOutput := logBuf.String()
 	if !strings.Contains(logOutput, "admin password saved to secure file") {
 		t.Error("expected log message about generated password")
+	}
+
+	// Verify the credentials file was written owner-only
+	info, err := os.Stat(filepath.Join(passwordDir, "admin-password.txt"))
+	if err != nil {
+		t.Fatalf("expected generated password file: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm != 0600 {
+		t.Errorf("expected password file mode 0600, got %o", perm)
 	}
 
 	// Note: We can't easily test the actual password here since it's random
@@ -335,7 +357,9 @@ func TestRequirePasswordChange_Field(t *testing.T) {
 		RequirePasswordChange: true,
 	}
 
-	svc2.initDefaultUsers(config)
+	if err := svc2.initDefaultUsers(config); err != nil {
+		t.Fatalf("initDefaultUsers failed: %v", err)
+	}
 
 	admin2, exists := svc2.GetUserByUsername("admin2")
 	if !exists {
