@@ -2,6 +2,7 @@ package alerting
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -102,7 +103,12 @@ func (h *Handler) HandleGetAlert(w http.ResponseWriter, r *http.Request) {
 
 	alert, err := h.manager.GetAlert(ctx, id)
 	if err != nil {
-		h.writeError(w, http.StatusNotFound, "not_found", "alert not found")
+		if errors.Is(err, ErrAlertNotFound) {
+			h.writeError(w, http.StatusNotFound, "not_found", "alert not found")
+			return
+		}
+		slog.Error("failed to get alert", "alert_id", id, "error", err)
+		h.writeError(w, http.StatusInternalServerError, "get_error", "failed to get alert")
 		return
 	}
 
@@ -139,7 +145,7 @@ func (h *Handler) HandleAcknowledge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.manager.AcknowledgeAlert(ctx, id, req.User); err != nil {
-		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+		h.writeManagerError(w, err)
 		return
 	}
 
@@ -163,7 +169,7 @@ func (h *Handler) HandleResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.manager.ResolveAlert(ctx, id, req.User); err != nil {
-		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+		h.writeManagerError(w, err)
 		return
 	}
 
@@ -191,7 +197,7 @@ func (h *Handler) HandleAddNote(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.manager.AddNote(ctx, id, req.Author, req.Content); err != nil {
-		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+		h.writeManagerError(w, err)
 		return
 	}
 
@@ -215,7 +221,7 @@ func (h *Handler) HandleAssign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.manager.AssignAlert(ctx, id, req.Assignee); err != nil {
-		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+		h.writeManagerError(w, err)
 		return
 	}
 
@@ -232,6 +238,21 @@ func (h *Handler) writeJSON(w http.ResponseWriter, status int, data interface{})
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		slog.Error("failed to write response", "error", err)
+	}
+}
+
+// writeManagerError maps an error from a Manager lifecycle method to an HTTP
+// response: unknown alert -> 404, invalid status transition -> 409, anything
+// else (the alert store failed) -> 500.
+func (h *Handler) writeManagerError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrAlertNotFound):
+		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+	case errors.Is(err, ErrInvalidTransition):
+		h.writeError(w, http.StatusConflict, "invalid_transition", err.Error())
+	default:
+		slog.Error("alert storage error", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "storage_error", "alert storage error")
 	}
 }
 

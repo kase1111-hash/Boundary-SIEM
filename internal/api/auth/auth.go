@@ -722,10 +722,41 @@ func (s *AuthService) handleSession(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(map[string]interface{}{
-		"session": session,
+		"session": newSessionInfo(session),
 		"user":    user,
 	}); err != nil {
 		s.logger.Error("failed to write session response", "error", err)
+	}
+}
+
+// sessionInfo is the client-facing view of a Session. It deliberately omits
+// the access and refresh tokens: both are delivered only in HttpOnly cookies,
+// and echoing them in a JSON body would expose them to page scripts. Session
+// itself keeps its "token" JSON field because session storage (Redis)
+// serializes it.
+type sessionInfo struct {
+	ID           string       `json:"id"`
+	UserID       string       `json:"user_id"`
+	TenantID     string       `json:"tenant_id"`
+	Provider     AuthProvider `json:"provider"`
+	IPAddress    string       `json:"ip_address"`
+	UserAgent    string       `json:"user_agent"`
+	CreatedAt    time.Time    `json:"created_at"`
+	ExpiresAt    time.Time    `json:"expires_at"`
+	LastActiveAt time.Time    `json:"last_active_at"`
+}
+
+func newSessionInfo(session *Session) sessionInfo {
+	return sessionInfo{
+		ID:           session.ID,
+		UserID:       session.UserID,
+		TenantID:     session.TenantID,
+		Provider:     session.Provider,
+		IPAddress:    session.IPAddress,
+		UserAgent:    session.UserAgent,
+		CreatedAt:    session.CreatedAt,
+		ExpiresAt:    session.ExpiresAt,
+		LastActiveAt: session.LastActiveAt,
 	}
 }
 

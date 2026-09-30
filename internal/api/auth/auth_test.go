@@ -698,6 +698,71 @@ func TestHandleSession_OmitsRefreshToken(t *testing.T) {
 	}
 }
 
+// TestHandleSession_OmitsAccessToken verifies the session endpoint does not
+// echo the session (access) token. The token is delivered only in the
+// HttpOnly session_token cookie; returning it in the JSON body would let any
+// script on the page read it and defeat HttpOnly.
+func TestHandleSession_OmitsAccessToken(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))
+	svc := newTestAuthService(logger)
+
+	user, err := svc.Authenticate("admin", testAdminPassword, "default")
+	if err != nil {
+		t.Fatalf("authentication failed: %v", err)
+	}
+	session, err := svc.CreateSession(user, httptest.NewRequest(http.MethodPost, "/api/auth/login", nil))
+	if err != nil {
+		t.Fatalf("failed to create session: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		setup func(r *http.Request)
+	}{
+		{"bearer header", func(r *http.Request) { r.Header.Set("Authorization", "Bearer "+session.Token) }},
+		{"session cookie", func(r *http.Request) { r.AddCookie(&http.Cookie{Name: "session_token", Value: session.Token}) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
+			tt.setup(req)
+			w := httptest.NewRecorder()
+			svc.handleSession(w, req)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("expected status %d, got %d", http.StatusOK, w.Code)
+			}
+			body := w.Body.String()
+			if strings.Contains(body, session.Token) {
+				t.Errorf("session response exposes the session token: %s", body)
+			}
+
+			var resp struct {
+				Session map[string]interface{} `json:"session"`
+				User    map[string]interface{} `json:"user"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("failed to decode response: %v", err)
+			}
+			if _, ok := resp.Session["token"]; ok {
+				t.Errorf("session object must not contain a token field: %v", resp.Session)
+			}
+			// The non-secret session metadata must still be returned.
+			for _, key := range []string{"id", "user_id", "tenant_id", "expires_at"} {
+				if _, ok := resp.Session[key]; !ok {
+					t.Errorf("session object missing %q: %v", key, resp.Session)
+				}
+			}
+			if resp.Session["id"] != session.ID {
+				t.Errorf("expected session id %q, got %v", session.ID, resp.Session["id"])
+			}
+			if resp.User["username"] != "admin" {
+				t.Errorf("expected user admin, got %v", resp.User["username"])
+			}
+		})
+	}
+}
+
 // TestHandleLogin tests the login HTTP handler.
 func TestHandleLogin(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(bytes.NewBuffer(nil), nil))

@@ -522,14 +522,14 @@ func (l *LogChannel) Send(ctx context.Context, alert *Alert) error {
 
 // EmailConfig configures email notifications.
 type EmailConfig struct {
-	SMTPHost    string
-	SMTPPort    int
-	Username    string
-	Password    string
-	From        string
-	To          []string
-	UseTLS      bool
-	UseSTARTTLS bool
+	SMTPHost    string   `yaml:"smtp_host"`
+	SMTPPort    int      `yaml:"smtp_port"`
+	Username    string   `yaml:"username"`
+	Password    string   `yaml:"password"`
+	From        string   `yaml:"from"`
+	To          []string `yaml:"to"`
+	UseTLS      bool     `yaml:"use_tls"`
+	UseSTARTTLS bool     `yaml:"use_starttls"`
 }
 
 // EmailChannel sends alerts via SMTP email.

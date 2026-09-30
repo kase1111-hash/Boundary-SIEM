@@ -47,11 +47,23 @@ type EscalationEngine struct {
 	suppressions []SuppressionWindow
 	manager      *Manager
 	channels     map[string]NotificationChannel
-	escalated    map[string]map[int]bool // alertID -> ruleIndex -> escalated
+	escalated    map[string]map[escalationStep]bool // alertID -> policy step -> escalated
 	mu           sync.RWMutex
 	stopCh       chan struct{}
 	wg           sync.WaitGroup
 	notifySem    chan struct{} // semaphore to limit concurrent notification goroutines
+}
+
+// escalationStep identifies one rule of one policy. Tracking must include the
+// policy: rule indexes restart at 0 in every policy, so keying by rule index
+// alone lets one policy's step suppress another policy's step of the same
+// index. The policy's position is included alongside its ID so policies with
+// empty or duplicate IDs are still tracked separately (policies are only
+// ever appended, so positions are stable).
+type escalationStep struct {
+	policyIdx int
+	policyID  string
+	ruleIdx   int
 }
 
 // NewEscalationEngine creates a new escalation engine.
@@ -59,7 +71,7 @@ func NewEscalationEngine(manager *Manager) *EscalationEngine {
 	return &EscalationEngine{
 		manager:   manager,
 		channels:  make(map[string]NotificationChannel),
-		escalated: make(map[string]map[int]bool),
+		escalated: make(map[string]map[escalationStep]bool),
 		stopCh:    make(chan struct{}),
 		notifySem: make(chan struct{}, 50), // limit to 50 concurrent notification goroutines
 	}
@@ -202,7 +214,7 @@ func (e *EscalationEngine) checkEscalations(ctx context.Context) {
 	now := time.Now()
 
 	for _, alert := range alerts {
-		for _, policy := range policies {
+		for policyIdx, policy := range policies {
 			if !policy.Enabled {
 				continue
 			}
@@ -225,11 +237,13 @@ func (e *EscalationEngine) checkEscalations(ctx context.Context) {
 					continue
 				}
 
-				// Check if already escalated for this rule
+				step := escalationStep{policyIdx: policyIdx, policyID: policy.ID, ruleIdx: ruleIdx}
+
+				// Check if already escalated for this policy step
 				e.mu.RLock()
 				alreadyEscalated := false
 				if m, ok := e.escalated[alertKey]; ok {
-					alreadyEscalated = m[ruleIdx]
+					alreadyEscalated = m[step]
 				}
 				e.mu.RUnlock()
 
@@ -238,7 +252,7 @@ func (e *EscalationEngine) checkEscalations(ctx context.Context) {
 				}
 
 				// Trigger escalation
-				e.triggerEscalation(ctx, alert, &policy, ruleIdx, &rule)
+				e.triggerEscalation(ctx, alert, &policy, step, &rule)
 			}
 		}
 	}
@@ -247,15 +261,15 @@ func (e *EscalationEngine) checkEscalations(ctx context.Context) {
 	e.cleanupTracking()
 }
 
-func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, policy *EscalationPolicy, ruleIdx int, rule *EscalationRule) {
+func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, policy *EscalationPolicy, step escalationStep, rule *EscalationRule) {
 	alertKey := alert.ID.String()
 
 	// Mark as escalated
 	e.mu.Lock()
 	if _, ok := e.escalated[alertKey]; !ok {
-		e.escalated[alertKey] = make(map[int]bool)
+		e.escalated[alertKey] = make(map[escalationStep]bool)
 	}
-	e.escalated[alertKey][ruleIdx] = true
+	e.escalated[alertKey][step] = true
 	e.mu.Unlock()
 
 	slog.Warn("escalating alert",
