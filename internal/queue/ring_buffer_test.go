@@ -11,6 +11,22 @@ import (
 	"boundary-siem/internal/schema"
 )
 
+// mustPush pushes a test event and fails the test if the push is rejected.
+func mustPush(t *testing.T, rb *RingBuffer) {
+	t.Helper()
+	if err := rb.Push(newTestEvent()); err != nil {
+		t.Fatalf("Push() error = %v", err)
+	}
+}
+
+// mustPop pops an event and fails the test if the queue is empty or closed.
+func mustPop(t *testing.T, rb *RingBuffer) {
+	t.Helper()
+	if _, err := rb.Pop(); err != nil {
+		t.Fatalf("Pop() error = %v", err)
+	}
+}
+
 func newTestEvent() *schema.Event {
 	return &schema.Event{
 		EventID:   uuid.New(),
@@ -140,10 +156,10 @@ func TestRingBuffer_Wrap(t *testing.T) {
 
 	// Push 3, pop 2
 	for i := 0; i < 3; i++ {
-		rb.Push(newTestEvent())
+		mustPush(t, rb)
 	}
-	rb.Pop()
-	rb.Pop()
+	mustPop(t, rb)
+	mustPop(t, rb)
 
 	// Push 2 more (should wrap around)
 	for i := 0; i < 2; i++ {
@@ -164,12 +180,12 @@ func TestRingBuffer_IsEmpty(t *testing.T) {
 		t.Error("IsEmpty() = false for new buffer")
 	}
 
-	rb.Push(newTestEvent())
+	mustPush(t, rb)
 	if rb.IsEmpty() {
 		t.Error("IsEmpty() = true after Push")
 	}
 
-	rb.Pop()
+	mustPop(t, rb)
 	if !rb.IsEmpty() {
 		t.Error("IsEmpty() = false after Pop")
 	}
@@ -186,7 +202,7 @@ func TestRingBuffer_Metrics(t *testing.T) {
 
 	// Push 3 events
 	for i := 0; i < 3; i++ {
-		rb.Push(newTestEvent())
+		mustPush(t, rb)
 	}
 
 	m = rb.Metrics()
@@ -198,8 +214,8 @@ func TestRingBuffer_Metrics(t *testing.T) {
 	}
 
 	// Pop 2 events
-	rb.Pop()
-	rb.Pop()
+	mustPop(t, rb)
+	mustPop(t, rb)
 
 	m = rb.Metrics()
 	if m.Popped != 2 {
@@ -212,7 +228,7 @@ func TestRingBuffer_Metrics(t *testing.T) {
 
 func TestRingBuffer_Close(t *testing.T) {
 	rb := NewRingBuffer(10)
-	rb.Push(newTestEvent())
+	mustPush(t, rb)
 
 	rb.Close()
 
@@ -243,7 +259,9 @@ func TestRingBuffer_PopBlocking(t *testing.T) {
 	// Start a goroutine that will push an event after a delay
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		rb.Push(newTestEvent())
+		if err := rb.Push(newTestEvent()); err != nil {
+			t.Errorf("Push() error = %v", err)
+		}
 	}()
 
 	// PopBlocking should wait and return the event
@@ -279,7 +297,7 @@ func TestRingBuffer_PopWithTimeout(t *testing.T) {
 	})
 
 	t.Run("returns event if available", func(t *testing.T) {
-		rb.Push(newTestEvent())
+		mustPush(t, rb)
 
 		event, err := rb.PopWithTimeout(100 * time.Millisecond)
 		if err != nil {

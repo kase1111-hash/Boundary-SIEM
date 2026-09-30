@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"log/slog"
+	"math"
 	"sort"
 	"strings"
 )
@@ -167,10 +168,23 @@ func (m *Migrator) getAppliedMigrations(ctx context.Context) (map[int]bool, erro
 
 // recordMigration records a migration as applied.
 func (m *Migrator) recordMigration(ctx context.Context, version int, name string) error {
+	v, err := migrationVersionToUInt32(version)
+	if err != nil {
+		return err
+	}
 	return m.client.Exec(ctx,
 		"INSERT INTO schema_migrations (version, name) VALUES (?, ?)",
-		uint32(version), name,
+		v, name,
 	)
+}
+
+// migrationVersionToUInt32 converts a migration version to the UInt32
+// schema_migrations.version column, rejecting values that would not fit.
+func migrationVersionToUInt32(version int) (uint32, error) {
+	if version < 0 || int64(version) > math.MaxUint32 {
+		return 0, fmt.Errorf("migration version %d out of range for schema_migrations.version (UInt32)", version)
+	}
+	return uint32(version), nil
 }
 
 // splitStatements splits SQL content into individual statements.

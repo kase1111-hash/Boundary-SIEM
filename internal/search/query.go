@@ -268,6 +268,7 @@ func (p *Parser) Parse() (*Query, error) {
 	}
 
 	pendingParens := 0 // tracks open parens before next condition
+	depth := 0         // currently open parens; must never go negative
 
 	for p.current.Type != TokenEOF {
 		switch p.current.Type {
@@ -294,13 +295,21 @@ func (p *Parser) Parse() (*Query, error) {
 
 		case TokenLParen:
 			pendingParens++
+			depth++
 			p.advance()
 
 		case TokenRParen:
-			// Attach close paren to the last condition
-			if len(query.Conditions) > 0 {
+			switch {
+			case pendingParens > 0:
+				// Empty group "()" -- nothing to wrap
+				pendingParens--
+			case depth > 0 && len(query.Conditions) > 0:
+				// Attach close paren to the last condition
 				query.Conditions[len(query.Conditions)-1].CloseParens++
+			default:
+				return nil, fmt.Errorf("unbalanced parentheses: unexpected ')'")
 			}
+			depth--
 			p.advance()
 
 		case TokenNot:
@@ -327,6 +336,10 @@ func (p *Parser) Parse() (*Query, error) {
 		default:
 			p.advance()
 		}
+	}
+
+	if depth != 0 {
+		return nil, fmt.Errorf("unbalanced parentheses: missing ')'")
 	}
 
 	return query, nil
@@ -408,11 +421,10 @@ func parseDuration(s string) (time.Duration, bool) {
 		return 0, true
 	}
 
-	if s[0] == '-' {
+	switch s[0] {
+	case '-', '+':
 		s = s[1:]
-	} else if s[0] == '+' {
-		s = s[1:]
-	} else {
+	default:
 		return 0, false
 	}
 

@@ -6,6 +6,8 @@ import (
 	"crypto/tls"
 	"database/sql"
 	"fmt"
+	"log/slog"
+	"os"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -68,7 +70,11 @@ func NewClickHouseClient(cfg ClickHouseConfig) (*ClickHouseClient, error) {
 		MaxOpenConns:    cfg.MaxOpenConns,
 		MaxIdleConns:    cfg.MaxIdleConns,
 		ConnMaxLifetime: cfg.ConnMaxLifetime,
-		Debug:           cfg.Debug,
+	}
+
+	if cfg.Debug {
+		// Driver debug logging to stdout; replaces the deprecated Options.Debug.
+		opts.Logger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	}
 
 	if cfg.TLSEnabled {

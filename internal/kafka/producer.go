@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -19,7 +18,6 @@ type Producer struct {
 	logger  *slog.Logger
 	metrics *producerMetrics
 	closed  atomic.Bool
-	mu      sync.RWMutex
 }
 
 type producerMetrics struct {

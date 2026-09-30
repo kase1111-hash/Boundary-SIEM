@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"math"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -214,7 +215,7 @@ func (bw *BatchWriter) insertBatch(events []*schema.Event) error {
 			event.Action,
 			event.Target,
 			string(event.Outcome),
-			uint8(event.Severity),
+			severityToUInt8(event.Severity),
 			event.SchemaVersion,
 			event.RequestID,
 			event.Raw,
@@ -231,6 +232,19 @@ func (bw *BatchWriter) insertBatch(events []*schema.Event) error {
 
 	slog.Debug("batch inserted", "count", len(events))
 	return nil
+}
+
+// severityToUInt8 converts an event severity to the UInt8 severity column.
+// Validated events are always within 1-10, but events reaching the writer
+// without validation are clamped so they cannot wrap (e.g. 256 -> 0, -1 -> 255).
+func severityToUInt8(severity int) uint8 {
+	if severity < 0 {
+		return 0
+	}
+	if severity > math.MaxUint8 {
+		return math.MaxUint8
+	}
+	return uint8(severity)
 }
 
 // Flush forces a flush of the current buffer.

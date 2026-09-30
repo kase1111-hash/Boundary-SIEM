@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -404,6 +405,9 @@ type ObjectInfo struct {
 	StorageClass string
 }
 
+// maxKeysPerPage is the most keys S3 returns in a single ListObjectsV2 page.
+const maxKeysPerPage = 1000
+
 // List lists objects with the given prefix.
 func (c *Client) List(ctx context.Context, prefix string, maxKeys int) ([]ObjectInfo, error) {
 	fullPrefix := c.config.Prefix + prefix
@@ -414,7 +418,10 @@ func (c *Client) List(ctx context.Context, prefix string, maxKeys int) ([]Object
 	}
 
 	if maxKeys > 0 {
-		input.MaxKeys = aws.Int32(int32(maxKeys))
+		// maxKeys caps the total result (enforced below); the page size
+		// cannot usefully exceed what S3 returns per page anyway.
+		pageSize := min(maxKeys, maxKeysPerPage)
+		input.MaxKeys = aws.Int32(int32(pageSize))
 	}
 
 	var objects []ObjectInfo
@@ -522,6 +529,10 @@ type RestoreInput struct {
 func (c *Client) Restore(ctx context.Context, input *RestoreInput) error {
 	fullKey := c.config.Prefix + input.Key
 
+	if input.Days < 1 || int64(input.Days) > math.MaxInt32 {
+		return fmt.Errorf("s3: invalid restore days %d for %s: must be between 1 and %d", input.Days, fullKey, math.MaxInt32)
+	}
+
 	tier := types.TierStandard
 	switch strings.ToLower(input.Tier) {
 	case "bulk":
@@ -616,7 +627,7 @@ func (c *Client) GetPrefix() string {
 // Pool manages a pool of S3 clients for concurrent operations.
 type Pool struct {
 	clients []*Client
-	current atomic.Int32
+	current atomic.Uint64
 	mu      sync.RWMutex
 }
 
@@ -643,6 +654,7 @@ func (p *Pool) Get() *Client {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	idx := p.current.Add(1) % int32(len(p.clients))
+	// An unsigned counter keeps the index non-negative when it wraps around.
+	idx := p.current.Add(1) % uint64(len(p.clients))
 	return p.clients[idx]
 }

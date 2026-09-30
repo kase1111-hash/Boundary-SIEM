@@ -143,7 +143,10 @@ func (s *UDPServer) receiver(ctx context.Context, messages chan<- udpMessage) {
 		}
 
 		// Set read deadline to allow periodic context checks
-		s.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		if err := s.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			// The read below surfaces the underlying socket failure.
+			slog.Debug("failed to set UDP read deadline", "error", err)
+		}
 
 		n, remoteAddr, err := s.conn.ReadFromUDP(buffer)
 		if err != nil {

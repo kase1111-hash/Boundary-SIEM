@@ -45,7 +45,6 @@ type Poller struct {
 	queue  *queue.RingBuffer
 	client *http.Client
 	chains []chainState
-	mu     sync.Mutex
 	stopCh chan struct{}
 	wg     sync.WaitGroup
 }
@@ -297,7 +296,7 @@ func (p *Poller) getBlock(ctx context.Context, chain *chainState, blockNum uint6
 func (p *Poller) normalizeBlock(chain *chainState, block *blockResult) []*schema.Event {
 	blockNum, _ := parseHexUint64(block.Number)
 	blockTime, _ := parseHexUint64(block.Timestamp)
-	ts := time.Unix(int64(blockTime), 0).UTC()
+	ts := blockTimestamp(blockTime)
 
 	var events []*schema.Event
 
@@ -408,6 +407,21 @@ func (p *Poller) normalizeTx(chain *chainState, tx *transaction, blockTime time.
 }
 
 // --- Helpers ---
+
+// maxBlockTimestamp is 9999-12-31T23:59:59Z, the latest time that RFC 3339
+// (and therefore time.Time's JSON encoding) can represent.
+const maxBlockTimestamp = 253402300799
+
+// blockTimestamp converts an RPC-supplied block timestamp (seconds since the
+// Unix epoch) to a time.Time. A value beyond maxBlockTimestamp cannot be a
+// real block time; it is treated like an unparseable timestamp (the epoch)
+// instead of overflowing int64 / time.Time and wrapping around.
+func blockTimestamp(sec uint64) time.Time {
+	if sec > maxBlockTimestamp {
+		return time.Unix(0, 0).UTC()
+	}
+	return time.Unix(int64(sec), 0).UTC()
+}
 
 func parseHexUint64(s string) (uint64, error) {
 	s = strings.TrimPrefix(s, "0x")

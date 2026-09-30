@@ -364,7 +364,9 @@ func TestTCPServer_MaxConnections(t *testing.T) {
 	defer extra.Close()
 
 	// Reading from the rejected connection should yield an error (EOF or reset).
-	extra.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if err := extra.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatalf("SetReadDeadline() error: %v", err)
+	}
 	buf := make([]byte, 1)
 	_, readErr := extra.Read(buf)
 	if readErr == nil {

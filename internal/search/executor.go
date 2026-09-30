@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -64,6 +65,11 @@ func truncateForLog(s string, maxLen int) string {
 }
 
 // Executor executes search queries against ClickHouse.
+//
+// SQL text is only ever assembled from string constants, identifiers resolved
+// through the allowlists below, and clauses from buildWhereClause. Every value
+// that originates from a request (condition values, tenant ID, time range,
+// limits and offsets) is passed to the driver as a bound argument.
 type Executor struct {
 	db *sql.DB
 }
@@ -71,6 +77,37 @@ type Executor struct {
 // NewExecutor creates a new search executor.
 func NewExecutor(db *sql.DB) *Executor {
 	return &Executor{db: db}
+}
+
+// eventColumns is the projection returned by Search and GetEvent.
+const eventColumns = `event_id, timestamp, received_at, tenant_id, action, outcome, severity,
+		target, raw, source_product, source_vendor, source_ip,
+		actor_name, actor_id, actor_ip, metadata`
+
+// joinSQL assembles a statement from SQL fragments separated by spaces,
+// skipping empty ones. Each fragment must be a string constant, an identifier
+// resolved through one of the allowlists in this file, or a clause produced
+// by buildWhereClause; request values must be passed as bound arguments.
+func joinSQL(fragments ...string) string {
+	var sb strings.Builder
+	for _, f := range fragments {
+		if f == "" {
+			continue
+		}
+		if sb.Len() > 0 {
+			sb.WriteByte(' ')
+		}
+		sb.WriteString(f)
+	}
+	return sb.String()
+}
+
+// withArgs returns a new argument slice with extra appended, leaving args
+// untouched so it can be reused for other statements.
+func withArgs(args []interface{}, extra ...interface{}) []interface{} {
+	out := make([]interface{}, 0, len(args)+len(extra))
+	out = append(out, args...)
+	return append(out, extra...)
 }
 
 // Search executes a search query and returns results.
@@ -83,10 +120,13 @@ func (e *Executor) Search(ctx context.Context, query *Query) (*SearchResponse, e
 	start := time.Now()
 
 	// Build WHERE clause
-	whereClause, args := e.buildWhereClause(query)
+	whereClause, args, err := e.buildWhereClause(query)
+	if err != nil {
+		return nil, fmt.Errorf("invalid search query: %w", err)
+	}
 
 	// Build count query
-	countSQL := fmt.Sprintf("SELECT count(*) FROM events %s", whereClause)
+	countSQL := joinSQL("SELECT count(*) FROM events", whereClause)
 
 	var totalCount int64
 	if err := e.db.QueryRowContext(ctx, countSQL, args...).Scan(&totalCount); err != nil {
@@ -94,32 +134,15 @@ func (e *Executor) Search(ctx context.Context, query *Query) (*SearchResponse, e
 	}
 
 	// Build search query
-	searchSQL := fmt.Sprintf(`
-		SELECT
-			event_id,
-			timestamp,
-			received_at,
-			tenant_id,
-			action,
-			outcome,
-			severity,
-			target,
-			raw,
-			source_product,
-			source_vendor,
-			source_ip,
-			actor_name,
-			actor_id,
-			actor_ip,
-			metadata
-		FROM events
-		%s
-		ORDER BY %s %s
-		LIMIT %d OFFSET %d
-	`, whereClause, e.sanitizeOrderBy(query.OrderBy), e.orderDirection(query.OrderDesc),
-		query.Limit, query.Offset)
+	searchSQL := joinSQL(
+		"SELECT", eventColumns,
+		"FROM events",
+		whereClause,
+		"ORDER BY", e.sanitizeOrderBy(query.OrderBy), e.orderDirection(query.OrderDesc),
+		"LIMIT ? OFFSET ?",
+	)
 
-	rows, err := e.db.QueryContext(ctx, searchSQL, args...)
+	rows, err := e.db.QueryContext(ctx, searchSQL, withArgs(args, query.Limit, query.Offset)...)
 	if err != nil {
 		return nil, fmt.Errorf("search query failed: %w", err)
 	}
@@ -196,55 +219,60 @@ func (e *Executor) Aggregate(ctx context.Context, query *Query, field string, ag
 	column = e.sanitizeColumn(column)
 
 	// Build WHERE clause
-	whereClause, args := e.buildWhereClause(query)
+	whereClause, args, err := e.buildWhereClause(query)
+	if err != nil {
+		return nil, fmt.Errorf("invalid aggregation query: %w", err)
+	}
+
+	aggType = strings.ToLower(aggType)
+	singleValue := false
 
 	var sqlQuery string
-	switch strings.ToLower(aggType) {
+	switch aggType {
 	case "count":
-		sqlQuery = fmt.Sprintf(`
-			SELECT %s as key, count(*) as cnt
-			FROM events
-			%s
-			GROUP BY %s
-			ORDER BY cnt DESC
-			LIMIT 100
-		`, column, whereClause, column)
+		sqlQuery = joinSQL(
+			"SELECT", column, "AS key, count(*) AS cnt",
+			"FROM events",
+			whereClause,
+			"GROUP BY", column,
+			"ORDER BY cnt DESC",
+			"LIMIT 100",
+		)
 
 	case "sum", "avg", "min", "max":
 		safeFn, ok := sanitizeAggFunction(aggType)
 		if !ok {
 			return nil, fmt.Errorf("unsupported aggregation function: %s", aggType)
 		}
-		sqlQuery = fmt.Sprintf(`
-			SELECT %s(%s) as value
-			FROM events
-			%s
-		`, safeFn, column, whereClause)
+		singleValue = true
+		sqlQuery = joinSQL(
+			"SELECT", safeFn+"("+column+") AS value",
+			"FROM events",
+			whereClause,
+		)
 
 	case "histogram":
 		// Time-based histogram
-		sqlQuery = fmt.Sprintf(`
-			SELECT
-				toStartOfHour(timestamp) as key,
-				count(*) as cnt
-			FROM events
-			%s
-			GROUP BY key
-			ORDER BY key
-		`, whereClause)
+		sqlQuery = joinSQL(
+			"SELECT toStartOfHour(timestamp) AS key, count(*) AS cnt",
+			"FROM events",
+			whereClause,
+			"GROUP BY key",
+			"ORDER BY key",
+		)
 
 	case "terms":
-		sqlQuery = fmt.Sprintf(`
-			SELECT %s as key, count(*) as cnt
-			FROM events
-			%s
-			GROUP BY %s
-			ORDER BY cnt DESC
-			LIMIT 20
-		`, column, whereClause, column)
+		sqlQuery = joinSQL(
+			"SELECT", column, "AS key, count(*) AS cnt",
+			"FROM events",
+			whereClause,
+			"GROUP BY", column,
+			"ORDER BY cnt DESC",
+			"LIMIT 20",
+		)
 
 	default:
-		return nil, fmt.Errorf("unsupported aggregation type: %s", aggType)
+		return nil, fmt.Errorf("unsupported aggregation type: %s", truncateForLog(aggType, 100))
 	}
 
 	rows, err := e.db.QueryContext(ctx, sqlQuery, args...)
@@ -255,7 +283,7 @@ func (e *Executor) Aggregate(ctx context.Context, query *Query, field string, ag
 
 	result := &AggregationResult{}
 
-	if aggType == "sum" || aggType == "avg" || aggType == "min" || aggType == "max" {
+	if singleValue {
 		// Single value aggregation
 		if rows.Next() {
 			var value float64
@@ -365,7 +393,11 @@ func (e *Executor) GetEvent(ctx context.Context, eventID uuid.UUID) (*SearchResu
 
 // buildWhereClause builds a SQL WHERE clause from query conditions.
 // Supports parenthetical grouping via OpenParens/CloseParens on conditions.
-func (e *Executor) buildWhereClause(query *Query) (string, []interface{}) {
+//
+// The tenant and time-range filters are always ANDed with the user
+// conditions, which are wrapped in their own parentheses so that a top-level
+// OR in the search expression cannot widen the result beyond the tenant.
+func (e *Executor) buildWhereClause(query *Query) (string, []interface{}, error) {
 	var parts []string
 	var args []interface{}
 
@@ -373,10 +405,6 @@ func (e *Executor) buildWhereClause(query *Query) (string, []interface{}) {
 	if query.TenantID != "" {
 		parts = append(parts, "tenant_id = ?")
 		args = append(args, query.TenantID)
-	}
-
-	if len(query.Conditions) == 0 && query.TimeRange == nil && len(parts) == 0 {
-		return "", nil
 	}
 
 	// Add time range if specified
@@ -391,72 +419,78 @@ func (e *Executor) buildWhereClause(query *Query) (string, []interface{}) {
 		}
 	}
 
-	// Build condition clauses with parenthetical grouping
-	for _, cond := range query.Conditions {
-		column, _ := MapField(cond.Field)
-		if !cond.IsMetadata {
-			column = e.sanitizeColumn(column)
+	condExpr, condArgs, err := e.buildConditionExpr(query)
+	if err != nil {
+		return "", nil, err
+	}
+	if condExpr != "" {
+		if len(parts) > 0 {
+			condExpr = "(" + condExpr + ")"
 		}
-
-		clause, clauseArgs := e.buildConditionClause(column, cond)
-
-		// Wrap with opening parens
-		for j := 0; j < cond.OpenParens; j++ {
-			clause = "(" + clause
-		}
-		// Wrap with closing parens
-		for j := 0; j < cond.CloseParens; j++ {
-			clause = clause + ")"
-		}
-
-		parts = append(parts, clause)
-		args = append(args, clauseArgs...)
+		parts = append(parts, condExpr)
+		args = append(args, condArgs...)
 	}
 
 	if len(parts) == 0 {
-		return "", nil
+		return "", nil, nil
 	}
 
-	// Join: tenant_id and time range parts are always ANDed, then condition parts use the Logic slice
-	var result strings.Builder
-	result.WriteString("WHERE ")
+	return "WHERE " + strings.Join(parts, " AND "), args, nil
+}
 
-	// Count fixed parts (tenant_id + time range) that are always ANDed
-	fixedPartCount := 0
-	if query.TenantID != "" {
-		fixedPartCount++
-	}
-	if query.TimeRange != nil {
-		if !query.TimeRange.Start.IsZero() {
-			fixedPartCount++
-		}
-		if !query.TimeRange.End.IsZero() {
-			fixedPartCount++
-		}
-	}
+// buildConditionExpr joins the query's conditions with their AND/OR
+// connectives and parenthetical grouping. Connectives must be AND or OR and
+// parentheses must balance: either would otherwise let a condition alter the
+// structure of the surrounding WHERE clause.
+func (e *Executor) buildConditionExpr(query *Query) (string, []interface{}, error) {
+	var sb strings.Builder
+	var args []interface{}
+	depth := 0
 
-	for i, part := range parts {
+	for i, cond := range query.Conditions {
 		if i > 0 {
-			if i < fixedPartCount {
-				// Fixed parts (tenant_id, time range) are always ANDed together
-				result.WriteString(" AND ")
-			} else if i == fixedPartCount {
-				// Transition from fixed to condition parts — always AND
-				result.WriteString(" AND ")
-			} else {
-				// Condition parts use the Logic operators
-				condIdx := i - fixedPartCount
-				logic := "AND"
-				if condIdx-1 >= 0 && condIdx-1 < len(query.Logic) {
-					logic = query.Logic[condIdx-1]
+			logic := "AND"
+			if i-1 < len(query.Logic) {
+				op, ok := logicOperators[strings.ToUpper(query.Logic[i-1])]
+				if !ok {
+					return "", nil, fmt.Errorf("unsupported logical operator %q", truncateForLog(query.Logic[i-1], 20))
 				}
-				result.WriteString(" " + logic + " ")
+				logic = op
 			}
+			sb.WriteString(" ")
+			sb.WriteString(logic)
+			sb.WriteString(" ")
 		}
-		result.WriteString(part)
+
+		if cond.OpenParens < 0 || cond.CloseParens < 0 {
+			return "", nil, errUnbalancedParens
+		}
+
+		// Metadata conditions address the JSON column through a bound key and
+		// never use the column identifier.
+		var column string
+		if !cond.IsMetadata {
+			mapped, _ := MapField(cond.Field)
+			column = e.sanitizeColumn(mapped)
+		}
+		clause, clauseArgs := e.buildConditionClause(column, cond)
+
+		sb.WriteString(strings.Repeat("(", cond.OpenParens))
+		sb.WriteString(clause)
+		sb.WriteString(strings.Repeat(")", cond.CloseParens))
+		args = append(args, clauseArgs...)
+
+		depth += cond.OpenParens - cond.CloseParens
+		if depth < 0 {
+			return "", nil, errUnbalancedParens
+		}
 	}
 
-	return result.String(), args
+	if depth != 0 {
+		return "", nil, errUnbalancedParens
+	}
+
+	return sb.String(), args, nil
 }
 
 // buildConditionClause builds a SQL clause for a single condition.
@@ -541,51 +575,72 @@ func (e *Executor) buildMetadataClause(cond Condition) (string, []interface{}) {
 	}
 }
 
+// errUnbalancedParens is returned when a query's grouping parentheses do not
+// pair up.
+var errUnbalancedParens = errors.New("unbalanced parentheses in query")
+
+// The allowlists below map accepted input to the exact text written into SQL.
+// Lookups return the map value (a compile-time constant), so no part of the
+// caller-supplied string ever becomes part of a statement.
+
+// logicOperators maps accepted (upper-cased) connectives to SQL keywords.
+var logicOperators = map[string]string{
+	"AND": "AND",
+	"OR":  "OR",
+}
+
 // validAggFunctions is an allowlist of valid SQL aggregation functions.
-var validAggFunctions = map[string]bool{
-	"SUM": true, "AVG": true, "MIN": true, "MAX": true,
-	"COUNT": true, "COUNT_DISTINCT": true,
+var validAggFunctions = map[string]string{
+	"SUM": "SUM", "AVG": "AVG", "MIN": "MIN", "MAX": "MAX",
+	"COUNT": "COUNT", "COUNT_DISTINCT": "COUNT_DISTINCT",
 }
 
 // sanitizeAggFunction validates and returns a safe aggregation function name.
 func sanitizeAggFunction(fn string) (string, bool) {
-	upper := strings.ToUpper(fn)
-	if validAggFunctions[upper] {
-		return upper, true
-	}
-	return "", false
+	safe, ok := validAggFunctions[strings.ToUpper(fn)]
+	return safe, ok
 }
 
 // validColumns is an allowlist of known safe column names for SQL queries.
-var validColumns = map[string]bool{
-	"event_id":        true,
-	"timestamp":       true,
-	"received_at":     true,
-	"tenant_id":       true,
-	"action":          true,
-	"outcome":         true,
-	"severity":        true,
-	"target":          true,
-	"raw":             true,
-	"source_product":  true,
-	"source_vendor":   true,
-	"source_version":  true,
-	"source_hostname": true,
-	"source_ip":       true,
-	"actor_name":      true,
-	"actor_id":        true,
-	"actor_type":      true,
-	"actor_ip":        true,
-	"metadata":        true,
-	"schema_version":  true,
-	"request_id":      true,
+var validColumns = map[string]string{
+	"event_id":        "event_id",
+	"timestamp":       "timestamp",
+	"received_at":     "received_at",
+	"tenant_id":       "tenant_id",
+	"action":          "action",
+	"outcome":         "outcome",
+	"severity":        "severity",
+	"target":          "target",
+	"raw":             "raw",
+	"source_product":  "source_product",
+	"source_vendor":   "source_vendor",
+	"source_version":  "source_version",
+	"source_hostname": "source_hostname",
+	"source_ip":       "source_ip",
+	"actor_name":      "actor_name",
+	"actor_id":        "actor_id",
+	"actor_type":      "actor_type",
+	"actor_ip":        "actor_ip",
+	"metadata":        "metadata",
+	"schema_version":  "schema_version",
+	"request_id":      "request_id",
+}
+
+// validOrderByColumns is the subset of columns results may be sorted by.
+var validOrderByColumns = map[string]string{
+	"timestamp":      "timestamp",
+	"received_at":    "received_at",
+	"severity":       "severity",
+	"action":         "action",
+	"source_product": "source_product",
+	"actor_name":     "actor_name",
 }
 
 // sanitizeColumn ensures column name is a known valid column.
 // Returns "timestamp" as safe fallback for unknown columns.
 func (e *Executor) sanitizeColumn(column string) string {
-	if validColumns[column] {
-		return column
+	if safe, ok := validColumns[column]; ok {
+		return safe
 	}
 	slog.Warn("unknown column name rejected, using safe fallback",
 		"requested", truncateForLog(column, 100),
@@ -596,18 +651,8 @@ func (e *Executor) sanitizeColumn(column string) string {
 
 // sanitizeOrderBy ensures order by column is valid.
 func (e *Executor) sanitizeOrderBy(orderBy string) string {
-	validColumns := map[string]bool{
-		"timestamp":      true,
-		"received_at":    true,
-		"severity":       true,
-		"action":         true,
-		"source_product": true,
-		"actor_name":     true,
-	}
-
-	col := e.sanitizeColumn(orderBy)
-	if validColumns[col] {
-		return col
+	if safe, ok := validOrderByColumns[e.sanitizeColumn(orderBy)]; ok {
+		return safe
 	}
 	return "timestamp"
 }
@@ -648,17 +693,18 @@ func (e *Executor) TimeHistogram(ctx context.Context, query *Query, interval str
 		intervalFunc = "toStartOfHour"
 	}
 
-	whereClause, args := e.buildWhereClause(query)
+	whereClause, args, err := e.buildWhereClause(query)
+	if err != nil {
+		return nil, fmt.Errorf("invalid histogram query: %w", err)
+	}
 
-	sqlQuery := fmt.Sprintf(`
-		SELECT
-			%s(timestamp) as bucket,
-			count(*) as cnt
-		FROM events
-		%s
-		GROUP BY bucket
-		ORDER BY bucket
-	`, intervalFunc, whereClause)
+	sqlQuery := joinSQL(
+		"SELECT", intervalFunc+"(timestamp) AS bucket, count(*) AS cnt",
+		"FROM events",
+		whereClause,
+		"GROUP BY bucket",
+		"ORDER BY bucket",
+	)
 
 	rows, err := e.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
@@ -703,20 +749,21 @@ func (e *Executor) TopN(ctx context.Context, query *Query, field string, n int) 
 		n = 10
 	}
 
-	whereClause, args := e.buildWhereClause(query)
+	whereClause, args, err := e.buildWhereClause(query)
+	if err != nil {
+		return nil, fmt.Errorf("invalid top-n query: %w", err)
+	}
 
-	sqlQuery := fmt.Sprintf(`
-		SELECT
-			%s as key,
-			count(*) as cnt
-		FROM events
-		%s
-		GROUP BY key
-		ORDER BY cnt DESC
-		LIMIT %d
-	`, column, whereClause, n)
+	sqlQuery := joinSQL(
+		"SELECT", column, "AS key, count(*) AS cnt",
+		"FROM events",
+		whereClause,
+		"GROUP BY key",
+		"ORDER BY cnt DESC",
+		"LIMIT ?",
+	)
 
-	rows, err := e.db.QueryContext(ctx, sqlQuery, args...)
+	rows, err := e.db.QueryContext(ctx, sqlQuery, withArgs(args, n)...)
 	if err != nil {
 		return nil, fmt.Errorf("top-n query failed: %w", err)
 	}
@@ -755,19 +802,22 @@ func (e *Executor) Explain(ctx context.Context, query *Query) (*ExplainResult, e
 		return nil, fmt.Errorf("tenant_id is required for explain queries")
 	}
 
-	whereClause, args := e.buildWhereClause(query)
+	whereClause, args, err := e.buildWhereClause(query)
+	if err != nil {
+		return nil, fmt.Errorf("invalid explain query: %w", err)
+	}
 
-	selectSQL := fmt.Sprintf(`
-		SELECT event_id, timestamp, action, severity
-		FROM events
-		%s
-		ORDER BY %s %s
-		LIMIT %d OFFSET %d
-	`, whereClause, e.sanitizeOrderBy(query.OrderBy), e.orderDirection(query.OrderDesc),
-		query.Limit, query.Offset)
+	selectSQL := joinSQL(
+		"SELECT event_id, timestamp, action, severity",
+		"FROM events",
+		whereClause,
+		"ORDER BY", e.sanitizeOrderBy(query.OrderBy), e.orderDirection(query.OrderDesc),
+		"LIMIT ? OFFSET ?",
+	)
+	args = withArgs(args, query.Limit, query.Offset)
 
 	// EXPLAIN PLAN
-	explainSQL := "EXPLAIN PLAN " + selectSQL
+	explainSQL := joinSQL("EXPLAIN PLAN", selectSQL)
 	rows, err := e.db.QueryContext(ctx, explainSQL, args...)
 	if err != nil {
 		return nil, fmt.Errorf("explain query failed: %w", err)
@@ -784,7 +834,7 @@ func (e *Executor) Explain(ctx context.Context, query *Query) (*ExplainResult, e
 	}
 
 	// EXPLAIN INDEXES
-	indexSQL := "EXPLAIN INDEXES = 1 " + selectSQL
+	indexSQL := joinSQL("EXPLAIN INDEXES = 1", selectSQL)
 	indexRows, err := e.db.QueryContext(ctx, indexSQL, args...)
 	if err == nil {
 		defer indexRows.Close()

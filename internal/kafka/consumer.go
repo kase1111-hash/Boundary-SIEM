@@ -51,7 +51,6 @@ type consumerMetrics struct {
 	messagesConsumed atomic.Int64
 	bytesConsumed    atomic.Int64
 	errors           atomic.Int64
-	rebalances       atomic.Int64
 	lag              atomic.Int64
 	lastOffset       atomic.Int64
 	lastError        atomic.Value
@@ -371,8 +370,10 @@ func NewConsumerGroup(config *Config, numConsumers int, handler MessageHandler, 
 		consumer, err := NewConsumer(config, handler, logger.With("consumer_id", i))
 		if err != nil {
 			// Clean up already created consumers
-			for _, c := range cg.consumers {
-				c.Stop()
+			for j, c := range cg.consumers {
+				if stopErr := c.Stop(); stopErr != nil {
+					logger.Warn("failed to stop consumer during cleanup", "consumer_id", j, "error", stopErr)
+				}
 			}
 			return nil, fmt.Errorf("kafka: failed to create consumer %d: %w", i, err)
 		}
@@ -395,7 +396,9 @@ func (cg *ConsumerGroup) Start() error {
 		if err := c.StartAsync(); err != nil {
 			// Stop already started consumers
 			for j := 0; j < i; j++ {
-				cg.consumers[j].Stop()
+				if stopErr := cg.consumers[j].Stop(); stopErr != nil {
+					cg.logger.Warn("failed to stop consumer during rollback", "consumer_id", j, "error", stopErr)
+				}
 			}
 			return fmt.Errorf("kafka: failed to start consumer %d: %w", i, err)
 		}

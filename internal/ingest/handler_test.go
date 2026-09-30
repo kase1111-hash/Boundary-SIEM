@@ -44,7 +44,9 @@ func TestHandler_HandleEvents(t *testing.T) {
 		}
 
 		var resp IngestResponse
-		json.NewDecoder(rec.Body).Decode(&resp)
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
 
 		if !resp.Success {
 			t.Errorf("Success = false, want true")
@@ -74,7 +76,9 @@ func TestHandler_HandleEvents(t *testing.T) {
 		handler.HandleEvents(rec, req)
 
 		var resp IngestResponse
-		json.NewDecoder(rec.Body).Decode(&resp)
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
 
 		if resp.Accepted != 3 {
 			t.Errorf("Accepted = %d, want 3", resp.Accepted)
@@ -127,7 +131,9 @@ func TestHandler_HandleEvents(t *testing.T) {
 		handler.HandleEvents(rec, req)
 
 		var resp IngestResponse
-		json.NewDecoder(rec.Body).Decode(&resp)
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
 
 		if resp.Success {
 			t.Error("Success = true, want false")
@@ -160,7 +166,9 @@ func TestHandler_HandleEvents(t *testing.T) {
 		}
 
 		var resp IngestResponse
-		json.NewDecoder(rec.Body).Decode(&resp)
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
 
 		if resp.Accepted != 1 {
 			t.Errorf("Accepted = %d, want 1", resp.Accepted)
@@ -188,7 +196,9 @@ func TestHandler_HandleEvents(t *testing.T) {
 		handler.HandleEvents(rec, req)
 
 		var resp IngestResponse
-		json.NewDecoder(rec.Body).Decode(&resp)
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
 
 		if resp.Rejected != 1 {
 			t.Errorf("Rejected = %d, want 1", resp.Rejected)
@@ -221,7 +231,9 @@ func TestHandler_HandleEvents(t *testing.T) {
 		handler.HandleEvents(rec, req)
 
 		var resp IngestResponse
-		json.NewDecoder(rec.Body).Decode(&resp)
+		if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+			t.Fatalf("failed to decode response: %v", err)
+		}
 
 		if resp.Accepted != 1 {
 			t.Errorf("Accepted = %d, want 1", resp.Accepted)
@@ -268,7 +280,9 @@ func TestHandler_HealthCheck(t *testing.T) {
 	}
 
 	var resp map[string]any
-	json.NewDecoder(rec.Body).Decode(&resp)
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
 
 	if resp["status"] != "healthy" {
 		t.Errorf("status = %v, want healthy", resp["status"])

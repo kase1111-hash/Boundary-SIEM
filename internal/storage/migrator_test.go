@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"math"
 	"testing"
 )
 
@@ -94,5 +95,32 @@ func TestMigration_LoadMigrations(t *testing.T) {
 	// Verify first migration is version 1
 	if migrations[0].Version != 1 {
 		t.Errorf("first migration version = %d, want 1", migrations[0].Version)
+	}
+}
+
+func TestMigrationVersionToUInt32(t *testing.T) {
+	tests := []struct {
+		name    string
+		version int
+		want    uint32
+		wantErr bool
+	}{
+		{name: "first migration", version: 1, want: 1},
+		{name: "zero", version: 0, want: 0},
+		{name: "max uint32", version: math.MaxUint32, want: math.MaxUint32},
+		{name: "negative", version: -1, wantErr: true},
+		{name: "past max uint32", version: math.MaxUint32 + 1, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := migrationVersionToUInt32(tt.version)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("migrationVersionToUInt32(%d) error = %v, wantErr %v", tt.version, err, tt.wantErr)
+			}
+			if !tt.wantErr && got != tt.want {
+				t.Errorf("migrationVersionToUInt32(%d) = %d, want %d", tt.version, got, tt.want)
+			}
+		})
 	}
 }

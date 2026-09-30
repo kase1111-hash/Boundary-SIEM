@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
@@ -431,8 +432,17 @@ func TestBatchWriterFlushFailureUpdatesMetrics(t *testing.T) {
 	// Write enough events to trigger a flush. The flush will fail because
 	// PrepareBatch always returns an error.
 	for i := 0; i < batchSize; i++ {
+		err := bw.Write(newTestEvent())
+		if i < batchSize-1 {
+			if err != nil {
+				t.Fatalf("Write() #%d error = %v, want nil below batch size", i+1, err)
+			}
+			continue
+		}
 		// The last Write triggers flushLocked which will fail.
-		bw.Write(newTestEvent())
+		if !errors.Is(err, ErrBatchInsertFailed) {
+			t.Fatalf("Write() triggering the failing flush error = %v, want ErrBatchInsertFailed", err)
+		}
 	}
 
 	metrics := bw.Metrics()
@@ -567,7 +577,9 @@ func TestBatchWriterConcurrentWriteWithFlush(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < eventsPerGoroutine; i++ {
-				bw.Write(newTestEvent())
+				if err := bw.Write(newTestEvent()); err != nil {
+					t.Errorf("Write() error = %v", err)
+				}
 			}
 		}()
 	}
@@ -580,5 +592,26 @@ func TestBatchWriterConcurrentWriteWithFlush(t *testing.T) {
 	if accounted != totalEvents {
 		t.Errorf("Written(%d) + Pending(%d) + Failed(%d) = %d, want %d",
 			metrics.Written, metrics.Pending, metrics.Failed, accounted, totalEvents)
+	}
+}
+
+func TestSeverityToUInt8(t *testing.T) {
+	tests := []struct {
+		severity int
+		want     uint8
+	}{
+		{severity: 1, want: 1},
+		{severity: 10, want: 10},
+		{severity: 0, want: 0},
+		{severity: 255, want: 255},
+		{severity: 256, want: 255},
+		{severity: 1 << 20, want: 255},
+		{severity: -1, want: 0},
+	}
+
+	for _, tt := range tests {
+		if got := severityToUInt8(tt.severity); got != tt.want {
+			t.Errorf("severityToUInt8(%d) = %d, want %d", tt.severity, got, tt.want)
+		}
 	}
 }

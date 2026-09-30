@@ -313,7 +313,10 @@ func (s *DTLSServer) acceptLoop(ctx context.Context) {
 
 		// Accept with deadline
 		if dl, ok := s.listener.(interface{ SetDeadline(time.Time) error }); ok {
-			dl.SetDeadline(time.Now().Add(100 * time.Millisecond))
+			if err := dl.SetDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+				// Accept below surfaces the underlying listener failure.
+				s.logger.Debug("failed to set DTLS accept deadline", "error", err)
+			}
 		}
 
 		conn, err := s.listener.Accept()
@@ -368,8 +371,12 @@ func (s *DTLSServer) handleConnection(ctx context.Context, conn net.Conn, messag
 		default:
 		}
 
-		// Set read deadline
-		conn.SetReadDeadline(time.Now().Add(s.config.IdleTimeout))
+		// Set read deadline. Without it the idle timeout cannot be enforced,
+		// so drop the connection rather than block on it indefinitely.
+		if err := conn.SetReadDeadline(time.Now().Add(s.config.IdleTimeout)); err != nil {
+			s.logger.Debug("failed to set DTLS read deadline", "error", err, "remote", sourceIP)
+			return
+		}
 
 		n, err := conn.Read(buffer)
 		if err != nil {
@@ -412,7 +419,10 @@ func (s *DTLSServer) insecureReceiver(ctx context.Context, messages chan<- dtlsM
 		default:
 		}
 
-		s.udpConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		if err := s.udpConn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			// The read below surfaces the underlying socket failure.
+			s.logger.Debug("failed to set UDP read deadline", "error", err)
+		}
 
 		n, remoteAddr, err := s.udpConn.ReadFromUDP(buffer)
 		if err != nil {

@@ -15,6 +15,17 @@ func newTestExecutor() *Executor {
 	return &Executor{db: nil}
 }
 
+// mustBuildWhereClause builds the WHERE clause for q and fails the test if
+// the query is rejected.
+func mustBuildWhereClause(t *testing.T, exec *Executor, q *Query) (string, []interface{}) {
+	t.Helper()
+	clause, args, err := exec.buildWhereClause(q)
+	if err != nil {
+		t.Fatalf("buildWhereClause() error = %v", err)
+	}
+	return clause, args
+}
+
 // ---------------------------------------------------------------------------
 // sanitizeColumn
 // ---------------------------------------------------------------------------
@@ -254,7 +265,7 @@ func TestBuildWhereClause(t *testing.T) {
 
 	t.Run("empty query returns empty string", func(t *testing.T) {
 		q := &Query{}
-		clause, args := exec.buildWhereClause(q)
+		clause, args := mustBuildWhereClause(t, exec, q)
 		if clause != "" {
 			t.Errorf("clause = %q, want empty string", clause)
 		}
@@ -269,7 +280,7 @@ func TestBuildWhereClause(t *testing.T) {
 				{Field: "action", Operator: OpEquals, Value: "login"},
 			},
 		}
-		clause, args := exec.buildWhereClause(q)
+		clause, args := mustBuildWhereClause(t, exec, q)
 		if !strings.HasPrefix(clause, "WHERE ") {
 			t.Errorf("clause should start with 'WHERE ', got %q", clause)
 		}
@@ -289,7 +300,7 @@ func TestBuildWhereClause(t *testing.T) {
 			},
 			Logic: []string{"AND"},
 		}
-		clause, args := exec.buildWhereClause(q)
+		clause, args := mustBuildWhereClause(t, exec, q)
 		if !strings.Contains(clause, " AND ") {
 			t.Errorf("clause should contain ' AND ', got %q", clause)
 		}
@@ -306,7 +317,7 @@ func TestBuildWhereClause(t *testing.T) {
 			},
 			Logic: []string{"OR"},
 		}
-		clause, args := exec.buildWhereClause(q)
+		clause, args := mustBuildWhereClause(t, exec, q)
 		if !strings.Contains(clause, " OR ") {
 			t.Errorf("clause should contain ' OR ', got %q", clause)
 		}
@@ -324,7 +335,7 @@ func TestBuildWhereClause(t *testing.T) {
 			},
 			Logic: []string{"AND", "OR"},
 		}
-		clause, args := exec.buildWhereClause(q)
+		clause, args := mustBuildWhereClause(t, exec, q)
 		if !strings.Contains(clause, " AND ") {
 			t.Errorf("clause should contain ' AND ', got %q", clause)
 		}
@@ -344,7 +355,7 @@ func TestBuildWhereClause(t *testing.T) {
 				End:   now,
 			},
 		}
-		clause, args := exec.buildWhereClause(q)
+		clause, args := mustBuildWhereClause(t, exec, q)
 		if !strings.HasPrefix(clause, "WHERE ") {
 			t.Errorf("clause should start with 'WHERE ', got %q", clause)
 		}
@@ -366,7 +377,7 @@ func TestBuildWhereClause(t *testing.T) {
 				Start: now.Add(-1 * time.Hour),
 			},
 		}
-		clause, args := exec.buildWhereClause(q)
+		clause, args := mustBuildWhereClause(t, exec, q)
 		if !strings.Contains(clause, "timestamp >= ?") {
 			t.Errorf("clause should contain 'timestamp >= ?', got %q", clause)
 		}
@@ -389,7 +400,7 @@ func TestBuildWhereClause(t *testing.T) {
 				End:   now,
 			},
 		}
-		clause, args := exec.buildWhereClause(q)
+		clause, args := mustBuildWhereClause(t, exec, q)
 		// Time range clauses come first, then conditions.
 		if !strings.Contains(clause, "timestamp >= ?") {
 			t.Errorf("clause should contain time range, got %q", clause)
@@ -409,7 +420,7 @@ func TestBuildWhereClause(t *testing.T) {
 				{Field: "user", Operator: OpEquals, Value: "admin"},
 			},
 		}
-		clause, _ := exec.buildWhereClause(q)
+		clause, _ := mustBuildWhereClause(t, exec, q)
 		if !strings.Contains(clause, "actor_name") {
 			t.Errorf("clause should contain mapped column 'actor_name', got %q", clause)
 		}
@@ -424,7 +435,7 @@ func TestBuildWhereClause(t *testing.T) {
 				{Field: "actor_name", Operator: OpExists},
 			},
 		}
-		clause, args := exec.buildWhereClause(q)
+		clause, args := mustBuildWhereClause(t, exec, q)
 		if !strings.Contains(clause, "actor_name != ''") {
 			t.Errorf("clause should contain \"actor_name != ''\", got %q", clause)
 		}
@@ -439,7 +450,7 @@ func TestBuildWhereClause(t *testing.T) {
 				{Field: "action", Operator: OpEquals, Value: "^auth\\..*$", IsRegex: true},
 			},
 		}
-		clause, args := exec.buildWhereClause(q)
+		clause, args := mustBuildWhereClause(t, exec, q)
 		if !strings.Contains(clause, "match(action, ?)") {
 			t.Errorf("clause should use match() for regex, got %q", clause)
 		}
@@ -472,7 +483,7 @@ func TestBuildWhereClause_InjectionViaFieldNames(t *testing.T) {
 					{Field: field, Operator: OpEquals, Value: "test"},
 				},
 			}
-			clause, _ := exec.buildWhereClause(q)
+			clause, _ := mustBuildWhereClause(t, exec, q)
 
 			// With the allowlist approach, all invalid column names are
 			// replaced with "timestamp" (the safe fallback). The clause
@@ -1033,7 +1044,7 @@ func TestSQLInjection_EndToEnd(t *testing.T) {
 				return
 			}
 
-			clause, args := exec.buildWhereClause(q)
+			clause, args := mustBuildWhereClause(t, exec, q)
 
 			// Values in conditions should always be parameterized (? placeholders),
 			// not interpolated. Verify the clause uses placeholders.

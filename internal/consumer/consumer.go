@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"boundary-siem/internal/queue"
+	"boundary-siem/internal/schema"
 	"boundary-siem/internal/storage"
 )
 
@@ -28,10 +29,17 @@ func DefaultConfig() Config {
 	}
 }
 
+// eventWriter is the storage sink the consumer writes to. It is satisfied by
+// *storage.BatchWriter and lets tests substitute an in-memory writer.
+type eventWriter interface {
+	Write(event *schema.Event) error
+	Flush() error
+}
+
 // Consumer reads events from the queue and writes them to storage.
 type Consumer struct {
 	queue       *queue.RingBuffer
-	batchWriter *storage.BatchWriter
+	batchWriter eventWriter
 	config      Config
 
 	wg   sync.WaitGroup

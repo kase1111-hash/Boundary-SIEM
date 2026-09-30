@@ -56,7 +56,7 @@ type TCPServer struct {
 	validator  *schema.Validator
 	queue      *queue.RingBuffer
 
-	connCount int32
+	connCount int64
 	wg        sync.WaitGroup
 	done      chan struct{}
 
@@ -140,7 +140,10 @@ func (s *TCPServer) acceptLoop(ctx context.Context) {
 
 		// Set accept deadline to allow periodic context checks
 		if tcpListener, ok := s.listener.(*net.TCPListener); ok {
-			tcpListener.SetDeadline(time.Now().Add(100 * time.Millisecond))
+			if err := tcpListener.SetDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+				// Accept below surfaces the underlying listener failure.
+				slog.Debug("failed to set TCP accept deadline", "error", err)
+			}
 		}
 
 		conn, err := s.listener.Accept()
@@ -158,13 +161,13 @@ func (s *TCPServer) acceptLoop(ctx context.Context) {
 		}
 
 		// Check connection limit
-		if atomic.LoadInt32(&s.connCount) >= int32(s.config.MaxConnections) {
+		if atomic.LoadInt64(&s.connCount) >= int64(s.config.MaxConnections) {
 			slog.Warn("max connections reached, rejecting")
 			conn.Close()
 			continue
 		}
 
-		atomic.AddInt32(&s.connCount, 1)
+		atomic.AddInt64(&s.connCount, 1)
 		atomic.AddUint64(&s.connections, 1)
 
 		s.wg.Add(1)
@@ -174,7 +177,7 @@ func (s *TCPServer) acceptLoop(ctx context.Context) {
 
 func (s *TCPServer) handleConnection(ctx context.Context, conn net.Conn) {
 	defer s.wg.Done()
-	defer atomic.AddInt32(&s.connCount, -1)
+	defer atomic.AddInt64(&s.connCount, -1)
 	defer conn.Close()
 
 	var sourceIP string
@@ -197,8 +200,12 @@ func (s *TCPServer) handleConnection(ctx context.Context, conn net.Conn) {
 		default:
 		}
 
-		// Set read deadline
-		conn.SetReadDeadline(time.Now().Add(s.config.IdleTimeout))
+		// Set read deadline. Without it the idle timeout cannot be enforced,
+		// so drop the connection rather than block on it indefinitely.
+		if err := conn.SetReadDeadline(time.Now().Add(s.config.IdleTimeout)); err != nil {
+			slog.Debug("failed to set TCP read deadline", "error", err, "remote", sourceIP)
+			return
+		}
 
 		// Read line (CEF messages are newline-delimited)
 		line, err := reader.ReadString('\n')
@@ -291,5 +298,5 @@ func (s *TCPServer) Metrics() TCPServerMetrics {
 
 // ActiveConnections returns the number of currently active connections.
 func (s *TCPServer) ActiveConnections() int {
-	return int(atomic.LoadInt32(&s.connCount))
+	return int(atomic.LoadInt64(&s.connCount))
 }
