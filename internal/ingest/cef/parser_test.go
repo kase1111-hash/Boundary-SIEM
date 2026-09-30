@@ -1,6 +1,8 @@
 package cef
 
 import (
+	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -227,6 +229,281 @@ func TestParser_ParseExtensions(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestParser_EscapesAppliedOnce is a regression test for escapes being
+// processed twice (once while splitting the header and again per field),
+// which corrupted values and split extensions on escaped '='.
+func TestParser_EscapesAppliedOnce(t *testing.T) {
+	parser := NewParser(DefaultParserConfig())
+
+	tests := []struct {
+		name       string
+		message    string
+		vendor     string
+		evName     string
+		extensions map[string]string
+		absentKeys []string
+	}{
+		{
+			name:    "escaped backslash followed by escaped pipe in header",
+			message: `CEF:0|a\\\|b|P|1|S|N|5|src=10.0.0.1`,
+			vendor:  `a\|b`,
+			evName:  "N",
+		},
+		{
+			name:    "escaped pipe in header",
+			message: `CEF:0|V|P|1|S|Event \| Name|5|`,
+			vendor:  "V",
+			evName:  "Event | Name",
+		},
+		{
+			name:    "unknown escape in header is kept literally",
+			message: `CEF:0|V\x|P|1|S|N|5|`,
+			vendor:  `V\x`,
+			evName:  "N",
+		},
+		{
+			name:    "escaped equals in extension value",
+			message: `CEF:0|V|P|1|S|N|5|msg=token\=abc src=10.0.0.1`,
+			vendor:  "V",
+			evName:  "N",
+			extensions: map[string]string{
+				"msg": "token=abc",
+				"src": "10.0.0.1",
+			},
+			absentKeys: []string{"token"},
+		},
+		{
+			name:    "escaped backslashes in windows path",
+			message: `CEF:0|V|P|1|S|N|5|filePath=C:\\new\\temp fname=a.txt`,
+			vendor:  "V",
+			evName:  "N",
+			extensions: map[string]string{
+				"filePath": `C:\new\temp`,
+				"fname":    "a.txt",
+			},
+		},
+		{
+			name:    "escaped newline in extension value",
+			message: `CEF:0|V|P|1|S|N|5|msg=line1\nline2\rend`,
+			vendor:  "V",
+			evName:  "N",
+			extensions: map[string]string{
+				"msg": "line1\nline2\rend",
+			},
+		},
+		{
+			name:    "escaped backslash before n is not a newline",
+			message: `CEF:0|V|P|1|S|N|5|msg=a\\nb`,
+			vendor:  "V",
+			evName:  "N",
+			extensions: map[string]string{
+				"msg": `a\nb`,
+			},
+		},
+		{
+			name:    "unescaped equals inside value does not start a key",
+			message: `CEF:0|V|P|1|S|N|5|request=http://x/?a=b&c=d src=1.2.3.4`,
+			vendor:  "V",
+			evName:  "N",
+			extensions: map[string]string{
+				"request": "http://x/?a=b&c=d",
+				"src":     "1.2.3.4",
+			},
+			absentKeys: []string{"a", "c"},
+		},
+		{
+			name:    "pipe in extension value",
+			message: `CEF:0|V|P|1|S|N|5|msg=a|b src=1.2.3.4`,
+			vendor:  "V",
+			evName:  "N",
+			extensions: map[string]string{
+				"msg": "a|b",
+				"src": "1.2.3.4",
+			},
+		},
+		{
+			name:    "dotted vendor extension key",
+			message: `CEF:0|V|P|1|S|N|5|ad.user=alice msg=hi`,
+			vendor:  "V",
+			evName:  "N",
+			extensions: map[string]string{
+				"ad.user": "alice",
+				"msg":     "hi",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event, err := parser.Parse(tt.message)
+			if err != nil {
+				t.Fatalf("Parse() unexpected error: %v", err)
+			}
+			if event.DeviceVendor != tt.vendor {
+				t.Errorf("DeviceVendor = %q, want %q", event.DeviceVendor, tt.vendor)
+			}
+			if event.Name != tt.evName {
+				t.Errorf("Name = %q, want %q", event.Name, tt.evName)
+			}
+			for key, want := range tt.extensions {
+				if got, ok := event.Extensions[key]; !ok || got != want {
+					t.Errorf("Extensions[%q] = %q (present=%v), want %q", key, got, ok, want)
+				}
+			}
+			for _, key := range tt.absentKeys {
+				if v, ok := event.Extensions[key]; ok {
+					t.Errorf("unexpected extension key %q = %q", key, v)
+				}
+			}
+		})
+	}
+}
+
+// TestParser_SyslogFramed is a regression test for CEF messages carrying a
+// syslog header ("<PRI>timestamp host CEF:...") being rejected.
+func TestParser_SyslogFramed(t *testing.T) {
+	parser := NewParser(DefaultParserConfig())
+	const body = "CEF:0|Acme|FW|1.0|100|Session Created|5|src=10.0.0.1 suser=bob"
+
+	tests := []struct {
+		name     string
+		message  string
+		wantErr  bool
+		wantHost string
+		wantTS   string
+	}{
+		{
+			name:    "bare CEF",
+			message: body,
+		},
+		{
+			name:     "RFC3164 header",
+			message:  "<134>Sep 30 10:15:00 fw01 " + body,
+			wantHost: "fw01",
+			wantTS:   "Sep 30 10:15:00",
+		},
+		{
+			name:     "RFC3164 header with single digit day and tag",
+			message:  "<134>Sep  3 10:15:00 fw01 app[123]: " + body,
+			wantHost: "fw01",
+			wantTS:   "Sep 3 10:15:00",
+		},
+		{
+			name:    "RFC3164 header with tag but no host",
+			message: "<134>Sep 30 10:15:00 app: " + body,
+			wantTS:  "Sep 30 10:15:00",
+		},
+		{
+			name:     "RFC3164 header with year",
+			message:  "<134>Sep 30 2026 10:15:00 fw01 " + body,
+			wantHost: "fw01",
+			wantTS:   "Sep 30 2026 10:15:00",
+		},
+		{
+			name:     "RFC3164 header without PRI",
+			message:  "Sep 30 10:15:00 fw01 " + body,
+			wantHost: "fw01",
+			wantTS:   "Sep 30 10:15:00",
+		},
+		{
+			name:     "RFC5424 header",
+			message:  "<134>1 2026-09-30T10:15:00Z fw01 app - - - " + body,
+			wantHost: "fw01",
+			wantTS:   "2026-09-30T10:15:00Z",
+		},
+		{
+			name:    "RFC5424 header with nil fields",
+			message: "<134>1 - - - - - - " + body,
+		},
+		{
+			name:     "ISO timestamp header",
+			message:  "<134>2026-09-30T10:15:00.123+02:00 fw01 app: " + body,
+			wantHost: "fw01",
+			wantTS:   "2026-09-30T10:15:00.123+02:00",
+		},
+		{
+			name:    "no CEF marker",
+			message: "<134>Sep 30 10:15:00 fw01 app: hello world",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			event, err := parser.Parse(tt.message)
+			if tt.wantErr {
+				if !errors.Is(err, ErrInvalidCEF) {
+					t.Fatalf("Parse() error = %v, want ErrInvalidCEF", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse() unexpected error: %v", err)
+			}
+			if event.DeviceVendor != "Acme" || event.DeviceProduct != "FW" || event.SignatureID != "100" {
+				t.Errorf("header = %q/%q/%q, want Acme/FW/100", event.DeviceVendor, event.DeviceProduct, event.SignatureID)
+			}
+			if event.Extensions["suser"] != "bob" {
+				t.Errorf("Extensions[suser] = %q, want bob", event.Extensions["suser"])
+			}
+			if event.SyslogHost != tt.wantHost {
+				t.Errorf("SyslogHost = %q, want %q", event.SyslogHost, tt.wantHost)
+			}
+			if event.SyslogTimestamp != tt.wantTS {
+				t.Errorf("SyslogTimestamp = %q, want %q", event.SyslogTimestamp, tt.wantTS)
+			}
+			if event.RawMessage != tt.message {
+				t.Errorf("RawMessage = %q, want the full original message", event.RawMessage)
+			}
+		})
+	}
+}
+
+// TestParser_StringSeverity is a regression test for the CEF string
+// severities (Unknown/Low/Medium/High/Very-High) all mapping to 5.
+func TestParser_StringSeverity(t *testing.T) {
+	tests := []struct {
+		severity string
+		want     int
+	}{
+		{"Low", 3},
+		{"low", 3},
+		{"Medium", 6},
+		{"High", 8},
+		{"HIGH", 8},
+		{"Very-High", 10},
+		{"very-high", 10},
+		{"Very High", 10},
+		{"Unknown", 5},
+		{" 7 ", 7},
+		{"0", 0},
+		{"10", 10},
+	}
+
+	for _, strict := range []bool{false, true} {
+		parser := NewParser(ParserConfig{StrictMode: strict, MaxExtensions: 100})
+		for _, tt := range tests {
+			t.Run(fmt.Sprintf("strict=%v/%s", strict, tt.severity), func(t *testing.T) {
+				event, err := parser.Parse("CEF:0|V|P|1|S|N|" + tt.severity + "|src=1.2.3.4")
+				if err != nil {
+					t.Fatalf("Parse() unexpected error: %v", err)
+				}
+				if event.Severity != tt.want {
+					t.Errorf("Severity = %d, want %d", event.Severity, tt.want)
+				}
+			})
+		}
+	}
+
+	// Out-of-range and unknown strings keep the previous behaviour.
+	strictParser := NewParser(ParserConfig{StrictMode: true, MaxExtensions: 100})
+	for _, sev := range []string{"11", "-1", "Critical"} {
+		if _, err := strictParser.Parse("CEF:0|V|P|1|S|N|" + sev + "|"); !errors.Is(err, ErrInvalidSeverity) {
+			t.Errorf("strict Parse(severity=%q) error = %v, want ErrInvalidSeverity", sev, err)
+		}
 	}
 }
 

@@ -18,7 +18,7 @@ import (
 	"boundary-siem/internal/queue"
 	"boundary-siem/internal/schema"
 
-	"github.com/pion/dtls/v2"
+	"github.com/pion/dtls/v3"
 )
 
 // Common errors for DTLS server.
@@ -74,47 +74,62 @@ func DefaultDTLSServerConfig() DTLSServerConfig {
 
 // DTLSServerMetrics holds metrics for the DTLS server.
 type DTLSServerMetrics struct {
-	Connections    uint64
-	Handshakes     uint64
-	HandshakeErrs  uint64
-	Received       uint64
-	Parsed         uint64
-	Normalized     uint64
-	Queued         uint64
-	Errors         uint64
-	InsecureWarned bool
+	Connections   uint64
+	Handshakes    uint64
+	HandshakeErrs uint64
+	Received      uint64
+	Parsed        uint64
+	Normalized    uint64
+	Queued        uint64
+	// Errors counts every dropped message; the fields below break it down.
+	Errors uint64
+	// ParseErrors counts messages that are not valid CEF.
+	ParseErrors uint64
+	// ValidationErrors counts events that failed normalization or validation.
+	ValidationErrors uint64
+	InsecureWarned   bool
 }
 
 // DTLSServer receives CEF messages over DTLS (secure UDP).
 type DTLSServer struct {
 	config     DTLSServerConfig
 	listener   net.Listener
-	dtlsConfig *dtls.Config
 	parser     *cef.Parser
 	normalizer *cef.Normalizer
 	validator  *schema.Validator
 	queue      *queue.RingBuffer
 	logger     *slog.Logger
+	rejects    *cef.RejectLogger
 
 	// For plain UDP fallback (insecure)
 	udpConn *net.UDPConn
 
-	wg   sync.WaitGroup
-	done chan struct{}
+	wg       sync.WaitGroup
+	done     chan struct{}
+	cancel   context.CancelFunc // cancels the context the server runs with
+	stopOnce sync.Once
 
 	// Channel management for safe closing
 	messagesClosed sync.Once
 
+	// Open DTLS connections, closed on shutdown so that handlers blocked in
+	// Read return at once instead of waiting for IdleTimeout.
+	connsMu sync.Mutex
+	conns   map[net.Conn]struct{}
+	closing bool
+
 	// Metrics
-	connections    uint64
-	handshakes     uint64
-	handshakeErrs  uint64
-	received       uint64
-	parsed         uint64
-	normalized     uint64
-	queued         uint64
-	errors         uint64
-	insecureWarned bool
+	connections      uint64
+	handshakes       uint64
+	handshakeErrs    uint64
+	received         uint64
+	parsed           uint64
+	normalized       uint64
+	queued           uint64
+	errors           uint64
+	parseErrors      uint64
+	validationErrors uint64
+	insecureWarned   atomic.Bool
 }
 
 // NewDTLSServer creates a new DTLS server for secure CEF ingestion.
@@ -130,16 +145,6 @@ func NewDTLSServer(
 		logger = slog.Default()
 	}
 
-	s := &DTLSServer{
-		config:     cfg,
-		parser:     parser,
-		normalizer: normalizer,
-		validator:  validator,
-		queue:      q,
-		logger:     logger,
-		done:       make(chan struct{}),
-	}
-
 	// Validate configuration
 	if !cfg.AllowInsecure {
 		if cfg.CertFile == "" || cfg.KeyFile == "" {
@@ -151,17 +156,52 @@ func NewDTLSServer(
 		return nil, ErrDTLSClientCertRequired
 	}
 
-	return s, nil
-}
-
-// Start starts the DTLS server.
-func (s *DTLSServer) Start(ctx context.Context) error {
-	// Check if we're running insecure
-	if s.config.AllowInsecure && (s.config.CertFile == "" || s.config.KeyFile == "") {
-		return s.startInsecure(ctx)
+	// Zero values would disable the server in surprising ways (no workers,
+	// an immediate handshake or idle timeout), so fall back to the defaults.
+	defaults := DefaultDTLSServerConfig()
+	if cfg.Workers <= 0 {
+		cfg.Workers = defaults.Workers
+	}
+	if cfg.MaxMessageSize <= 0 {
+		cfg.MaxMessageSize = defaults.MaxMessageSize
+	}
+	if cfg.ConnectionTimeout <= 0 {
+		cfg.ConnectionTimeout = defaults.ConnectionTimeout
+	}
+	if cfg.IdleTimeout <= 0 {
+		cfg.IdleTimeout = defaults.IdleTimeout
 	}
 
-	return s.startSecure(ctx)
+	return &DTLSServer{
+		config:     cfg,
+		parser:     parser,
+		normalizer: normalizer,
+		validator:  validator,
+		queue:      q,
+		logger:     logger,
+		rejects:    cef.NewRejectLogger(logger, "dtls", cef.DefaultRejectLogInterval),
+		done:       make(chan struct{}),
+		conns:      make(map[net.Conn]struct{}),
+	}, nil
+}
+
+// Start starts the DTLS server. The server runs until Stop is called or ctx
+// is cancelled; Stop must be called in either case to release resources.
+func (s *DTLSServer) Start(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	s.cancel = cancel
+
+	var err error
+	// Check if we're running insecure
+	if s.config.AllowInsecure && (s.config.CertFile == "" || s.config.KeyFile == "") {
+		err = s.startInsecure(ctx)
+	} else {
+		err = s.startSecure(ctx)
+	}
+	if err != nil {
+		cancel()
+	}
+	return err
 }
 
 // startSecure starts the server with DTLS encryption.
@@ -172,13 +212,11 @@ func (s *DTLSServer) startSecure(ctx context.Context) error {
 		return fmt.Errorf("failed to load DTLS certificate: %w", err)
 	}
 
-	// Build DTLS config
-	dtlsConfig := &dtls.Config{
-		Certificates:         []tls.Certificate{cert},
-		ExtendedMasterSecret: dtls.RequireExtendedMasterSecret,
-		ConnectContextMaker: func() (context.Context, func()) {
-			return context.WithTimeout(ctx, s.config.ConnectionTimeout)
-		},
+	// Build DTLS options. The handshake timeout (ConnectionTimeout) is
+	// applied per connection in handleConnection.
+	opts := []dtls.ServerOption{
+		dtls.WithCertificates(cert),
+		dtls.WithExtendedMasterSecret(dtls.RequireExtendedMasterSecret),
 	}
 
 	// Load CA for mutual TLS
@@ -193,11 +231,11 @@ func (s *DTLSServer) startSecure(ctx context.Context) error {
 			return fmt.Errorf("failed to parse CA certificate")
 		}
 
-		dtlsConfig.ClientCAs = caPool
-		dtlsConfig.ClientAuth = dtls.RequireAndVerifyClientCert
+		opts = append(opts,
+			dtls.WithClientCAs(caPool),
+			dtls.WithClientAuth(dtls.RequireAndVerifyClientCert),
+		)
 	}
-
-	s.dtlsConfig = dtlsConfig
 
 	// Resolve address
 	addr, err := net.ResolveUDPAddr("udp", s.config.Address)
@@ -206,7 +244,7 @@ func (s *DTLSServer) startSecure(ctx context.Context) error {
 	}
 
 	// Create DTLS listener
-	listener, err := dtls.Listen("udp", addr, dtlsConfig)
+	listener, err := dtls.ListenWithOptions("udp", addr, opts...)
 	if err != nil {
 		return fmt.Errorf("failed to start DTLS listener: %w", err)
 	}
@@ -217,6 +255,15 @@ func (s *DTLSServer) startSecure(ctx context.Context) error {
 		"address", s.config.Address,
 		"mutual_tls", s.config.RequireClientCert,
 	)
+
+	// The DTLS listener has no accept deadline, so close it on shutdown to
+	// unblock Accept.
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		<-ctx.Done()
+		listener.Close()
+	}()
 
 	// Start accept loop
 	s.wg.Add(1)
@@ -233,7 +280,7 @@ func (s *DTLSServer) startInsecure(ctx context.Context) error {
 		"recommendation", "Use DTLS with certificates for production",
 	)
 	s.logger.Warn("SECURITY WARNING: CEF events may contain sensitive data and will be transmitted in cleartext")
-	s.insecureWarned = true
+	s.insecureWarned.Store(true)
 
 	addr, err := net.ResolveUDPAddr("udp", s.config.Address)
 	if err != nil {
@@ -281,71 +328,99 @@ type dtlsMessage struct {
 	secure   bool
 }
 
-// acceptLoop accepts DTLS connections.
+// acceptLoop accepts DTLS connections until the listener is closed.
 func (s *DTLSServer) acceptLoop(ctx context.Context) {
 	defer s.wg.Done()
 
 	messages := make(chan dtlsMessage, s.config.Workers*100)
 
-	// Safe close function using sync.Once
-	closeMessages := func() {
-		s.messagesClosed.Do(func() {
-			close(messages)
-		})
-	}
-
-	// Start workers
+	// Start workers; they exit once messages is closed and drained.
 	for i := 0; i < s.config.Workers; i++ {
 		s.wg.Add(1)
 		go s.worker(ctx, messages, i)
 	}
 
+	// Connection handlers send on messages, so it may only be closed after
+	// every handler has returned.
+	var handlers sync.WaitGroup
+	defer func() {
+		s.closeConns()
+		handlers.Wait()
+		s.messagesClosed.Do(func() {
+			close(messages)
+		})
+	}()
+
 	for {
-		select {
-		case <-ctx.Done():
-			closeMessages()
-			return
-		case <-s.done:
-			closeMessages()
-			return
-		default:
-		}
-
-		// Accept with deadline
-		if dl, ok := s.listener.(interface{ SetDeadline(time.Time) error }); ok {
-			if err := dl.SetDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
-				// Accept below surfaces the underlying listener failure.
-				s.logger.Debug("failed to set DTLS accept deadline", "error", err)
-			}
-		}
-
 		conn, err := s.listener.Accept()
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				continue
-			}
-			select {
-			case <-s.done:
+			if ctx.Err() != nil || errors.Is(err, net.ErrClosed) {
 				return
-			default:
-				s.logger.Debug("DTLS accept error", "error", err)
-				atomic.AddUint64(&s.handshakeErrs, 1)
-				continue
 			}
+			s.logger.Debug("DTLS accept error", "error", err)
+			// Avoid spinning if the listener keeps failing.
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(100 * time.Millisecond):
+			}
+			continue
 		}
 
+		if !s.trackConn(conn) {
+			conn.Close() // shutting down
+			return
+		}
 		atomic.AddUint64(&s.connections, 1)
-		atomic.AddUint64(&s.handshakes, 1)
 
-		s.wg.Add(1)
-		go s.handleConnection(ctx, conn, messages)
+		handlers.Add(1)
+		go func() {
+			defer handlers.Done()
+			s.handleConnection(ctx, conn, messages)
+		}()
+	}
+}
+
+// trackConn registers an accepted connection so that shutdown can close it.
+// It returns false once the server has started closing connections.
+func (s *DTLSServer) trackConn(conn net.Conn) bool {
+	s.connsMu.Lock()
+	defer s.connsMu.Unlock()
+	if s.closing {
+		return false
+	}
+	s.conns[conn] = struct{}{}
+	return true
+}
+
+// untrackConn forgets and closes a connection.
+func (s *DTLSServer) untrackConn(conn net.Conn) {
+	s.connsMu.Lock()
+	delete(s.conns, conn)
+	s.connsMu.Unlock()
+	conn.Close()
+}
+
+// closeConns closes every open connection and refuses new ones. A DTLS Close
+// waits for an in-progress handshake, so the server context must already be
+// cancelled; the connections are closed outside the lock.
+func (s *DTLSServer) closeConns() {
+	s.connsMu.Lock()
+	s.closing = true
+	conns := make([]net.Conn, 0, len(s.conns))
+	for conn := range s.conns {
+		conns = append(conns, conn)
+	}
+	s.connsMu.Unlock()
+
+	for _, conn := range conns {
+		conn.Close()
 	}
 }
 
 // handleConnection handles a single DTLS connection.
 func (s *DTLSServer) handleConnection(ctx context.Context, conn net.Conn, messages chan<- dtlsMessage) {
-	defer s.wg.Done()
-	defer conn.Close()
+	defer s.untrackConn(conn)
 
 	var sourceIP string
 	if addr := conn.RemoteAddr(); addr != nil {
@@ -355,6 +430,22 @@ func (s *DTLSServer) handleConnection(ctx context.Context, conn net.Conn, messag
 			sourceIP = addr.String()
 		}
 	}
+
+	// Complete the handshake before reading so that it is bounded by
+	// ConnectionTimeout and failures are counted.
+	if dc, ok := conn.(*dtls.Conn); ok {
+		hsCtx, cancel := context.WithTimeout(ctx, s.config.ConnectionTimeout)
+		err := dc.HandshakeContext(hsCtx)
+		cancel()
+		if err != nil {
+			atomic.AddUint64(&s.handshakeErrs, 1)
+			if ctx.Err() == nil {
+				s.rejects.Reject("handshake", err, sourceIP, "")
+			}
+			return
+		}
+	}
+	atomic.AddUint64(&s.handshakes, 1)
 
 	s.logger.Debug("new DTLS connection",
 		"remote", conn.RemoteAddr(),
@@ -384,7 +475,9 @@ func (s *DTLSServer) handleConnection(ctx context.Context, conn net.Conn, messag
 				s.logger.Debug("DTLS connection idle timeout", "remote", sourceIP)
 				return
 			}
-			s.logger.Debug("DTLS read error", "error", err, "remote", sourceIP)
+			if ctx.Err() == nil {
+				s.logger.Debug("DTLS read error", "error", err, "remote", sourceIP)
+			}
 			return
 		}
 
@@ -398,7 +491,7 @@ func (s *DTLSServer) handleConnection(ctx context.Context, conn net.Conn, messag
 		case messages <- dtlsMessage{data: data, sourceIP: sourceIP, secure: true}:
 		default:
 			atomic.AddUint64(&s.errors, 1)
-			s.logger.Debug("message channel full, dropping message")
+			s.rejects.Reject("queue", errMessageChannelFull, sourceIP, "")
 		}
 	}
 }
@@ -447,6 +540,7 @@ func (s *DTLSServer) insecureReceiver(ctx context.Context, messages chan<- dtlsM
 		case messages <- dtlsMessage{data: data, sourceIP: remoteAddr.IP.String(), secure: false}:
 		default:
 			atomic.AddUint64(&s.errors, 1)
+			s.rejects.Reject("queue", errMessageChannelFull, remoteAddr.IP.String(), "")
 		}
 	}
 }
@@ -462,15 +556,14 @@ func (s *DTLSServer) worker(ctx context.Context, messages <-chan dtlsMessage, wo
 
 // processMessage processes a single CEF message.
 func (s *DTLSServer) processMessage(ctx context.Context, msg dtlsMessage) {
+	raw := string(msg.data)
+
 	// Parse CEF
-	cefEvent, err := s.parser.Parse(string(msg.data))
+	cefEvent, err := s.parser.Parse(raw)
 	if err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		s.logger.Debug("CEF parse error",
-			"error", err,
-			"source", msg.sourceIP,
-			"secure", msg.secure,
-		)
+		atomic.AddUint64(&s.parseErrors, 1)
+		s.rejects.Reject("parse", err, msg.sourceIP, raw)
 		return
 	}
 	atomic.AddUint64(&s.parsed, 1)
@@ -479,10 +572,8 @@ func (s *DTLSServer) processMessage(ctx context.Context, msg dtlsMessage) {
 	event, err := s.normalizer.Normalize(cefEvent, msg.sourceIP)
 	if err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		s.logger.Debug("CEF normalize error",
-			"error", err,
-			"source", msg.sourceIP,
-		)
+		atomic.AddUint64(&s.validationErrors, 1)
+		s.rejects.Reject("normalize", err, msg.sourceIP, raw)
 		return
 	}
 	atomic.AddUint64(&s.normalized, 1)
@@ -490,57 +581,68 @@ func (s *DTLSServer) processMessage(ctx context.Context, msg dtlsMessage) {
 	// Validate
 	if err := s.validator.Validate(event); err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		s.logger.Debug("CEF validation error",
-			"error", err,
-			"source", msg.sourceIP,
-		)
+		atomic.AddUint64(&s.validationErrors, 1)
+		s.rejects.Reject("validate", err, msg.sourceIP, raw)
 		return
 	}
 
 	// Queue
 	if err := s.queue.Push(event); err != nil {
 		atomic.AddUint64(&s.errors, 1)
+		s.rejects.Reject("queue", err, msg.sourceIP, raw)
 		return
 	}
 
 	atomic.AddUint64(&s.queued, 1)
 }
 
-// Stop stops the DTLS server gracefully.
+// Stop stops the DTLS server gracefully: it stops accepting, closes open
+// connections and waits for queued messages to be processed. It is safe to
+// call more than once.
 func (s *DTLSServer) Stop() {
-	close(s.done)
+	s.stopOnce.Do(func() {
+		close(s.done)
+		if s.cancel != nil {
+			s.cancel()
+		}
 
-	if s.listener != nil {
-		s.listener.Close()
-	}
-	if s.udpConn != nil {
-		s.udpConn.Close()
-	}
+		if s.listener != nil {
+			s.listener.Close()
+		}
+		if s.udpConn != nil {
+			s.udpConn.Close()
+		}
+		s.closeConns()
 
-	s.wg.Wait()
+		s.wg.Wait()
 
-	s.logger.Info("DTLS server stopped",
-		"connections", atomic.LoadUint64(&s.connections),
-		"handshakes", atomic.LoadUint64(&s.handshakes),
-		"handshake_errors", atomic.LoadUint64(&s.handshakeErrs),
-		"received", atomic.LoadUint64(&s.received),
-		"queued", atomic.LoadUint64(&s.queued),
-		"errors", atomic.LoadUint64(&s.errors),
-	)
+		s.logger.Info("DTLS server stopped",
+			"connections", atomic.LoadUint64(&s.connections),
+			"handshakes", atomic.LoadUint64(&s.handshakes),
+			"handshake_errors", atomic.LoadUint64(&s.handshakeErrs),
+			"received", atomic.LoadUint64(&s.received),
+			"queued", atomic.LoadUint64(&s.queued),
+			"errors", atomic.LoadUint64(&s.errors),
+			"parse_errors", atomic.LoadUint64(&s.parseErrors),
+			"validation_errors", atomic.LoadUint64(&s.validationErrors),
+		)
+	})
 }
 
 // Metrics returns the current server metrics.
 func (s *DTLSServer) Metrics() DTLSServerMetrics {
 	return DTLSServerMetrics{
-		Connections:    atomic.LoadUint64(&s.connections),
-		Handshakes:     atomic.LoadUint64(&s.handshakes),
-		HandshakeErrs:  atomic.LoadUint64(&s.handshakeErrs),
-		Received:       atomic.LoadUint64(&s.received),
-		Parsed:         atomic.LoadUint64(&s.parsed),
-		Normalized:     atomic.LoadUint64(&s.normalized),
-		Queued:         atomic.LoadUint64(&s.queued),
-		Errors:         atomic.LoadUint64(&s.errors),
-		InsecureWarned: s.insecureWarned,
+		Connections:      atomic.LoadUint64(&s.connections),
+		Handshakes:       atomic.LoadUint64(&s.handshakes),
+		HandshakeErrs:    atomic.LoadUint64(&s.handshakeErrs),
+		Received:         atomic.LoadUint64(&s.received),
+		Parsed:           atomic.LoadUint64(&s.parsed),
+		Normalized:       atomic.LoadUint64(&s.normalized),
+		Queued:           atomic.LoadUint64(&s.queued),
+		Errors:           atomic.LoadUint64(&s.errors),
+		ParseErrors:      atomic.LoadUint64(&s.parseErrors),
+		ValidationErrors: atomic.LoadUint64(&s.validationErrors),
+		InsecureWarned:   s.insecureWarned.Load(),
 	}
 }
 

@@ -51,7 +51,50 @@ func DefaultNormalizerConfig() NormalizerConfig {
 // Normalizer converts CEF events to canonical schema.
 type Normalizer struct {
 	config NormalizerConfig
+	now    func() time.Time // for tests; nil means time.Now
 }
+
+// timestampLayouts are the CEF date formats for rt/start (see the CEF
+// implementation standard) plus RFC 3339 and ISO forms. time.Parse accepts a
+// fractional second after the seconds field even when the layout has none,
+// so the ".SSS" variants need no entries of their own.
+var timestampLayouts = []string{
+	time.RFC3339,
+	"Jan _2 2006 15:04:05 MST",
+	"Jan _2 2006 15:04:05 Z07:00",
+	"Jan _2 2006 15:04:05 -0700",
+	"Jan _2 2006 15:04:05",
+	"2006-01-02 15:04:05",
+	"2006-01-02T15:04:05",
+}
+
+// yearlessLayouts are the CEF and RFC 3164 formats without a year; the year
+// is inferred by resolveYear.
+var yearlessLayouts = []string{
+	"Jan _2 15:04:05 MST",
+	"Jan _2 15:04:05 Z07:00",
+	"Jan _2 15:04:05 -0700",
+	"Jan _2 15:04:05",
+}
+
+// zoneOffsets resolves the time zone abbreviations commonly found in CEF
+// timestamps. time.Parse only knows the abbreviations of the local zone and
+// would otherwise treat any other one as UTC. Ambiguous abbreviations (IST,
+// BST) are left out; CST is taken as US Central, as in ArcSight.
+var zoneOffsets = map[string]int{
+	"UTC": 0, "UT": 0, "GMT": 0, "Z": 0, "WET": 0,
+	"WEST": 1 * 3600, "CET": 1 * 3600, "CEST": 2 * 3600, "EET": 2 * 3600, "EEST": 3 * 3600, "MSK": 3 * 3600,
+	"EST": -5 * 3600, "EDT": -4 * 3600, "CST": -6 * 3600, "CDT": -5 * 3600,
+	"MST": -7 * 3600, "MDT": -6 * 3600, "PST": -8 * 3600, "PDT": -7 * 3600,
+	"AKST": -9 * 3600, "AKDT": -8 * 3600, "HST": -10 * 3600,
+	"JST": 9 * 3600, "KST": 9 * 3600, "AWST": 8 * 3600, "ACST": 9*3600 + 1800,
+	"AEST": 10 * 3600, "AEDT": 11 * 3600, "NZST": 12 * 3600, "NZDT": 13 * 3600,
+}
+
+// yearlessSlack is how far in the future a year-less timestamp may lie before
+// it is attributed to the previous year, and how close to now a timestamp
+// just after New Year must be to be attributed to the next year.
+const yearlessSlack = 24 * time.Hour
 
 // NewNormalizer creates a new normalizer with the given configuration.
 func NewNormalizer(cfg NormalizerConfig) *Normalizer {
@@ -67,7 +110,15 @@ func NewNormalizer(cfg NormalizerConfig) *Normalizer {
 
 	return &Normalizer{
 		config: cfg,
+		now:    time.Now,
 	}
+}
+
+func (n *Normalizer) currentTime() time.Time {
+	if n.now != nil {
+		return n.now()
+	}
+	return time.Now()
 }
 
 // Normalize converts a CEFEvent to a canonical schema Event.
@@ -75,7 +126,7 @@ func (n *Normalizer) Normalize(cef *CEFEvent, sourceIP string) (*schema.Event, e
 	event := &schema.Event{
 		EventID:       uuid.New(),
 		Timestamp:     n.extractTimestamp(cef),
-		ReceivedAt:    time.Now().UTC(),
+		ReceivedAt:    n.currentTime().UTC(),
 		SchemaVersion: "1.0.0",
 		TenantID:      n.config.DefaultTenantID,
 
@@ -101,53 +152,103 @@ func (n *Normalizer) Normalize(cef *CEFEvent, sourceIP string) (*schema.Event, e
 	return event, nil
 }
 
-// extractTimestamp extracts timestamp from CEF extensions or uses current time.
+// extractTimestamp takes the event time from the rt or start extension, then
+// from the syslog header, and falls back to the current time.
 func (n *Normalizer) extractTimestamp(cef *CEFEvent) time.Time {
-	// Try receipt time first
-	if rt, ok := cef.Extensions["rt"]; ok {
-		if t, err := n.parseTimestamp(rt); err == nil {
+	candidates := []string{cef.Extensions["rt"], cef.Extensions["start"], cef.SyslogTimestamp}
+	for _, s := range candidates {
+		if s == "" {
+			continue
+		}
+		if t, err := n.parseTimestamp(s); err == nil {
 			return t
 		}
 	}
 
-	// Try start time
-	if start, ok := cef.Extensions["start"]; ok {
-		if t, err := n.parseTimestamp(start); err == nil {
-			return t
-		}
-	}
-
-	// Default to now
-	return time.Now().UTC()
+	return n.currentTime().UTC()
 }
 
-// parseTimestamp handles various CEF timestamp formats.
+// parseTimestamp handles the CEF timestamp formats: milliseconds since the
+// epoch and "MMM dd [yyyy] HH:mm:ss[.SSS] [zzz]", plus RFC 3339.
 func (n *Normalizer) parseTimestamp(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+
 	// CEF uses milliseconds since epoch
 	if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
 		return time.UnixMilli(ms).UTC(), nil
 	}
 
-	// Try common formats
-	formats := []string{
-		time.RFC3339,
-		time.RFC3339Nano,
-		"Jan 02 2006 15:04:05",
-		"Jan 02 15:04:05",
-		"2006-01-02T15:04:05Z",
-		"2006-01-02 15:04:05",
+	for _, layout := range timestampLayouts {
+		if parsed, err := time.Parse(layout, s); err == nil {
+			if t, ok := resolveZone(parsed); ok {
+				return t.UTC(), nil
+			}
+		}
 	}
 
-	for _, format := range formats {
-		if t, err := time.Parse(format, s); err == nil {
-			return t.UTC(), nil
+	for _, layout := range yearlessLayouts {
+		if parsed, err := time.Parse(layout, s); err == nil {
+			if t, ok := resolveZone(parsed); ok {
+				return resolveYear(t, n.currentTime()).UTC(), nil
+			}
 		}
 	}
 
 	return time.Time{}, fmt.Errorf("unable to parse timestamp: %s", s)
 }
 
-// extractSourceHost gets the source host from extensions or falls back to source IP.
+// resolveZone gives a time parsed with a zone abbreviation its real offset.
+// It reports false for an abbreviation it does not know, which time.Parse
+// would otherwise have treated as UTC.
+func resolveZone(t time.Time) (time.Time, bool) {
+	name, offset := t.Zone()
+	if name == "" || !isAlpha(name) {
+		return t, true // no abbreviation, or a numeric offset
+	}
+	if known, ok := zoneOffsets[strings.ToUpper(name)]; ok {
+		if known == offset {
+			return t, true
+		}
+		return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(),
+			time.FixedZone(name, known)), true
+	}
+	// Unknown abbreviation: trust it only if the local zone defined it.
+	return t, offset != 0
+}
+
+func isAlpha(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c < 'a' || c > 'z') && (c < 'A' || c > 'Z') {
+			return false
+		}
+	}
+	return true
+}
+
+// resolveYear sets the year of a timestamp parsed without one (time.Parse
+// yields year 0). It uses the current year unless that puts the time more than
+// yearlessSlack in the future (an event from late December received in
+// January), or the next year is within yearlessSlack of now (an event from
+// just after New Year received from a sender whose clock is ahead).
+func resolveYear(t, now time.Time) time.Time {
+	withYear := func(year int) time.Time {
+		return time.Date(year, t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), t.Location())
+	}
+
+	year := now.In(t.Location()).Year()
+	switch cur := withYear(year); {
+	case cur.Sub(now) > yearlessSlack:
+		return withYear(year - 1)
+	case withYear(year+1).Sub(now) <= yearlessSlack:
+		return withYear(year + 1)
+	default:
+		return cur
+	}
+}
+
+// extractSourceHost gets the reporting host from the extensions, then from the
+// syslog header, and falls back to the peer address.
 func (n *Normalizer) extractSourceHost(cef *CEFEvent, sourceIP string) string {
 	if host, ok := cef.Extensions["dvchost"]; ok {
 		return host
@@ -157,6 +258,9 @@ func (n *Normalizer) extractSourceHost(cef *CEFEvent, sourceIP string) string {
 	}
 	if ip, ok := cef.Extensions["dvc"]; ok {
 		return ip
+	}
+	if cef.SyslogHost != "" {
+		return cef.SyslogHost
 	}
 	return sourceIP
 }
@@ -177,18 +281,48 @@ func (n *Normalizer) mapAction(cef *CEFEvent) string {
 	return n.normalizeActionString(cef.Name)
 }
 
-// normalizeActionString converts a string to action format (lowercase, dots).
+// normalizeActionString converts a free-form name to the schema's action format
+// (lowercase dot-separated segments of [a-z0-9_], each starting with a letter).
+// Other characters become '_', runs of '_' collapse, empty segments are
+// dropped and a segment starting with a digit gets an "n" prefix. A name
+// without a dot is placed under "event.".
 func (n *Normalizer) normalizeActionString(s string) string {
-	s = strings.ToLower(s)
-	s = strings.ReplaceAll(s, " ", "_")
-	s = strings.ReplaceAll(s, "-", "_")
-
-	// Ensure it matches action pattern
-	if !strings.Contains(s, ".") {
-		s = "event." + s
+	var b strings.Builder
+	b.Grow(len(s))
+	underscore := false
+	for _, r := range strings.ToLower(s) {
+		if r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' {
+			b.WriteRune(r)
+			underscore = false
+			continue
+		}
+		if !underscore {
+			b.WriteByte('_')
+			underscore = true
+		}
 	}
 
-	return s
+	segments := strings.Split(b.String(), ".")
+	kept := segments[:0]
+	for _, seg := range segments {
+		seg = strings.Trim(seg, "_")
+		if seg == "" {
+			continue
+		}
+		if seg[0] >= '0' && seg[0] <= '9' {
+			seg = "n" + seg
+		}
+		kept = append(kept, seg)
+	}
+
+	switch len(kept) {
+	case 0:
+		return "event.unknown"
+	case 1:
+		return "event." + kept[0]
+	default:
+		return strings.Join(kept, ".")
+	}
 }
 
 // extractTarget determines the target from CEF extensions.
@@ -307,6 +441,13 @@ func (n *Normalizer) buildMetadata(cef *CEFEvent) map[string]any {
 		if val, ok := cef.Extensions[field]; ok {
 			metadata["cef_"+field] = val
 		}
+	}
+
+	if cef.SyslogHost != "" {
+		metadata["syslog_host"] = cef.SyslogHost
+	}
+	if cef.SyslogTimestamp != "" {
+		metadata["syslog_timestamp"] = cef.SyslogTimestamp
 	}
 
 	return metadata

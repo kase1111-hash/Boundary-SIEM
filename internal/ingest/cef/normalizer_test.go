@@ -1,6 +1,7 @@
 package cef
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -338,6 +339,268 @@ func TestNormalizer_ExtractTimestamp(t *testing.T) {
 				tt.checkFunc(t, result)
 			}
 		})
+	}
+}
+
+// TestNormalizer_ActionAlwaysValid is a regression test for event names with
+// ':', '(' or a leading digit producing actions that fail the schema's
+// action_format validation, which made the servers drop the events.
+func TestNormalizer_ActionAlwaysValid(t *testing.T) {
+	normalizer := NewNormalizer(DefaultNormalizerConfig())
+
+	tests := []struct {
+		name  string
+		cef   *CEFEvent
+		want  string
+		label string
+	}{
+		{label: "fortinet colon", cef: &CEFEvent{SignatureID: "0000000013", Name: "traffic:forward accept"}, want: "event.traffic_forward_accept"},
+		{label: "parentheses", cef: &CEFEvent{SignatureID: "942100", Name: "SQL Injection (libinjection)"}, want: "event.sql_injection_libinjection"},
+		{label: "leading digit", cef: &CEFEvent{SignatureID: "x", Name: "404 Not Found"}, want: "event.n404_not_found"},
+		{label: "plain name unchanged", cef: &CEFEvent{SignatureID: "x", Name: "Custom Event Name"}, want: "event.custom_event_name"},
+		{label: "dotted name keeps dots", cef: &CEFEvent{SignatureID: "x", Name: "Network.Connection-Allowed"}, want: "network.connection_allowed"},
+		{label: "empty segments dropped", cef: &CEFEvent{SignatureID: "x", Name: "a..b."}, want: "a.b"},
+		{label: "digit segment", cef: &CEFEvent{SignatureID: "x", Name: "net.1st hop"}, want: "net.n1st_hop"},
+		{label: "only punctuation", cef: &CEFEvent{SignatureID: "x", Name: "!!!"}, want: "event.unknown"},
+		{label: "empty name", cef: &CEFEvent{SignatureID: "x", Name: ""}, want: "event.unknown"},
+		{label: "non-ascii", cef: &CEFEvent{SignatureID: "x", Name: "Übergabe fehlgeschlagen"}, want: "event.bergabe_fehlgeschlagen"},
+		{label: "act extension sanitised", cef: &CEFEvent{SignatureID: "x", Name: "n", Extensions: map[string]string{"act": "Block/Drop"}}, want: "event.block_drop"},
+		{label: "mapped signature untouched", cef: &CEFEvent{SignatureID: "100", Name: "404 whatever"}, want: "session.created"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.label, func(t *testing.T) {
+			if tt.cef.Extensions == nil {
+				tt.cef.Extensions = map[string]string{}
+			}
+			got := normalizer.mapAction(tt.cef)
+			if got != tt.want {
+				t.Errorf("mapAction(%q) = %q, want %q", tt.cef.Name, got, tt.want)
+			}
+			if !schema.ValidateAction(got) {
+				t.Errorf("mapAction(%q) = %q does not satisfy the schema action format", tt.cef.Name, got)
+			}
+		})
+	}
+}
+
+// TestNormalizer_TimestampFormats is a regression test for the CEF-spec
+// "MMM dd HH:mm:ss" family of rt/start formats: the year-less forms parsed
+// to year 0 (and the event was rejected as too old), and the millisecond and
+// time-zone variants fell back to time.Now().
+func TestNormalizer_TimestampFormats(t *testing.T) {
+	normalizer := NewNormalizer(DefaultNormalizerConfig())
+	validator := schema.NewValidator()
+
+	ref := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	refMs := ref.Add(123 * time.Millisecond)
+	plus2 := time.FixedZone("", 2*3600)
+
+	tests := []struct {
+		name string
+		ts   string
+		want time.Time
+	}{
+		{"MMM dd HH:mm:ss", ref.Format("Jan 02 15:04:05"), ref},
+		{"MMM d HH:mm:ss (space padded)", ref.Format("Jan _2 15:04:05"), ref},
+		{"MMM dd HH:mm:ss.SSS", refMs.Format("Jan 02 15:04:05.000"), refMs},
+		{"MMM dd HH:mm:ss zzz", ref.Format("Jan 02 15:04:05 MST"), ref},
+		{"MMM dd HH:mm:ss.SSS zzz", refMs.Format("Jan 02 15:04:05.000 MST"), refMs},
+		{"MMM dd HH:mm:ss numeric zone", ref.In(plus2).Format("Jan 02 15:04:05 -0700"), ref},
+		{"MMM dd yyyy HH:mm:ss", ref.Format("Jan 02 2006 15:04:05"), ref},
+		{"MMM dd yyyy HH:mm:ss.SSS", refMs.Format("Jan 02 2006 15:04:05.000"), refMs},
+		{"MMM dd yyyy HH:mm:ss zzz", ref.Format("Jan 02 2006 15:04:05 MST"), ref},
+		{"MMM dd yyyy HH:mm:ss.SSS zzz", refMs.Format("Jan 02 2006 15:04:05.000 MST"), refMs},
+		{"MMM dd yyyy HH:mm:ss numeric zone", ref.In(plus2).Format("Jan 02 2006 15:04:05 -07:00"), ref},
+		{"epoch milliseconds", strconv.FormatInt(refMs.UnixMilli(), 10), refMs},
+		{"RFC3339", ref.Format(time.RFC3339), ref},
+		{"RFC3339 with offset and millis", refMs.In(plus2).Format(time.RFC3339Nano), refMs},
+		{"ISO without zone", ref.Format("2006-01-02 15:04:05"), ref},
+	}
+
+	for _, key := range []string{"rt", "start"} {
+		for _, tt := range tests {
+			t.Run(key+"/"+tt.name, func(t *testing.T) {
+				cef := &CEFEvent{
+					DeviceProduct: "P",
+					SignatureID:   "100",
+					Name:          "n",
+					Severity:      5,
+					Extensions:    map[string]string{key: tt.ts},
+				}
+				event, err := normalizer.Normalize(cef, "10.0.0.1")
+				if err != nil {
+					t.Fatalf("Normalize() error: %v", err)
+				}
+				if !event.Timestamp.Equal(tt.want) {
+					t.Errorf("%s=%q -> Timestamp = %v, want %v", key, tt.ts, event.Timestamp, tt.want)
+				}
+				if err := validator.Validate(event); err != nil {
+					t.Errorf("Validate() error: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// TestNormalizer_YearlessTimestampYear checks how the year of a year-less
+// timestamp is inferred, including across New Year.
+func TestNormalizer_YearlessTimestampYear(t *testing.T) {
+	utc := func(y int, mo time.Month, d, h, mi, s int) time.Time {
+		return time.Date(y, mo, d, h, mi, s, 0, time.UTC)
+	}
+
+	tests := []struct {
+		name string
+		now  time.Time
+		in   string
+		want time.Time
+	}{
+		{"same day", utc(2026, 9, 30, 12, 0, 0), "Sep 30 10:15:00", utc(2026, 9, 30, 10, 15, 0)},
+		{"months ago", utc(2026, 9, 30, 12, 0, 0), "Mar 01 00:00:00", utc(2026, 3, 1, 0, 0, 0)},
+		{"slightly in the future keeps the year", utc(2026, 9, 30, 12, 0, 0), "Sep 30 14:00:00", utc(2026, 9, 30, 14, 0, 0)},
+		{"late December received in January", utc(2026, 1, 1, 0, 0, 30), "Dec 31 23:59:50", utc(2025, 12, 31, 23, 59, 50)},
+		{"early January from a sender ahead of us", utc(2025, 12, 31, 23, 59, 50), "Jan 01 00:00:10", utc(2026, 1, 1, 0, 0, 10)},
+		{"zone offset applied before choosing the year", utc(2026, 1, 1, 0, 30, 0), "Jan 01 01:00:00 +0100", utc(2026, 1, 1, 0, 0, 0)},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			n := NewNormalizer(DefaultNormalizerConfig())
+			n.now = func() time.Time { return tt.now }
+			got, err := n.parseTimestamp(tt.in)
+			if err != nil {
+				t.Fatalf("parseTimestamp(%q) error: %v", tt.in, err)
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("parseTimestamp(%q) at %v = %v, want %v", tt.in, tt.now, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNormalizer_TimestampZoneAbbreviations checks that zone abbreviations
+// get their real offset independently of the host's local zone, and that
+// unknown ones are not silently read as UTC.
+func TestNormalizer_TimestampZoneAbbreviations(t *testing.T) {
+	n := NewNormalizer(DefaultNormalizerConfig())
+
+	tests := []struct {
+		in      string
+		want    time.Time
+		wantErr bool
+	}{
+		{in: "Sep 30 2026 10:15:00 UTC", want: time.Date(2026, 9, 30, 10, 15, 0, 0, time.UTC)},
+		{in: "Sep 30 2026 10:15:00 GMT", want: time.Date(2026, 9, 30, 10, 15, 0, 0, time.UTC)},
+		{in: "Sep 30 2026 10:15:00 PDT", want: time.Date(2026, 9, 30, 17, 15, 0, 0, time.UTC)},
+		{in: "Sep 30 2026 10:15:00.250 CEST", want: time.Date(2026, 9, 30, 8, 15, 0, 250e6, time.UTC)},
+		{in: "Sep 30 2026 10:15:00 XYZT", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			got, err := n.parseTimestamp(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseTimestamp(%q) = %v, want error", tt.in, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseTimestamp(%q) error: %v", tt.in, err)
+			}
+			if !got.Equal(tt.want) {
+				t.Errorf("parseTimestamp(%q) = %v, want %v", tt.in, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestNormalizer_SyslogHeaderFallback checks that the host and timestamp of a
+// syslog-framed CEF message are used when the CEF extensions carry neither.
+func TestNormalizer_SyslogHeaderFallback(t *testing.T) {
+	normalizer := NewNormalizer(DefaultNormalizerConfig())
+	parser := NewParser(DefaultParserConfig())
+	validator := schema.NewValidator()
+
+	ref := time.Now().UTC().Add(-10 * time.Minute).Truncate(time.Second)
+
+	tests := []struct {
+		name     string
+		message  string
+		wantHost string
+		wantTS   time.Time
+	}{
+		{
+			name:     "RFC3164 header supplies host and time",
+			message:  "<134>" + ref.Format("Jan _2 15:04:05") + " fw01 CEF:0|Acme|FW|1.0|100|Session Created|5|src=10.0.0.1",
+			wantHost: "fw01",
+			wantTS:   ref,
+		},
+		{
+			name:     "RFC5424 header supplies host and time",
+			message:  "<134>1 " + ref.Format(time.RFC3339) + " fw02 app - - - CEF:0|Acme|FW|1.0|100|Session Created|5|src=10.0.0.1",
+			wantHost: "fw02",
+			wantTS:   ref,
+		},
+		{
+			name:     "CEF extensions take precedence",
+			message:  "<134>Jan 01 00:00:00 fw01 CEF:0|Acme|FW|1.0|100|Session Created|5|dvchost=dev1 rt=" + strconv.FormatInt(ref.UnixMilli(), 10),
+			wantHost: "dev1",
+			wantTS:   ref,
+		},
+		{
+			name:     "no header falls back to the peer address",
+			message:  "CEF:0|Acme|FW|1.0|100|Session Created|5|rt=" + strconv.FormatInt(ref.UnixMilli(), 10),
+			wantHost: "192.0.2.9",
+			wantTS:   ref,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cef, err := parser.Parse(tt.message)
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			event, err := normalizer.Normalize(cef, "192.0.2.9")
+			if err != nil {
+				t.Fatalf("Normalize() error: %v", err)
+			}
+			if event.Source.Host != tt.wantHost {
+				t.Errorf("Source.Host = %q, want %q", event.Source.Host, tt.wantHost)
+			}
+			if !event.Timestamp.Equal(tt.wantTS) {
+				t.Errorf("Timestamp = %v, want %v", event.Timestamp, tt.wantTS)
+			}
+			if err := validator.Validate(event); err != nil {
+				t.Errorf("Validate() error: %v", err)
+			}
+		})
+	}
+}
+
+// TestNormalizer_FortinetStyleEventValidates runs a realistic vendor message
+// through parse, normalize and validate, which used to fail on the action.
+func TestNormalizer_FortinetStyleEventValidates(t *testing.T) {
+	normalizer := NewNormalizer(DefaultNormalizerConfig())
+	parser := NewParser(DefaultParserConfig())
+	validator := schema.NewValidator()
+
+	msg := `<189>` + time.Now().UTC().Format("Jan _2 15:04:05") + ` fgt01 CEF:0|Fortinet|Fortigate|v7.2.4|00013|traffic:forward accept|3|deviceExternalId=FGT1 src=10.1.1.10 dst=8.8.8.8 spt=53211 dpt=53 msg=allowed\=yes`
+	cef, err := parser.Parse(msg)
+	if err != nil {
+		t.Fatalf("Parse() error: %v", err)
+	}
+	event, err := normalizer.Normalize(cef, "10.0.0.1")
+	if err != nil {
+		t.Fatalf("Normalize() error: %v", err)
+	}
+	if err := validator.Validate(event); err != nil {
+		t.Fatalf("Validate() error: %v (action=%q)", err, event.Action)
+	}
+	if event.Metadata["cef_msg"] != "allowed=yes" {
+		t.Errorf("Metadata[cef_msg] = %v, want allowed=yes", event.Metadata["cef_msg"])
 	}
 }
 

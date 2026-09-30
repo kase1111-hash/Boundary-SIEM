@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"sync"
@@ -37,7 +38,12 @@ type UDPServerMetrics struct {
 	Parsed     uint64
 	Normalized uint64
 	Queued     uint64
-	Errors     uint64
+	// Errors counts every dropped message; the fields below break it down.
+	Errors uint64
+	// ParseErrors counts datagrams that are not valid CEF.
+	ParseErrors uint64
+	// ValidationErrors counts events that failed normalization or validation.
+	ValidationErrors uint64
 }
 
 // UDPServer receives CEF messages over UDP.
@@ -48,16 +54,19 @@ type UDPServer struct {
 	normalizer *cef.Normalizer
 	validator  *schema.Validator
 	queue      *queue.RingBuffer
+	rejects    *cef.RejectLogger
 
 	wg   sync.WaitGroup
 	done chan struct{}
 
 	// Metrics
-	received   uint64
-	parsed     uint64
-	normalized uint64
-	queued     uint64
-	errors     uint64
+	received         uint64
+	parsed           uint64
+	normalized       uint64
+	queued           uint64
+	errors           uint64
+	parseErrors      uint64
+	validationErrors uint64
 }
 
 // NewUDPServer creates a new UDP server for CEF ingestion.
@@ -74,6 +83,7 @@ func NewUDPServer(
 		normalizer: normalizer,
 		validator:  validator,
 		queue:      q,
+		rejects:    cef.NewRejectLogger(nil, "udp", cef.DefaultRejectLogInterval),
 		done:       make(chan struct{}),
 	}
 }
@@ -121,6 +131,10 @@ func (s *UDPServer) Start(ctx context.Context) error {
 
 	return nil
 }
+
+// errMessageChannelFull reports a message dropped because the workers are
+// not keeping up.
+var errMessageChannelFull = errors.New("message channel full")
 
 type udpMessage struct {
 	data     []byte
@@ -173,7 +187,7 @@ func (s *UDPServer) receiver(ctx context.Context, messages chan<- udpMessage) {
 		default:
 			// Channel full, drop message
 			atomic.AddUint64(&s.errors, 1)
-			slog.Debug("UDP message channel full, dropping message")
+			s.rejects.Reject("queue", errMessageChannelFull, remoteAddr.IP.String(), "")
 		}
 	}
 }
@@ -188,13 +202,12 @@ func (s *UDPServer) worker(ctx context.Context, messages <-chan udpMessage, work
 
 func (s *UDPServer) processMessage(ctx context.Context, msg udpMessage) {
 	// Parse CEF
-	cefEvent, err := s.parser.Parse(string(msg.data))
+	raw := string(msg.data)
+	cefEvent, err := s.parser.Parse(raw)
 	if err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		slog.Debug("CEF parse error",
-			"error", err,
-			"source", msg.sourceIP,
-		)
+		atomic.AddUint64(&s.parseErrors, 1)
+		s.rejects.Reject("parse", err, msg.sourceIP, raw)
 		return
 	}
 	atomic.AddUint64(&s.parsed, 1)
@@ -203,10 +216,8 @@ func (s *UDPServer) processMessage(ctx context.Context, msg udpMessage) {
 	event, err := s.normalizer.Normalize(cefEvent, msg.sourceIP)
 	if err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		slog.Debug("CEF normalize error",
-			"error", err,
-			"source", msg.sourceIP,
-		)
+		atomic.AddUint64(&s.validationErrors, 1)
+		s.rejects.Reject("normalize", err, msg.sourceIP, raw)
 		return
 	}
 	atomic.AddUint64(&s.normalized, 1)
@@ -214,17 +225,15 @@ func (s *UDPServer) processMessage(ctx context.Context, msg udpMessage) {
 	// Validate
 	if err := s.validator.Validate(event); err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		slog.Debug("CEF validation error",
-			"error", err,
-			"source", msg.sourceIP,
-		)
+		atomic.AddUint64(&s.validationErrors, 1)
+		s.rejects.Reject("validate", err, msg.sourceIP, raw)
 		return
 	}
 
 	// Queue for storage
 	if err := s.queue.Push(event); err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		slog.Debug("queue push error", "error", err)
+		s.rejects.Reject("queue", err, msg.sourceIP, raw)
 		return
 	}
 
@@ -242,16 +251,20 @@ func (s *UDPServer) Stop() {
 		"received", atomic.LoadUint64(&s.received),
 		"queued", atomic.LoadUint64(&s.queued),
 		"errors", atomic.LoadUint64(&s.errors),
+		"parse_errors", atomic.LoadUint64(&s.parseErrors),
+		"validation_errors", atomic.LoadUint64(&s.validationErrors),
 	)
 }
 
 // Metrics returns the current server metrics.
 func (s *UDPServer) Metrics() UDPServerMetrics {
 	return UDPServerMetrics{
-		Received:   atomic.LoadUint64(&s.received),
-		Parsed:     atomic.LoadUint64(&s.parsed),
-		Normalized: atomic.LoadUint64(&s.normalized),
-		Queued:     atomic.LoadUint64(&s.queued),
-		Errors:     atomic.LoadUint64(&s.errors),
+		Received:         atomic.LoadUint64(&s.received),
+		Parsed:           atomic.LoadUint64(&s.parsed),
+		Normalized:       atomic.LoadUint64(&s.normalized),
+		Queued:           atomic.LoadUint64(&s.queued),
+		Errors:           atomic.LoadUint64(&s.errors),
+		ParseErrors:      atomic.LoadUint64(&s.parseErrors),
+		ValidationErrors: atomic.LoadUint64(&s.validationErrors),
 	}
 }
