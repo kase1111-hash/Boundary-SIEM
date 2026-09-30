@@ -306,9 +306,16 @@ func (m *Monitor) collectDiskMetrics(metrics *ResourceMetrics) error {
 		return fmt.Errorf("failed to stat filesystem: %w", err)
 	}
 
+	// Bsize is signed; a non-positive block size would wrap when converted
+	// and yield nonsensical byte counts, so reject it.
+	if stat.Bsize <= 0 {
+		return fmt.Errorf("invalid filesystem block size %d", stat.Bsize)
+	}
+	blockSize := uint64(stat.Bsize)
+
 	// Calculate disk usage
-	totalBytes := stat.Blocks * uint64(stat.Bsize)
-	availableBytes := stat.Bavail * uint64(stat.Bsize)
+	totalBytes := stat.Blocks * blockSize
+	availableBytes := stat.Bavail * blockSize
 	usedBytes := totalBytes - availableBytes
 	usedPercent := float64(usedBytes) / float64(totalBytes) * 100.0
 
@@ -323,9 +330,11 @@ func (m *Monitor) collectDiskMetrics(metrics *ResourceMetrics) error {
 		oldestMetric := m.metricsHistory[0]
 		timeDiff := metrics.Timestamp.Sub(oldestMetric.Timestamp)
 		if timeDiff > 0 {
-			bytesGrowth := int64(metrics.DiskUsedBytes) - int64(oldestMetric.DiskUsedBytes)
+			// Compute the (possibly negative) growth in float64 to avoid
+			// overflowing a uint64 -> int64 conversion.
+			bytesGrowth := float64(metrics.DiskUsedBytes) - float64(oldestMetric.DiskUsedBytes)
 			// Convert to GB/day
-			gbPerDay := float64(bytesGrowth) / (1024 * 1024 * 1024) / timeDiff.Hours() * 24
+			gbPerDay := bytesGrowth / (1024 * 1024 * 1024) / timeDiff.Hours() * 24
 			metrics.DiskGrowthRate = gbPerDay
 
 			// Calculate days until full

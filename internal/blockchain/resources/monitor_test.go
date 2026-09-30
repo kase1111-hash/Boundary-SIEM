@@ -2,6 +2,7 @@ package resources
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -454,10 +455,17 @@ func TestAlertDeduplication(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	ctx := context.Background()
-	alertCount := 0
+
+	// Handlers run in their own goroutines: count calls atomically and signal
+	// each delivery so the test can wait for it instead of sleeping.
+	var alertCount atomic.Int32
+	delivered := make(chan struct{}, 10)
 
 	monitor.AddHandler(func(ctx context.Context, alert *Alert) error {
-		alertCount++
+		if alert.Type == "test-alert" {
+			alertCount.Add(1)
+		}
+		delivered <- struct{}{}
 		return nil
 	})
 
@@ -472,18 +480,45 @@ func TestAlertDeduplication(t *testing.T) {
 
 	// First alert should go through
 	monitor.emitAlert(ctx, alert)
-	time.Sleep(10 * time.Millisecond)
+	waitForAlertDelivery(t, delivered)
 
-	if alertCount != 1 {
-		t.Errorf("expected 1 alert, got %d", alertCount)
+	if got := alertCount.Load(); got != 1 {
+		t.Fatalf("expected 1 alert, got %d", got)
 	}
 
-	// Second alert within 5 minutes should be deduplicated
+	// Second alert within 5 minutes should be deduplicated. Follow it with an
+	// alert of another type, which must not be deduplicated, and wait for that
+	// delivery; then allow a grace period for any stray duplicate delivery.
 	monitor.emitAlert(ctx, alert)
-	time.Sleep(10 * time.Millisecond)
+	monitor.emitAlert(ctx, &Alert{
+		ID:        uuid.New(),
+		Type:      "other-alert",
+		Severity:  SeverityWarning,
+		Resource:  ResourceDisk,
+		Title:     "Other Alert",
+		Timestamp: time.Now(),
+	})
+	waitForAlertDelivery(t, delivered)
 
-	if alertCount != 1 {
-		t.Errorf("expected alert to be deduplicated, got %d alerts", alertCount)
+	select {
+	case <-delivered:
+		t.Error("unexpected extra alert delivery")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	if got := alertCount.Load(); got != 1 {
+		t.Errorf("expected alert to be deduplicated, got %d alerts", got)
+	}
+}
+
+// waitForAlertDelivery waits, with a bounded deadline, for one asynchronous
+// alert handler invocation.
+func waitForAlertDelivery(t *testing.T, delivered <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for alert delivery")
 	}
 }
 
@@ -658,7 +693,9 @@ func BenchmarkCollectDiskMetrics(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		monitor.collectDiskMetrics(metrics)
+		if err := monitor.collectDiskMetrics(metrics); err != nil {
+			b.Fatalf("collectDiskMetrics() error = %v", err)
+		}
 	}
 }
 
@@ -685,6 +722,8 @@ func BenchmarkCheck(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		monitor.check(ctx)
+		if err := monitor.check(ctx); err != nil {
+			b.Fatalf("check() error = %v", err)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package processing
 import (
 	"context"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -533,12 +534,17 @@ func TestAlertDeduplication(t *testing.T) {
 	monitor := NewMonitor(config)
 
 	ctx := context.Background()
-	alertCount := 0
-	done := make(chan bool, 2)
+
+	// Handlers run in their own goroutines: count calls atomically and signal
+	// each delivery so the test can wait for it instead of sleeping.
+	var alertCount atomic.Int32
+	delivered := make(chan struct{}, 10)
 
 	monitor.AddHandler(func(ctx context.Context, alert *Alert) error {
-		alertCount++
-		done <- true
+		if alert.Type == "test-alert" {
+			alertCount.Add(1)
+		}
+		delivered <- struct{}{}
 		return nil
 	})
 
@@ -550,19 +556,46 @@ func TestAlertDeduplication(t *testing.T) {
 		Timestamp: time.Now(),
 	}
 
-	// Emit same alert twice quickly
+	// First alert should go through
 	monitor.emitAlert(ctx, alert)
-	monitor.emitAlert(ctx, alert)
+	waitForAlertDelivery(t, delivered)
 
-	// Wait for first alert
+	if got := alertCount.Load(); got != 1 {
+		t.Fatalf("expected 1 alert, got %d", got)
+	}
+
+	// Second alert within 5 minutes should be deduplicated. Follow it with an
+	// alert of another type, which must not be deduplicated, and wait for that
+	// delivery; then allow a grace period for any stray duplicate delivery.
+	monitor.emitAlert(ctx, alert)
+	monitor.emitAlert(ctx, &Alert{
+		ID:        uuid.New(),
+		Type:      "other-alert",
+		Severity:  "high",
+		Title:     "Other Alert",
+		Timestamp: time.Now(),
+	})
+	waitForAlertDelivery(t, delivered)
+
 	select {
-	case <-done:
+	case <-delivered:
+		t.Error("unexpected extra alert delivery")
 	case <-time.After(100 * time.Millisecond):
 	}
 
-	// Should only get 1 alert due to deduplication
-	if alertCount != 1 {
-		t.Errorf("expected 1 alert due to deduplication, got %d", alertCount)
+	if got := alertCount.Load(); got != 1 {
+		t.Errorf("expected alert to be deduplicated, got %d alerts", got)
+	}
+}
+
+// waitForAlertDelivery waits, with a bounded deadline, for one asynchronous
+// alert handler invocation.
+func waitForAlertDelivery(t *testing.T, delivered <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-delivered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for alert delivery")
 	}
 }
 

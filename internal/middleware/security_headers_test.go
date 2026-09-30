@@ -454,7 +454,9 @@ func TestSecurityHeadersPreservesResponse(t *testing.T) {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(expectedStatus)
-		w.Write([]byte(expectedBody))
+		if _, err := w.Write([]byte(expectedBody)); err != nil {
+			t.Errorf("failed to write response body: %v", err)
+		}
 	})
 
 	middleware := SecurityHeadersMiddleware(cfg, nil)

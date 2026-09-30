@@ -29,6 +29,7 @@ type RateLimiter struct {
 type clientState struct {
 	count     int64     // Current request count in window
 	windowEnd time.Time // When current window expires
+	evicted   bool      // Set by cleanup once removed from the clients map
 	mu        sync.Mutex
 }
 
@@ -63,19 +64,30 @@ func NewRateLimiter(cfg config.RateLimitConfig, logger *slog.Logger) *RateLimite
 func (rl *RateLimiter) Allow(ip string) (bool, int, time.Time) {
 	now := time.Now()
 
-	// Get or create client state
-	rl.mu.Lock()
-	client, exists := rl.clients[ip]
-	if !exists {
-		client = &clientState{
-			count:     0,
-			windowEnd: now.Add(rl.cfg.WindowSize),
+	// Get or create client state. The map lock is released before the
+	// client lock is taken, so cleanup may evict the entry in between; in
+	// that case retry so the request is counted against the live entry
+	// rather than an orphaned one.
+	var client *clientState
+	for {
+		rl.mu.Lock()
+		c, exists := rl.clients[ip]
+		if !exists {
+			c = &clientState{
+				count:     0,
+				windowEnd: now.Add(rl.cfg.WindowSize),
+			}
+			rl.clients[ip] = c
 		}
-		rl.clients[ip] = client
-	}
-	rl.mu.Unlock()
+		rl.mu.Unlock()
 
-	client.mu.Lock()
+		c.mu.Lock()
+		if !c.evicted {
+			client = c
+			break
+		}
+		c.mu.Unlock()
+	}
 	defer client.mu.Unlock()
 
 	// Check if window has expired - reset if so
@@ -131,6 +143,7 @@ func (rl *RateLimiter) cleanup() {
 		client.mu.Lock()
 		if client.windowEnd.Before(expiredThreshold) {
 			delete(rl.clients, ip)
+			client.evicted = true
 			removed++
 		}
 		client.mu.Unlock()
