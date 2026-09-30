@@ -3,6 +3,7 @@ package encryption
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
@@ -44,6 +45,36 @@ func TestNewEngine(t *testing.T) {
 			cfg: &Config{
 				Enabled: true,
 				Logger:  slog.New(slog.NewTextHandler(os.Stdout, nil)),
+			},
+			wantErr: true,
+		},
+		{
+			name: "max_key_version",
+			cfg: &Config{
+				Enabled:    true,
+				MasterKey:  []byte("test-master-key-32-bytes-long!!"),
+				KeyVersion: 255,
+				Logger:     slog.New(slog.NewTextHandler(os.Stdout, nil)),
+			},
+			wantErr: false,
+		},
+		{
+			name: "key_version_too_large",
+			cfg: &Config{
+				Enabled:    true,
+				MasterKey:  []byte("test-master-key-32-bytes-long!!"),
+				KeyVersion: 256,
+				Logger:     slog.New(slog.NewTextHandler(os.Stdout, nil)),
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative_key_version",
+			cfg: &Config{
+				Enabled:    true,
+				MasterKey:  []byte("test-master-key-32-bytes-long!!"),
+				KeyVersion: -1,
+				Logger:     slog.New(slog.NewTextHandler(os.Stdout, nil)),
 			},
 			wantErr: true,
 		},
@@ -249,8 +280,16 @@ func TestKeyRotation(t *testing.T) {
 		t.Fatalf("Encrypt() error = %v", err)
 	}
 
-	// Rotate to new key
+	// Versions that do not fit the one-byte ciphertext header are rejected
 	newKey := []byte("new-master-key-32-bytes-long!!!")
+	if err := engine.RotateKey(newKey, 256); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("RotateKey(256) error = %v, want ErrInvalidKey", err)
+	}
+	if got := engine.GetKeyVersion(); got != 1 {
+		t.Fatalf("GetKeyVersion() = %d after rejected rotation, want 1", got)
+	}
+
+	// Rotate to new key
 	if err := engine.RotateKey(newKey, 2); err != nil {
 		t.Fatalf("RotateKey() error = %v", err)
 	}

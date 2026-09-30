@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 )
@@ -51,6 +52,10 @@ type Config struct {
 // saltSize is the size of the random salt used for key derivation.
 const saltSize = 16
 
+// maxKeyVersion is the largest key version that fits in the one-byte version
+// field of the ciphertext header.
+const maxKeyVersion = math.MaxUint8
+
 // legacySalt is the static salt used in older versions for backward compatibility.
 var legacySalt = []byte("boundary-siem-encryption-v1")
 
@@ -88,6 +93,10 @@ func NewEngine(cfg *Config) (*Engine, error) {
 		return nil, fmt.Errorf("%w: master key is required when encryption is enabled", ErrInvalidKey)
 	}
 
+	if err := validateKeyVersion(cfg.KeyVersion); err != nil {
+		return nil, err
+	}
+
 	// Generate random salt for key derivation
 	salt := make([]byte, saltSize)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
@@ -120,6 +129,16 @@ func NewEngine(cfg *Config) (*Engine, error) {
 		oldKeys:      make(map[int][]byte),
 		legacyKey:    legacyDerivedKey,
 	}, nil
+}
+
+// validateKeyVersion rejects key versions that cannot be stored in the
+// ciphertext header. A truncated version would make ciphertexts point at the
+// wrong key after rotation and become undecryptable.
+func validateKeyVersion(version int) error {
+	if version < 0 || version > maxKeyVersion {
+		return fmt.Errorf("%w: key version %d out of range [0, %d]", ErrInvalidKey, version, maxKeyVersion)
+	}
+	return nil
 }
 
 // deriveKey derives a 32-byte encryption key from the master key using
@@ -187,8 +206,8 @@ func (e *Engine) encryptLocked(plaintext []byte) (string, error) {
 	// Format: [version:1byte][saltLen:1byte][salt][nonce][ciphertext]
 	// Salt is embedded so decryption can re-derive the correct key.
 	data := make([]byte, 1+1+len(e.salt)+len(nonce)+len(ciphertext))
-	data[0] = byte(e.keyVersion)
-	data[1] = byte(len(e.salt))
+	data[0] = byte(e.keyVersion) // #nosec G115 -- keyVersion is limited to [0, maxKeyVersion] by NewEngine and RotateKey
+	data[1] = byte(len(e.salt))  // #nosec G115 -- salt is always saltSize (16) bytes
 	copy(data[2:], e.salt)
 	copy(data[2+len(e.salt):], nonce)
 	copy(data[2+len(e.salt)+len(nonce):], ciphertext)
@@ -336,12 +355,16 @@ func (e *Engine) RotateKey(newMasterKey []byte, newVersion int) error {
 		return fmt.Errorf("%w: new master key is required", ErrInvalidKey)
 	}
 
-	if newVersion <= e.keyVersion {
-		return fmt.Errorf("new version (%d) must be greater than current version (%d)", newVersion, e.keyVersion)
+	if err := validateKeyVersion(newVersion); err != nil {
+		return err
 	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if newVersion <= e.keyVersion {
+		return fmt.Errorf("new version (%d) must be greater than current version (%d)", newVersion, e.keyVersion)
+	}
 
 	// Store current key as old key for backward compatibility
 	e.oldKeys[e.keyVersion] = e.masterKey

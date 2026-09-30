@@ -224,10 +224,11 @@ func createMockSysfs(t *testing.T) string {
 	return tmpDir
 }
 
-func writeFile(t *testing.T, dir, name, content string) {
+func writeFile(tb testing.TB, dir, name, content string) {
+	tb.Helper()
 	path := filepath.Join(dir, name)
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
-		t.Fatalf("failed to write %s: %v", path, err)
+		tb.Fatalf("failed to write %s: %v", path, err)
 	}
 }
 
@@ -687,6 +688,58 @@ func TestMonitor_AssessThreat(t *testing.T) {
 	}
 }
 
+func TestMonitor_ReadDevice_ParsesIDs(t *testing.T) {
+	sysfsPath := createMockSysfs(t)
+	defer os.RemoveAll(sysfsPath)
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	config := &Config{
+		SysfsPath:    sysfsPath,
+		PollInterval: 100 * time.Millisecond,
+		UseNetlink:   false,
+		Policy:       DefaultPolicy(),
+	}
+
+	monitor, err := NewMonitor(config, logger)
+	if err != nil {
+		t.Fatalf("NewMonitor() error = %v", err)
+	}
+	defer monitor.Stop()
+
+	t.Run("valid", func(t *testing.T) {
+		device, err := monitor.readDevice(filepath.Join(sysfsPath, "2-1"))
+		if err != nil {
+			t.Fatalf("readDevice() error = %v", err)
+		}
+		if device.VendorID != 0x0781 || device.ProductID != 0x5567 || device.DeviceClass != ClassMassStorage {
+			t.Errorf("readDevice() = %04x:%04x class 0x%02x, want 0781:5567 class 0x08",
+				device.VendorID, device.ProductID, device.DeviceClass)
+		}
+	})
+
+	// Values too wide for the target field must be rejected, not truncated
+	// (0x1046d would otherwise become vendor 0x046d, class 0x108 would be 0x08).
+	t.Run("out of range", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "9-9")
+		if err := os.Mkdir(dir, 0755); err != nil {
+			t.Fatalf("failed to create device dir: %v", err)
+		}
+		writeFile(t, dir, "idVendor", "1046d")
+		writeFile(t, dir, "idProduct", "1c52b")
+		writeFile(t, dir, "bDeviceClass", "108")
+
+		device, err := monitor.readDevice(dir)
+		if err != nil {
+			t.Fatalf("readDevice() error = %v", err)
+		}
+		if device.VendorID != 0 || device.ProductID != 0 || device.DeviceClass != ClassUnspecified {
+			t.Errorf("readDevice() = %04x:%04x class 0x%02x, want out-of-range values left unset",
+				device.VendorID, device.ProductID, device.DeviceClass)
+		}
+	})
+}
+
 func TestNewMonitor_MissingSysfs(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
 
@@ -718,7 +771,10 @@ func BenchmarkDeviceEnumeration(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		monitor, _ := NewMonitor(config, logger)
+		monitor, err := NewMonitor(config, logger)
+		if err != nil {
+			b.Fatalf("NewMonitor() error = %v", err)
+		}
 		monitor.Stop()
 	}
 }
@@ -736,12 +792,12 @@ func createMockSysfsBench(b *testing.B) string {
 			b.Fatalf("failed to create device dir: %v", err)
 		}
 
-		os.WriteFile(filepath.Join(device, "idVendor"), []byte(fmt.Sprintf("%04x", i*0x100)), 0644)
-		os.WriteFile(filepath.Join(device, "idProduct"), []byte(fmt.Sprintf("%04x", i*0x10)), 0644)
-		os.WriteFile(filepath.Join(device, "bDeviceClass"), []byte("00"), 0644)
-		os.WriteFile(filepath.Join(device, "busnum"), []byte(fmt.Sprintf("%d", i/5+1)), 0644)
-		os.WriteFile(filepath.Join(device, "devnum"), []byte(fmt.Sprintf("%d", i%5+1)), 0644)
-		os.WriteFile(filepath.Join(device, "authorized"), []byte("1"), 0644)
+		writeFile(b, device, "idVendor", fmt.Sprintf("%04x", i*0x100))
+		writeFile(b, device, "idProduct", fmt.Sprintf("%04x", i*0x10))
+		writeFile(b, device, "bDeviceClass", "00")
+		writeFile(b, device, "busnum", fmt.Sprintf("%d", i/5+1))
+		writeFile(b, device, "devnum", fmt.Sprintf("%d", i%5+1))
+		writeFile(b, device, "authorized", "1")
 	}
 
 	return tmpDir

@@ -78,6 +78,9 @@ type Config struct {
 	VaultToken   string
 	VaultPath    string
 
+	// File provider configuration
+	FileDir string // Directory holding secret files (default: DefaultFileDir)
+
 	// Cache configuration
 	CacheTTL time.Duration
 
@@ -85,12 +88,17 @@ type Config struct {
 	Logger *slog.Logger
 }
 
+// DefaultFileDir is the directory the file provider reads from when
+// Config.FileDir is empty.
+const DefaultFileDir = "/etc/secrets"
+
 // DefaultConfig returns default secrets manager configuration.
 func DefaultConfig() *Config {
 	return &Config{
 		EnableVault: false, // Vault disabled by default
 		EnableEnv:   true,  // Env vars enabled by default
 		EnableFile:  false, // File-based disabled by default
+		FileDir:     DefaultFileDir,
 		CacheTTL:    5 * time.Minute,
 		Logger:      slog.Default(),
 	}
@@ -135,8 +143,12 @@ func NewManager(cfg *Config) (*Manager, error) {
 	}
 
 	if cfg.EnableFile {
-		m.providers = append(m.providers, NewFileProvider("/etc/secrets", cfg.Logger))
-		cfg.Logger.Info("file-based secret provider initialized")
+		fileDir := cfg.FileDir
+		if fileDir == "" {
+			fileDir = DefaultFileDir
+		}
+		m.providers = append(m.providers, NewFileProvider(fileDir, cfg.Logger))
+		cfg.Logger.Info("file-based secret provider initialized", "dir", fileDir)
 	}
 
 	if len(m.providers) == 0 {

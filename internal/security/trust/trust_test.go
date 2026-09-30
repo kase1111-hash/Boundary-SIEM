@@ -300,7 +300,9 @@ func TestTrustGate_GetHistory(t *testing.T) {
 
 	// Perform several gates
 	for i := 0; i < 5; i++ {
-		tg.Gate(ctx, "test_op")
+		if _, err := tg.Gate(ctx, "test_op"); err != nil {
+			t.Fatalf("Gate(test_op) failed: %v", err)
+		}
 	}
 
 	history := tg.GetHistory(3)
@@ -315,7 +317,9 @@ func TestTrustGate_GetHistory_MoreThanAvailable(t *testing.T) {
 	tg, _ := NewTrustGate(config, nil)
 
 	ctx := context.Background()
-	tg.Gate(ctx, "test_op")
+	if _, err := tg.Gate(ctx, "test_op"); err != nil {
+		t.Fatalf("Gate(test_op) failed: %v", err)
+	}
 
 	history := tg.GetHistory(100)
 	if len(history) != 1 {
@@ -339,12 +343,28 @@ func TestTrustGate_GetDenied(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	tg.Gate(ctx, "test_success")  // No requirement - should succeed
-	tg.Gate(ctx, "impossible_op") // High requirement - likely fails
+
+	// No requirement - should succeed
+	if _, err := tg.Gate(ctx, "test_success"); err != nil {
+		t.Fatalf("Gate(test_success) failed: %v", err)
+	}
+
+	// High requirement - likely fails, but EnforceMode is off so Gate must
+	// only record the denial, never return an error.
+	result, err := tg.Gate(ctx, "impossible_op")
+	if err != nil {
+		t.Fatalf("Gate(impossible_op) returned error with EnforceMode off: %v", err)
+	}
 
 	denied := tg.GetDenied()
-	// Check if we got any denied (depends on platform)
-	_ = denied // May be empty or have entries
+	// Whether the requirement is met depends on the platform
+	if result.Allowed {
+		if len(denied) != 0 {
+			t.Errorf("GetDenied returned %d entries, expected none", len(denied))
+		}
+	} else if len(denied) != 1 || denied[0].Requirement == nil || denied[0].Requirement.Name != "impossible_op" {
+		t.Errorf("GetDenied = %+v, expected exactly the impossible_op denial", denied)
+	}
 }
 
 func TestTrustGate_OnDegraded(t *testing.T) {
@@ -368,7 +388,11 @@ func TestTrustGate_OnDegraded(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	tg.Gate(ctx, "degraded_test")
+	// AllowDegraded turns a failed requirement into a degraded allow, so Gate
+	// must not return an error even in EnforceMode.
+	if _, err := tg.Gate(ctx, "degraded_test"); err != nil {
+		t.Fatalf("Gate(degraded_test) failed: %v", err)
+	}
 
 	state := tg.GetPlatformState()
 	if state.TrustLevel < TrustLevelFull && !called {
@@ -395,11 +419,18 @@ func TestTrustGate_OnDenied(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	tg.Gate(ctx, "denied_test")
+	_, err := tg.Gate(ctx, "denied_test")
 
 	state := tg.GetPlatformState()
-	if state.TrustLevel < TrustLevelFull && !called {
-		t.Error("OnDenied callback should have been called")
+	if state.TrustLevel < TrustLevelFull {
+		if !called {
+			t.Error("OnDenied callback should have been called")
+		}
+		if !errors.Is(err, ErrTrustLevelTooLow) {
+			t.Errorf("Gate(denied_test) error = %v, want ErrTrustLevelTooLow", err)
+		}
+	} else if err != nil {
+		t.Errorf("Gate(denied_test) failed on a fully trusted platform: %v", err)
 	}
 }
 
@@ -436,7 +467,9 @@ func TestTrustGate_HistoryEviction(t *testing.T) {
 
 	// Add 5 entries - oldest 2 should be evicted
 	for i := 0; i < 5; i++ {
-		tg.Gate(ctx, "test_op")
+		if _, err := tg.Gate(ctx, "test_op"); err != nil {
+			t.Fatalf("Gate(test_op) failed: %v", err)
+		}
 	}
 
 	history := tg.GetHistory(10)
