@@ -1,0 +1,8 @@
+id: bad-sev
+name: Bad severity
+type: threshold
+enabled: true
+severity: 99
+threshold:
+  count: 1
+window: 5m

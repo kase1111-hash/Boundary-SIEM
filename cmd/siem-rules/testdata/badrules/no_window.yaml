@@ -1,0 +1,7 @@
+id: no-window
+name: No window and no conditions
+type: threshold
+enabled: true
+severity: 5
+threshold:
+  count: 1

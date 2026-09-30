@@ -67,7 +67,27 @@ func NewBaselineEngine() *BaselineEngine {
 	}
 }
 
-// Record adds a metric sample for a rule+group.
+// Baseline sample retention: samples older than baselineMaxAge are dropped,
+// and each metric keeps at most baselineMaxSamples of the newest samples.
+const (
+	baselineMaxAge     = 7 * 24 * time.Hour
+	baselineMaxSamples = 50000
+)
+
+// defaultBaselineMetric is the metric the engine records for threshold rules.
+const defaultBaselineMetric = "event_count"
+
+// baselineMetric returns the metric a baseline config learns from.
+func baselineMetric(cfg *BaselineConfig) string {
+	if cfg.Metric == "" {
+		return defaultBaselineMetric
+	}
+	return cfg.Metric
+}
+
+// Record adds a metric sample for a rule+group. Samples beyond the retention
+// age or count are dropped here, so memory stays bounded even when Stats is
+// never called.
 func (b *BaselineEngine) Record(ruleID, groupKey, metric string, value float64) {
 	key := fmt.Sprintf("%s:%s:%s", ruleID, groupKey, metric)
 
@@ -80,16 +100,39 @@ func (b *BaselineEngine) Record(ruleID, groupKey, metric string, value float64) 
 		store, ok = b.metrics[key]
 		if !ok {
 			store = &metricStore{
-				maxAge: 7 * 24 * time.Hour, // keep 7 days of samples
+				maxAge: baselineMaxAge,
 			}
 			b.metrics[key] = store
 		}
 		b.mu.Unlock()
 	}
 
+	now := time.Now()
 	store.mu.Lock()
-	store.samples = append(store.samples, timedSample{value: value, ts: time.Now()})
+	store.samples = append(store.samples, timedSample{value: value, ts: now})
+	store.trim(now)
 	store.mu.Unlock()
+}
+
+// trim drops samples older than maxAge and, once the store is over
+// baselineMaxSamples, the oldest tenth of them (so trimming is amortised).
+// Samples are appended in time order. The caller holds s.mu.
+func (s *metricStore) trim(now time.Time) {
+	maxAge := s.maxAge
+	if maxAge <= 0 {
+		maxAge = baselineMaxAge
+	}
+	cutoff := now.Add(-maxAge)
+	drop := 0
+	for drop < len(s.samples) && !s.samples[drop].ts.After(cutoff) {
+		drop++
+	}
+	if len(s.samples)-drop > baselineMaxSamples {
+		drop = len(s.samples) - baselineMaxSamples*9/10
+	}
+	if drop > 0 {
+		s.samples = append(s.samples[:0], s.samples[drop:]...)
+	}
 }
 
 // Stats computes baseline statistics for a metric within the given window.
@@ -109,14 +152,7 @@ func (b *BaselineEngine) Stats(ruleID, groupKey, metric string, window BaselineW
 
 	store.mu.Lock()
 	// Trim old samples beyond max retention
-	trimCutoff := time.Now().Add(-store.maxAge)
-	trimmed := make([]timedSample, 0, len(store.samples))
-	for _, s := range store.samples {
-		if s.ts.After(trimCutoff) {
-			trimmed = append(trimmed, s)
-		}
-	}
-	store.samples = trimmed
+	store.trim(time.Now())
 
 	// Collect values within window
 	var values []float64
@@ -171,7 +207,7 @@ func (b *BaselineEngine) AdaptiveThreshold(ruleID, groupKey string, cfg *Baselin
 	warmupEnd := b.started.Add(time.Duration(warmupDays) * 24 * time.Hour)
 	isWarmedUp := time.Now().After(warmupEnd)
 
-	stats := b.Stats(ruleID, groupKey, cfg.Metric, cfg.Window)
+	stats := b.Stats(ruleID, groupKey, baselineMetric(cfg), cfg.Window)
 	if stats == nil || stats.Samples < cfg.MinSamples {
 		return 0, false
 	}
@@ -205,22 +241,19 @@ func (b *BaselineEngine) AdaptiveThreshold(ruleID, groupKey string, cfg *Baselin
 	return threshold, isWarmedUp
 }
 
-// Cleanup removes stale metric stores with no recent samples.
+// Cleanup trims every metric store and removes the ones with no samples left
+// within the retention age.
 func (b *BaselineEngine) Cleanup() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	cutoff := time.Now().Add(-7 * 24 * time.Hour)
+	now := time.Now()
 	for key, store := range b.metrics {
 		store.mu.Lock()
-		if len(store.samples) == 0 {
-			store.mu.Unlock()
-			delete(b.metrics, key)
-			continue
-		}
-		lastSample := store.samples[len(store.samples)-1]
+		store.trim(now)
+		empty := len(store.samples) == 0
 		store.mu.Unlock()
-		if lastSample.ts.Before(cutoff) {
+		if empty {
 			delete(b.metrics, key)
 		}
 	}

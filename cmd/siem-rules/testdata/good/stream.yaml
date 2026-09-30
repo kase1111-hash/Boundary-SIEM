@@ -1,0 +1,47 @@
+# Two rules in one file, as a multi-document YAML stream.
+---
+id: stream-recon
+name: RPC enumeration from a source
+type: threshold
+enabled: true
+severity: 5
+conditions:
+  match:
+    - field: action
+      operator: prefix
+      value: rpc.
+threshold:
+  count: 20
+  operator: gte
+window: 5m
+group_by:
+  - actor.ip
+---
+id: stream-follow-up
+name: Enumeration followed by admin RPC
+type: sequence
+enabled: true
+severity: 8
+depends_on:
+  - stream-recon
+  - sec-001
+conditions:
+  match:
+    - field: action
+      operator: eq
+      value: alert.fired
+sequence:
+  ordered: true
+  max_span: 1h
+  steps:
+    - name: recon
+      conditions:
+        - field: metadata.rule_id
+          operator: eq
+          value: stream-recon
+    - name: admin-call
+      conditions:
+        - field: metadata.rule_id
+          operator: eq
+          value: sec-001
+window: 1h

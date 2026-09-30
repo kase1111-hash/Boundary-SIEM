@@ -116,6 +116,7 @@ func TestRule_Validate(t *testing.T) {
 				Type:     RuleTypeThreshold,
 				Enabled:  true,
 				Severity: 7,
+				Window:   time.Minute,
 				Conditions: Conditions{
 					Match: []MatchCondition{
 						{Field: "action", Operator: "eq", Value: "auth.failure"},
@@ -275,6 +276,7 @@ func TestEngine_NoAlertBelowThreshold(t *testing.T) {
 		Type:     RuleTypeThreshold,
 		Enabled:  true,
 		Severity: 5,
+		Window:   time.Minute,
 		Conditions: Conditions{
 			Match: []MatchCondition{
 				{Field: "action", Operator: "eq", Value: "auth.failure"},
@@ -405,6 +407,7 @@ func TestEngine_Stats(t *testing.T) {
 		Type:     RuleTypeThreshold,
 		Enabled:  true,
 		Severity: 5,
+		Window:   time.Minute,
 		Conditions: Conditions{
 			Match: []MatchCondition{
 				{Field: "action", Operator: "eq", Value: "test"},

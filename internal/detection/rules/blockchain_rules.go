@@ -242,10 +242,11 @@ func GetExchangeRules() []*correlation.Rule {
 			},
 		},
 		{
+			// 10+ self-trades by one trader within an hour.
 			ID:          "exch-005",
 			Name:        "Wash Trading Pattern",
 			Description: "Potential wash trading pattern detected",
-			Type:        correlation.RuleTypeSequence,
+			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
 			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"exchange", "wash", "trading"},
@@ -576,7 +577,8 @@ func GetTransactionRules() []*correlation.Rule {
 			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"transaction", "transfer", "whale"},
 			EventConditions: []correlation.Condition{
-				{Field: "action", Operator: "eq", Value: "tx.transfer"},
+				// evm.transaction is what the EVM poller emits (with value_eth and from).
+				{Field: "action", Operator: "in", Values: []string{"tx.transfer", "evm.transaction"}},
 				{Field: "metadata.value_eth", Operator: "gte", Value: float64(1000)},
 			},
 			GroupBy:   []string{"metadata.from"},
@@ -835,10 +837,11 @@ func GetContractRules() []*correlation.Rule {
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
+			// 3+ recursive calls into the same contract within a minute.
 			ID:          "sc-010",
 			Name:        "Reentrancy Attack Pattern",
 			Description: "Potential reentrancy attack pattern detected",
-			Type:        correlation.RuleTypeSequence,
+			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
 			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"contract", "attack", "reentrancy"},
@@ -1200,7 +1203,8 @@ func GetSecurityRules() []*correlation.Rule {
 				TechniqueID: "T1110",
 			},
 			EventConditions: []correlation.Condition{
-				{Field: "action", Operator: "eq", Value: "auth.failed"},
+				// auth.failure is what the ingest normalizers and the API emit.
+				{Field: "action", Operator: "in", Values: []string{"auth.failure", "auth.failed"}},
 			},
 			GroupBy:   []string{"actor.ip"},
 			Window:    10 * time.Minute,

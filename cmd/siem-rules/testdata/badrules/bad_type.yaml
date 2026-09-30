@@ -1,0 +1,4 @@
+id: bad-type
+name: x
+type: nonsense
+window: 5m

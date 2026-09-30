@@ -18,7 +18,7 @@ conditions:
   match:
     - field: action
       operator: eq
-      value: "validator.attestation.missed"
+      value: "validator.attestation_missed"
 threshold:
   count: 5
   operator: gte
