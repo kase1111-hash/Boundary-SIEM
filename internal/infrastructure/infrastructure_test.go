@@ -806,7 +806,9 @@ func BenchmarkCloudParse(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		parser.Parse(cloudTrailLog)
+		if _, err := parser.Parse(cloudTrailLog); err != nil {
+			b.Fatalf("Parse() error = %v", err)
+		}
 	}
 }
 

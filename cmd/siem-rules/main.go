@@ -45,7 +45,7 @@ func printUsage() {
 func runValidateCmd(args []string) {
 	fs := flag.NewFlagSet("validate", flag.ExitOnError)
 	verbose := fs.Bool("verbose", false, "Show detailed rule information")
-	fs.Parse(args)
+	parseFlags(fs, args)
 
 	paths := fs.Args()
 	if len(paths) == 0 {
@@ -59,7 +59,7 @@ func runValidateCmd(args []string) {
 
 func runListCmd(args []string) {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
-	fs.Parse(args)
+	parseFlags(fs, args)
 
 	paths := fs.Args()
 	if len(paths) == 0 {
@@ -67,6 +67,15 @@ func runListCmd(args []string) {
 	}
 
 	os.Exit(runList(paths))
+}
+
+// parseFlags parses args into fs, exiting with the flag package's usage-error
+// status (2) if parsing fails.
+func parseFlags(fs *flag.FlagSet, args []string) {
+	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+		os.Exit(2)
+	}
 }
 
 func runValidate(paths []string, verbose bool) int {
@@ -114,7 +123,9 @@ func runValidate(paths []string, verbose bool) int {
 }
 
 func validateFile(path string, verbose bool) bool {
-	data, err := os.ReadFile(path)
+	// Paths are supplied by the user invoking the CLI, who may validate any
+	// file they can read.
+	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		fmt.Printf("  FAIL  %s: %v\n", path, err)
 		return false
@@ -156,7 +167,7 @@ func runList(paths []string) int {
 		}
 
 		for _, f := range files {
-			data, err := os.ReadFile(f)
+			data, err := os.ReadFile(filepath.Clean(f))
 			if err != nil {
 				continue
 			}

@@ -286,7 +286,9 @@ func TestEngine_NoAlertBelowThreshold(t *testing.T) {
 		},
 	}
 
-	engine.AddRule(rule)
+	if err := engine.AddRule(rule); err != nil {
+		t.Fatalf("failed to add rule: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -345,7 +347,9 @@ func TestEngine_GroupBy(t *testing.T) {
 		},
 	}
 
-	engine.AddRule(rule)
+	if err := engine.AddRule(rule); err != nil {
+		t.Fatalf("failed to add rule: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -409,7 +413,9 @@ func TestEngine_Stats(t *testing.T) {
 		Threshold: &ThresholdConfig{Count: 5, Operator: "gte"},
 	}
 
-	engine.AddRule(rule)
+	if err := engine.AddRule(rule); err != nil {
+		t.Fatalf("failed to add rule: %v", err)
+	}
 
 	stats := engine.Stats()
 	if stats["rules_count"].(int) != 1 {
@@ -421,7 +427,9 @@ func BenchmarkEngine_ProcessEvent(b *testing.B) {
 	engine := NewEngine(DefaultEngineConfig())
 
 	rule := BruteForceRule()
-	engine.AddRule(rule)
+	if err := engine.AddRule(rule); err != nil {
+		b.Fatalf("failed to add rule: %v", err)
+	}
 
 	ctx := context.Background()
 	engine.Start(ctx)

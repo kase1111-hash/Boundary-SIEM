@@ -122,7 +122,7 @@ func (d *DashboardScene) View() string {
 	} else {
 		statusText = styles.StatusError.Render("● UNHEALTHY")
 	}
-	b.WriteString(fmt.Sprintf("  Status: %s", statusText))
+	fmt.Fprintf(&b, "  Status: %s", statusText)
 
 	// Show reason
 	if d.stats.StatusReason != "" {
@@ -133,7 +133,7 @@ func (d *DashboardScene) View() string {
 	// Activity status
 	if d.stats.Activity != "" && d.stats.Activity != "unknown" {
 		activityIcon := d.getActivityIcon(d.stats.Activity)
-		b.WriteString(fmt.Sprintf("  Activity: %s %s\n", activityIcon, d.stats.ActivityDesc))
+		fmt.Fprintf(&b, "  Activity: %s %s\n", activityIcon, d.stats.ActivityDesc)
 		b.WriteString("\n")
 	}
 

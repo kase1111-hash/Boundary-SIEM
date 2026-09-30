@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
+	"strconv"
 	"time"
 
 	"boundary-siem/internal/encryption"
@@ -390,7 +393,7 @@ func DefaultConfig() *Config {
 			MaxFuture:   5 * time.Minute,
 			StrictMode:  false, // Disabled by default - enable for production
 		},
-		Auth: AuthConfig{
+		Auth: AuthConfig{ // #nosec G101 -- "X-API-Key" is the HTTP header name that carries API keys, not a credential; no default keys or passwords are shipped
 			APIKeyHeader: "X-API-Key",
 			Enabled:      false, // Disabled by default for development
 		},
@@ -533,7 +536,7 @@ func Load() (*Config, error) {
 	}
 
 	// Try to load from file
-	data, err := os.ReadFile(configPath)
+	data, err := os.ReadFile(filepath.Clean(configPath)) // #nosec G703 -- SIEM_CONFIG_PATH is set by the operator launching the process and may legitimately point anywhere (e.g. /etc/boundary-siem); it is not request-derived
 	if err != nil {
 		if os.IsNotExist(err) {
 			// File doesn't exist, use defaults
@@ -554,9 +557,7 @@ func Load() (*Config, error) {
 
 // applyEnvOverrides applies environment variable overrides.
 func (c *Config) applyEnvOverrides() {
-	if port := os.Getenv("SIEM_HTTP_PORT"); port != "" {
-		fmt.Sscanf(port, "%d", &c.Server.HTTPPort)
-	}
+	envInt("SIEM_HTTP_PORT", &c.Server.HTTPPort)
 
 	if level := os.Getenv("SIEM_LOG_LEVEL"); level != "" {
 		c.Logging.Level = level
@@ -602,13 +603,8 @@ func (c *Config) applyEnvOverrides() {
 		c.RateLimit.Enabled = false
 	}
 
-	if rps := os.Getenv("SIEM_RATELIMIT_RPS"); rps != "" {
-		fmt.Sscanf(rps, "%d", &c.RateLimit.RequestsPerIP)
-	}
-
-	if burst := os.Getenv("SIEM_RATELIMIT_BURST"); burst != "" {
-		fmt.Sscanf(burst, "%d", &c.RateLimit.BurstSize)
-	}
+	envInt("SIEM_RATELIMIT_RPS", &c.RateLimit.RequestsPerIP)
+	envInt("SIEM_RATELIMIT_BURST", &c.RateLimit.BurstSize)
 
 	// Secrets management settings
 	if enabled := os.Getenv("SIEM_SECRETS_VAULT_ENABLED"); enabled == "true" {
@@ -648,9 +644,7 @@ func (c *Config) applyEnvOverrides() {
 		c.Encryption.KeyName = keyName
 	}
 
-	if version := os.Getenv("SIEM_ENCRYPTION_KEY_VERSION"); version != "" {
-		fmt.Sscanf(version, "%d", &c.Encryption.KeyVersion)
-	}
+	envInt("SIEM_ENCRYPTION_KEY_VERSION", &c.Encryption.KeyVersion)
 
 	// Security headers settings
 	if enabled := os.Getenv("SIEM_SECURITY_HEADERS_ENABLED"); enabled == "false" {
@@ -661,9 +655,7 @@ func (c *Config) applyEnvOverrides() {
 		c.SecurityHeaders.HSTSEnabled = false
 	}
 
-	if maxAge := os.Getenv("SIEM_HSTS_MAX_AGE"); maxAge != "" {
-		fmt.Sscanf(maxAge, "%d", &c.SecurityHeaders.HSTSMaxAge)
-	}
+	envInt("SIEM_HSTS_MAX_AGE", &c.SecurityHeaders.HSTSMaxAge)
 
 	if enabled := os.Getenv("SIEM_CSP_ENABLED"); enabled == "false" {
 		c.SecurityHeaders.CSPEnabled = false
@@ -672,6 +664,24 @@ func (c *Config) applyEnvOverrides() {
 	if frameOptions := os.Getenv("SIEM_FRAME_OPTIONS"); frameOptions != "" {
 		c.SecurityHeaders.FrameOptionsValue = frameOptions
 	}
+}
+
+// envInt sets *dst from the integer environment variable name when it is set.
+// Values that are not valid integers are logged and leave *dst unchanged, so a
+// typo in an override falls back to the configured value instead of a
+// partially parsed one.
+func envInt(name string, dst *int) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return
+	}
+	n, err := strconv.Atoi(trimSpace(raw))
+	if err != nil {
+		slog.Warn("ignoring invalid integer environment override",
+			"variable", name, "value", raw, "error", err)
+		return
+	}
+	*dst = n
 }
 
 // splitAndTrim splits a string by separator and trims whitespace from each part.
@@ -922,7 +932,7 @@ func (c *Config) NewEncryptionEngine(ctx context.Context) (*encryption.Engine, e
 			keyPath = "/etc/boundary-siem/encryption.key"
 		}
 
-		keyData, err := os.ReadFile(keyPath)
+		keyData, err := os.ReadFile(filepath.Clean(keyPath))
 		if err != nil {
 			return nil, fmt.Errorf("failed to read encryption key file %s: %w", keyPath, err)
 		}

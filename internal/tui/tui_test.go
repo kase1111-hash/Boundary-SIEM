@@ -17,6 +17,23 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+// encodeJSON writes v as JSON from a test HTTP handler. Encoding failures
+// are reported with t.Errorf because handlers run off the test goroutine.
+func encodeJSON(t *testing.T, w http.ResponseWriter, v any) {
+	t.Helper()
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		t.Errorf("encode response: %v", err)
+	}
+}
+
+// writeBody writes a raw response body from a test HTTP handler.
+func writeBody(t *testing.T, w http.ResponseWriter, body string) {
+	t.Helper()
+	if _, err := w.Write([]byte(body)); err != nil {
+		t.Errorf("write response: %v", err)
+	}
+}
+
 // keyMsg builds a tea.KeyMsg for the given key string.
 func keyMsg(s string) tea.KeyMsg {
 	switch s {
@@ -130,7 +147,7 @@ func TestAPIClientGetHealthHitsCorrectPath(t *testing.T) {
 	var requestedPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestedPath = r.URL.Path
-		json.NewEncoder(w).Encode(api.HealthResponse{
+		encodeJSON(t, w, api.HealthResponse{
 			Status:        "healthy",
 			QueueDepth:    0,
 			QueueCapacity: 1000,
@@ -153,7 +170,7 @@ func TestAPIClientGetDreamingHitsCorrectPath(t *testing.T) {
 	var requestedPath string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestedPath = r.URL.Path
-		json.NewEncoder(w).Encode(api.DreamingResponse{
+		encodeJSON(t, w, api.DreamingResponse{
 			Status:   "active",
 			Activity: "ingesting",
 		})
@@ -175,7 +192,7 @@ func TestAPIClientGetEventsHitsCorrectPathAndQuery(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestedPath = r.URL.Path
 		requestedQuery = r.URL.RawQuery
-		json.NewEncoder(w).Encode(api.SearchResponse{
+		encodeJSON(t, w, api.SearchResponse{
 			Results:    []api.SearchResult{},
 			TotalCount: 0,
 		})
@@ -202,7 +219,7 @@ func TestAPIClientGetEventsDefaultLimit(t *testing.T) {
 	var requestedQuery string
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestedQuery = r.URL.RawQuery
-		json.NewEncoder(w).Encode(api.SearchResponse{})
+		encodeJSON(t, w, api.SearchResponse{})
 	}))
 	defer ts.Close()
 
@@ -228,19 +245,19 @@ func TestAPIClientGetStatsHitsAllEndpoints(t *testing.T) {
 
 		switch r.URL.Path {
 		case "/health":
-			json.NewEncoder(w).Encode(api.HealthResponse{
+			encodeJSON(t, w, api.HealthResponse{
 				Status:        "healthy",
 				QueueDepth:    5,
 				QueueCapacity: 1000,
 				UptimeSeconds: 300,
 			})
 		case "/api/system/dreaming":
-			json.NewEncoder(w).Encode(api.DreamingResponse{
+			encodeJSON(t, w, api.DreamingResponse{
 				Status:   "active",
 				Activity: "ingesting",
 			})
 		case "/metrics":
-			w.Write([]byte("# HELP siem_events_total\nsiem_events_total 42\n"))
+			writeBody(t, w, "# HELP siem_events_total\nsiem_events_total 42\n")
 		default:
 			http.NotFound(w, r)
 		}
@@ -256,6 +273,8 @@ func TestAPIClientGetStatsHitsAllEndpoints(t *testing.T) {
 		t.Fatal("GetStats() returned nil stats")
 	}
 
+	mu.Lock()
+	defer mu.Unlock()
 	for _, p := range []string{"/health", "/api/system/dreaming", "/metrics"} {
 		if !requestedPaths[p] {
 			t.Errorf("expected GetStats to request %s", p)
@@ -267,14 +286,14 @@ func TestAPIClientGetStatsHealthyResponse(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/health":
-			json.NewEncoder(w).Encode(api.HealthResponse{
+			encodeJSON(t, w, api.HealthResponse{
 				Status:        "healthy",
 				QueueDepth:    10,
 				QueueCapacity: 1000,
 				UptimeSeconds: 600,
 			})
 		case "/api/system/dreaming":
-			json.NewEncoder(w).Encode(api.DreamingResponse{
+			encodeJSON(t, w, api.DreamingResponse{
 				Status:      "active",
 				Activity:    "ingesting",
 				Description: "Processing events",
@@ -286,7 +305,7 @@ func TestAPIClientGetStatsHealthyResponse(t *testing.T) {
 				},
 			})
 		case "/metrics":
-			w.Write([]byte("siem_queue_pushed_total 50\nsiem_queue_popped_total 45\nsiem_queue_dropped_total 2\n"))
+			writeBody(t, w, "siem_queue_pushed_total 50\nsiem_queue_popped_total 45\nsiem_queue_dropped_total 2\n")
 		}
 	}))
 	defer ts.Close()
@@ -341,7 +360,7 @@ func TestAPIClientGetStatsConnectionFailure(t *testing.T) {
 
 func TestAPIClientGetEventsConvertsSearchResults(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(api.SearchResponse{
+		encodeJSON(t, w, api.SearchResponse{
 			Results: []api.SearchResult{
 				{
 					EventID:       "evt-001",

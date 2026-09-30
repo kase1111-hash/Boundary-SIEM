@@ -108,12 +108,12 @@ func (s *SystemScene) View() string {
 	b.WriteString(styles.Subtitle.Render("  Backend Connection"))
 	b.WriteString("\n")
 	if s.stats.Healthy {
-		b.WriteString(fmt.Sprintf("  %s Connected to backend\n", styles.StatusOK.Render("●")))
-		b.WriteString(fmt.Sprintf("  %s Status: %s\n", styles.Muted.Render("├"), s.stats.HealthStatus))
-		b.WriteString(fmt.Sprintf("  %s Uptime: %s\n", styles.Muted.Render("└"), s.stats.Uptime))
+		fmt.Fprintf(&b, "  %s Connected to backend\n", styles.StatusOK.Render("●"))
+		fmt.Fprintf(&b, "  %s Status: %s\n", styles.Muted.Render("├"), s.stats.HealthStatus)
+		fmt.Fprintf(&b, "  %s Uptime: %s\n", styles.Muted.Render("└"), s.stats.Uptime)
 	} else {
-		b.WriteString(fmt.Sprintf("  %s Not connected\n", styles.StatusError.Render("●")))
-		b.WriteString(fmt.Sprintf("  %s Reason: %s\n", styles.Muted.Render("└"), s.stats.StatusReason))
+		fmt.Fprintf(&b, "  %s Not connected\n", styles.StatusError.Render("●"))
+		fmt.Fprintf(&b, "  %s Reason: %s\n", styles.Muted.Render("└"), s.stats.StatusReason)
 	}
 	b.WriteString("\n")
 
@@ -142,28 +142,28 @@ func (s *SystemScene) View() string {
 		if ep.note != "" {
 			note = styles.Muted.Render(" - " + ep.note)
 		}
-		b.WriteString(fmt.Sprintf("  %s %-12s Port %-6s%s\n", status, ep.name, ep.port, note))
+		fmt.Fprintf(&b, "  %s %-12s Port %-6s%s\n", status, ep.name, ep.port, note)
 	}
 	b.WriteString("\n")
 
 	// Queue Configuration
 	b.WriteString(styles.Subtitle.Render("  Queue Configuration"))
 	b.WriteString("\n")
-	b.WriteString(fmt.Sprintf("  Capacity:       %s\n", styles.MetricValue.Render(fmt.Sprintf("%d", s.stats.QueueCapacity))))
-	b.WriteString(fmt.Sprintf("  Current Depth:  %s\n", styles.MetricValue.Render(fmt.Sprintf("%d", s.stats.QueueSize))))
+	fmt.Fprintf(&b, "  Capacity:       %s\n", styles.MetricValue.Render(fmt.Sprintf("%d", s.stats.QueueCapacity)))
+	fmt.Fprintf(&b, "  Current Depth:  %s\n", styles.MetricValue.Render(fmt.Sprintf("%d", s.stats.QueueSize)))
 	usageColor := styles.StatusOK
 	if s.stats.QueueUsage >= 90 {
 		usageColor = styles.StatusError
 	} else if s.stats.QueueUsage >= 70 {
 		usageColor = styles.StatusWarning
 	}
-	b.WriteString(fmt.Sprintf("  Usage:          %s\n", usageColor.Render(fmt.Sprintf("%.1f%%", s.stats.QueueUsage))))
-	b.WriteString(fmt.Sprintf("  Pushed Total:   %s\n", formatNumber(s.stats.QueuePushed)))
-	b.WriteString(fmt.Sprintf("  Popped Total:   %s\n", formatNumber(s.stats.QueuePopped)))
+	fmt.Fprintf(&b, "  Usage:          %s\n", usageColor.Render(fmt.Sprintf("%.1f%%", s.stats.QueueUsage)))
+	fmt.Fprintf(&b, "  Pushed Total:   %s\n", formatNumber(s.stats.QueuePushed))
+	fmt.Fprintf(&b, "  Popped Total:   %s\n", formatNumber(s.stats.QueuePopped))
 	if s.stats.QueueDropped > 0 {
-		b.WriteString(fmt.Sprintf("  Dropped:        %s\n", styles.StatusError.Render(formatNumber(s.stats.QueueDropped))))
+		fmt.Fprintf(&b, "  Dropped:        %s\n", styles.StatusError.Render(formatNumber(s.stats.QueueDropped)))
 	} else {
-		b.WriteString(fmt.Sprintf("  Dropped:        %s\n", styles.StatusOK.Render("0")))
+		fmt.Fprintf(&b, "  Dropped:        %s\n", styles.StatusOK.Render("0"))
 	}
 	b.WriteString("\n")
 
@@ -186,10 +186,10 @@ func (s *SystemScene) View() string {
 	}
 	b.WriteString(styles.Muted.Render("  Configure in config.yaml to enable:\n"))
 	for _, intg := range integrations {
-		b.WriteString(fmt.Sprintf("  %s %-20s %s\n",
+		fmt.Fprintf(&b, "  %s %-20s %s\n",
 			styles.Muted.Render("○"),
 			intg.name,
-			styles.Muted.Render(intg.description)))
+			styles.Muted.Render(intg.description))
 	}
 	b.WriteString("\n")
 
@@ -197,7 +197,7 @@ func (s *SystemScene) View() string {
 	if s.stats.Activity != "" && s.stats.Activity != "unknown" {
 		b.WriteString(styles.Subtitle.Render("  Current Activity"))
 		b.WriteString("\n")
-		b.WriteString(fmt.Sprintf("  %s\n", s.stats.ActivityDesc))
+		fmt.Fprintf(&b, "  %s\n", s.stats.ActivityDesc)
 		b.WriteString("\n")
 	}
 

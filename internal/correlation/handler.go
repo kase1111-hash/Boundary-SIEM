@@ -4,11 +4,13 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,6 +21,22 @@ import (
 func computeContentHash(content []byte) string {
 	h := sha256.Sum256(content)
 	return hex.EncodeToString(h[:])
+}
+
+// errUnsafeRuleID is returned when a rule ID cannot be used as a file name
+// inside the rules directory.
+var errUnsafeRuleID = errors.New("rule ID must be a single path element without path separators or '..'")
+
+// validateRuleFileID checks that a custom rule ID can be used as a file name
+// inside the rules directory. Custom rule IDs come from API request bodies and
+// URLs, so they must not be able to escape the directory via path separators
+// or dot segments.
+func validateRuleFileID(id string) error {
+	if id == "" || id == "." || id == ".." ||
+		strings.ContainsAny(id, "/\\\x00") || filepath.Base(id) != id {
+		return errUnsafeRuleID
+	}
+	return nil
 }
 
 // RuleHandler provides HTTP handlers for rule management.
@@ -209,6 +227,12 @@ func (h *RuleHandler) HandleCreateRule(w http.ResponseWriter, r *http.Request) {
 		rule = &jsonRule
 	}
 
+	// Custom rules are persisted as <id>.yaml, so the ID must be a safe file name.
+	if err := validateRuleFileID(rule.ID); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_id", err.Error())
+		return
+	}
+
 	// Check for ID collision with existing rules
 	if _, exists := h.engine.GetRule(rule.ID); exists {
 		h.writeError(w, http.StatusConflict, "duplicate_id", "a rule with this ID already exists")
@@ -348,8 +372,16 @@ func (h *RuleHandler) HandleDeleteRule(w http.ResponseWriter, r *http.Request) {
 
 	// Remove from disk
 	if h.rulesDir != "" {
-		path := filepath.Join(h.rulesDir, ruleID+".yaml")
-		os.Remove(path)
+		if err := validateRuleFileID(ruleID); err != nil {
+			slog.Error("refusing to remove rule file for unsafe rule ID", "rule_id", ruleID, "error", err)
+		} else {
+			// filepath.Base is a no-op for a validated ID; it keeps the joined
+			// path confined to rulesDir even if validation is ever loosened.
+			path := filepath.Join(h.rulesDir, filepath.Base(ruleID)+".yaml")
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				slog.Error("failed to remove rule file", "path", path, "error", err)
+			}
+		}
 	}
 
 	h.writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
@@ -388,6 +420,11 @@ func (h *RuleHandler) persistRule(rule *Rule) {
 		return
 	}
 
+	if err := validateRuleFileID(rule.ID); err != nil {
+		slog.Error("refusing to persist rule with unsafe ID", "rule_id", rule.ID, "error", err)
+		return
+	}
+
 	if err := os.MkdirAll(h.rulesDir, 0750); err != nil {
 		slog.Error("failed to create rules directory", "error", err)
 		return
@@ -399,8 +436,9 @@ func (h *RuleHandler) persistRule(rule *Rule) {
 		return
 	}
 
-	path := filepath.Join(h.rulesDir, rule.ID+".yaml")
-	if err := os.WriteFile(path, data, 0640); err != nil {
+	// filepath.Base is a no-op for a validated ID (see HandleDeleteRule).
+	path := filepath.Join(h.rulesDir, filepath.Base(rule.ID)+".yaml")
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		slog.Error("failed to write rule file", "path", path, "error", err)
 	}
 }

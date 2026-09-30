@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 
 	"boundary-siem/internal/config"
@@ -229,7 +230,7 @@ func (d *Diagnostics) checkConfiguration() {
 		configPath = "configs/config.yaml"
 	}
 
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+	if _, err := os.Stat(configPath); os.IsNotExist(err) { // #nosec G703 -- SIEM_CONFIG_PATH is set by the operator launching the process and may legitimately point anywhere; it is only stat'ed to report existence
 		d.addResult(DiagnosticResult{
 			Name:    "config_file",
 			Status:  StatusWarning,
@@ -275,10 +276,7 @@ func (d *Diagnostics) checkPorts() {
 	// Add CEF ports if enabled
 	if d.cfg.Ingest.CEF.UDP.Enabled {
 		// Parse port from address
-		_, portStr, _ := net.SplitHostPort(d.cfg.Ingest.CEF.UDP.Address)
-		var port int
-		fmt.Sscanf(portStr, "%d", &port)
-		if port > 0 {
+		if port, ok := d.parseListenPort("CEF UDP", d.cfg.Ingest.CEF.UDP.Address); ok {
 			ports = append(ports, struct {
 				name    string
 				port    int
@@ -288,10 +286,7 @@ func (d *Diagnostics) checkPorts() {
 	}
 
 	if d.cfg.Ingest.CEF.TCP.Enabled {
-		_, portStr, _ := net.SplitHostPort(d.cfg.Ingest.CEF.TCP.Address)
-		var port int
-		fmt.Sscanf(portStr, "%d", &port)
-		if port > 0 {
+		if port, ok := d.parseListenPort("CEF TCP", d.cfg.Ingest.CEF.TCP.Address); ok {
 			ports = append(ports, struct {
 				name    string
 				port    int
@@ -329,6 +324,25 @@ func (d *Diagnostics) checkPorts() {
 			})
 		}
 	}
+}
+
+// parseListenPort extracts a positive port number from a listen address such
+// as ":514" or "0.0.0.0:514". Unparseable addresses are logged and reported
+// as not ok so the port check is skipped for that listener.
+func (d *Diagnostics) parseListenPort(name, address string) (int, bool) {
+	_, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		d.logger.Warn("cannot parse listen address, skipping port check",
+			"listener", name, "address", address, "error", err)
+		return 0, false
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		d.logger.Warn("cannot parse listen port, skipping port check",
+			"listener", name, "address", address, "error", err)
+		return 0, false
+	}
+	return port, port > 0
 }
 
 func (d *Diagnostics) checkSecurityConfiguration() {

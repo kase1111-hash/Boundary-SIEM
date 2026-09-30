@@ -96,7 +96,6 @@ type Collector struct {
 	handlers []AlertHandler
 	mu       sync.RWMutex
 	stopCh   chan struct{}
-	wg       sync.WaitGroup
 
 	// Threshold state tracking
 	thresholdBreaches map[string]time.Time // metric -> first breach time
