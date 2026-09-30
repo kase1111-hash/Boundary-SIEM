@@ -613,6 +613,87 @@ func TestSyslogForwarder_Close(t *testing.T) {
 	}
 }
 
+// TestSyslogForwarder_ForwardRacingClose runs Close while a Forward has passed
+// its closed check but not yet enqueued. An entry Forward accepts must still
+// be delivered (or counted as an error) by Close's drain; it must never be
+// left behind in the buffer after Close returns.
+func TestSyslogForwarder_ForwardRacingClose(t *testing.T) {
+	server := newTestSyslogServer(t)
+	defer server.Close()
+
+	config := DefaultSyslogConfig()
+	config.Enabled = true
+	config.Addresses = []string{server.Addr()}
+	config.FlushInterval = time.Hour // only Close flushes
+
+	sf, err := NewSyslogForwarder(config)
+	if err != nil {
+		t.Fatalf("NewSyslogForwarder() error = %v", err)
+	}
+	if !sf.IsConnected() {
+		t.Fatal("Forwarder should be connected")
+	}
+
+	inWindow := make(chan struct{})
+	release := make(chan struct{})
+	sf.enqueueHook = func() {
+		close(inWindow)
+		<-release
+	}
+
+	forwardErr := make(chan error, 1)
+	go func() {
+		forwardErr <- sf.Forward(&AuditEntry{
+			ID:        "racing-close",
+			Sequence:  1,
+			Timestamp: time.Now(),
+			Type:      EventSystemShutdown,
+			Severity:  SeverityInfo,
+			Message:   "Test",
+		})
+	}()
+	<-inWindow
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- sf.Close() }()
+
+	// Give Close the chance to finish while Forward is paused. A correct
+	// Close waits for the in-flight Forward instead.
+	select {
+	case err := <-closeDone:
+		closeDone <- err
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+
+	fwdErr := <-forwardErr
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close() did not return")
+	}
+
+	metrics := sf.Metrics()
+	switch {
+	case fwdErr == nil:
+		if got := metrics.Sent + metrics.Errors; got != 1 {
+			t.Errorf("Forward() accepted the entry but Sent+Errors = %d after Close, want 1 (entry lost)", got)
+		}
+	case errors.Is(fwdErr, ErrSyslogClosed):
+		if got := metrics.Sent + metrics.Errors; got != 0 {
+			t.Errorf("Forward() rejected the entry but Sent+Errors = %d, want 0", got)
+		}
+	default:
+		t.Fatalf("Forward() unexpected error = %v", fwdErr)
+	}
+	if n := len(sf.buffer); n != 0 {
+		t.Errorf("%d entries left in the buffer after Close, want 0", n)
+	}
+}
+
 func TestSyslogForwarder_Reconnect(t *testing.T) {
 	// Start server
 	server := newTestSyslogServer(t)

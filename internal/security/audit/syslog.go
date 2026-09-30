@@ -184,9 +184,18 @@ type SyslogForwarder struct {
 	connected    atomic.Bool
 	reconnecting atomic.Bool
 
-	// Message buffer
-	buffer chan *AuditEntry
-	closed atomic.Bool
+	// Message buffer. closeMu makes Forward's closed check and enqueue atomic
+	// with respect to Close: Forward holds it for reading, and Close sets
+	// closed under the write lock, so every entry Forward accepts is in the
+	// buffer before the send worker's final drain starts.
+	buffer  chan *AuditEntry
+	closeMu sync.RWMutex
+	closed  atomic.Bool
+
+	// enqueueHook, when non-nil, runs in Forward after the closed check and
+	// before the entry is enqueued. It is nil outside tests, which use it to
+	// run Close while a Forward is in flight.
+	enqueueHook func()
 
 	// Background processing
 	ctx    context.Context
@@ -374,8 +383,15 @@ func (sf *SyslogForwarder) buildTLSConfig() (*tls.Config, error) {
 
 // Forward sends an audit entry to the syslog server.
 func (sf *SyslogForwarder) Forward(entry *AuditEntry) error {
+	sf.closeMu.RLock()
+	defer sf.closeMu.RUnlock()
+
 	if sf.closed.Load() {
 		return ErrSyslogClosed
+	}
+
+	if sf.enqueueHook != nil {
+		sf.enqueueHook()
 	}
 
 	select {
@@ -807,7 +823,11 @@ func (sf *SyslogForwarder) reconnectWorker() {
 
 // Close closes the syslog forwarder.
 func (sf *SyslogForwarder) Close() error {
-	if sf.closed.Swap(true) {
+	// Waits for in-flight Forward calls, so none can enqueue after the drain.
+	sf.closeMu.Lock()
+	alreadyClosed := sf.closed.Swap(true)
+	sf.closeMu.Unlock()
+	if alreadyClosed {
 		return nil
 	}
 

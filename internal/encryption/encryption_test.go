@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/base64"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -521,5 +523,78 @@ func BenchmarkEncryptString(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = engine.EncryptString(plaintext)
+	}
+}
+
+// TestEncryptFieldConcurrentRotation verifies that EncryptField reports the
+// key version that is actually embedded in the ciphertext header, even while
+// RotateKey runs concurrently. Run with -race: an unsynchronised read of the
+// key version is also reported as a data race.
+func TestEncryptFieldConcurrentRotation(t *testing.T) {
+	engine, err := NewEngine(&Config{
+		Enabled:    true,
+		MasterKey:  []byte("test-master-key-32-bytes-long!!"),
+		KeyVersion: 1,
+	})
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	const rotations = 4
+	stop := make(chan struct{})
+	rotateErr := make(chan error, 1)
+	go func() {
+		defer close(stop)
+		for v := 2; v < 2+rotations; v++ {
+			if err := engine.RotateKey([]byte("rotated-master-key-32-bytes-long"), v); err != nil {
+				rotateErr <- err
+				return
+			}
+		}
+		rotateErr <- nil
+	}()
+
+	const workers = 4
+	var wg sync.WaitGroup
+	errs := make(chan string, workers)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				field, err := engine.EncryptField("field-value")
+				if err != nil {
+					errs <- "EncryptField() error: " + err.Error()
+					return
+				}
+				raw, err := base64.StdEncoding.DecodeString(field.Ciphertext)
+				if err != nil || len(raw) == 0 {
+					errs <- "EncryptField() returned invalid ciphertext encoding"
+					return
+				}
+				if header := int(raw[0]); header != field.KeyVersion {
+					errs <- fmt.Sprintf("KeyVersion = %d but ciphertext header version = %d", field.KeyVersion, header)
+					return
+				}
+			}
+		}()
+	}
+
+	if err := <-rotateErr; err != nil {
+		t.Fatalf("RotateKey() error = %v", err)
+	}
+	wg.Wait()
+	close(errs)
+	for msg := range errs {
+		t.Error(msg)
+	}
+
+	if got := engine.GetKeyVersion(); got != 1+rotations {
+		t.Errorf("GetKeyVersion() = %d, want %d", got, 1+rotations)
 	}
 }

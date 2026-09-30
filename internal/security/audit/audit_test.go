@@ -29,7 +29,8 @@ func mustFlushAndClose(t *testing.T, al *AuditLogger) {
 	}
 }
 
-// firstLogFile returns the first audit log file in dir.
+// firstLogFile returns the first (oldest, in rotation order) audit log file
+// in dir.
 func firstLogFile(t *testing.T, dir string) string {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(dir, "audit-*.log"))
@@ -39,6 +40,7 @@ func firstLogFile(t *testing.T, dir string) string {
 	if len(files) == 0 {
 		t.Fatal("No log files found")
 	}
+	sortLogFiles(files)
 	return files[0]
 }
 
@@ -55,9 +57,9 @@ func reopenLogger(t *testing.T, config *AuditLoggerConfig) *AuditLogger {
 
 func testConfig(t *testing.T) *AuditLoggerConfig {
 	t.Helper()
-	tmpDir := filepath.Join(os.TempDir(), "audit-test-"+t.Name())
-	os.RemoveAll(tmpDir)
-	t.Cleanup(func() { os.RemoveAll(tmpDir) })
+	// A per-test temporary directory keeps concurrent test runs (and
+	// subtests, whose names contain "/") from sharing a log directory.
+	tmpDir := t.TempDir()
 	return &AuditLoggerConfig{
 		LogPath:        tmpDir,
 		MaxFileSize:    1024 * 1024, // 1MB for testing

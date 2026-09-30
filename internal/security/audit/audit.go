@@ -13,10 +13,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -279,6 +281,10 @@ type AuditLogger struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
+	// Retention cleanups started by rotate; cleanupMu serializes them.
+	cleanupWG sync.WaitGroup
+	cleanupMu sync.Mutex
+
 	// Immutable log support
 	immutableMgr *ImmutableManager
 
@@ -388,26 +394,136 @@ func computeGenesisHash() string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// recoverState recovers the sequence number and previous hash from existing logs.
-func (al *AuditLogger) recoverState() error {
-	files, err := filepath.Glob(filepath.Join(al.config.LogPath, "audit-*.log"))
-	if err != nil || len(files) == 0 {
-		return nil
+// Log file naming. Each day's first file is audit-<day>.log; files started
+// later that day (by size rotation or a restart) are audit-<day>-<n>.log,
+// where n is a Unix timestamp raised as needed so that it exceeds the n of
+// every earlier file of the day.
+const (
+	logFilePrefix = "audit-"
+	logFileSuffix = ".log"
+	logDayLayout  = "2006-01-02"
+)
+
+// logFileKey is the position of a log file in rotation order.
+type logFileKey struct {
+	day      string // YYYY-MM-DD, compares chronologically as a string
+	rotation int64  // -1 for the day's first file, else the numeric suffix
+}
+
+func (k logFileKey) less(o logFileKey) bool {
+	if k.day != o.day {
+		return k.day < o.day
+	}
+	return k.rotation < o.rotation
+}
+
+// parseLogFileName returns the rotation order key of a log file base name.
+// ok is false for names this logger does not create.
+func parseLogFileName(name string) (key logFileKey, ok bool) {
+	if !strings.HasPrefix(name, logFilePrefix) || !strings.HasSuffix(name, logFileSuffix) {
+		return key, false
+	}
+	core := name[len(logFilePrefix) : len(name)-len(logFileSuffix)]
+	if len(core) < len(logDayLayout) {
+		return key, false
+	}
+	day, rest := core[:len(logDayLayout)], core[len(logDayLayout):]
+	if _, err := time.Parse(logDayLayout, day); err != nil {
+		return key, false
+	}
+	if rest == "" {
+		return logFileKey{day: day, rotation: -1}, true
+	}
+	// Require a digit after the separator so ParseInt sees no sign.
+	if len(rest) < 2 || rest[0] != '-' || rest[1] < '0' || rest[1] > '9' {
+		return key, false
+	}
+	n, err := strconv.ParseInt(rest[1:], 10, 64)
+	if err != nil {
+		return key, false
+	}
+	return logFileKey{day: day, rotation: n}, true
+}
+
+// sortLogFiles sorts log file paths into the order they were written:
+// by day, then the day's first file, then rotated files by numeric suffix.
+// Plain string order is wrong here, because "audit-<day>-<n>.log" sorts
+// before "audit-<day>.log". Names the logger does not create sort first.
+func sortLogFiles(files []string) {
+	sort.SliceStable(files, func(i, j int) bool {
+		ki, oki := parseLogFileName(filepath.Base(files[i]))
+		kj, okj := parseLogFileName(filepath.Base(files[j]))
+		switch {
+		case oki != okj:
+			return !oki
+		case oki && ki != kj:
+			return ki.less(kj)
+		default:
+			return files[i] < files[j]
+		}
+	})
+}
+
+// listLogFiles returns the audit-*.log files in LogPath in rotation order.
+func (al *AuditLogger) listLogFiles() ([]string, error) {
+	dirEntries, err := os.ReadDir(al.config.LogPath)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
 	}
 
-	// Sort to get the latest file
-	sort.Strings(files)
-	latestFile := files[len(files)-1]
+	var files []string
+	for _, e := range dirEntries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasPrefix(name, logFilePrefix) || !strings.HasSuffix(name, logFileSuffix) {
+			continue
+		}
+		files = append(files, filepath.Join(al.config.LogPath, name))
+	}
+	sortLogFiles(files)
+	return files, nil
+}
 
-	// Read the last entry
-	lastEntry, err := al.readLastEntry(latestFile)
+// latestLogFileOfDay returns the newest file of day among files, which must
+// be in rotation order.
+func latestLogFileOfDay(files []string, day string) (path string, key logFileKey, ok bool) {
+	for i := len(files) - 1; i >= 0; i-- {
+		if k, parsed := parseLogFileName(filepath.Base(files[i])); parsed && k.day == day {
+			return files[i], k, true
+		}
+	}
+	return "", logFileKey{}, false
+}
+
+// isSealed reports whether a log file was finished by rotate or Close, which
+// write its checksum. Appending to a sealed file would invalidate it.
+func isSealed(path string) bool {
+	_, err := os.Stat(path + ".sha256")
+	return err == nil
+}
+
+// recoverState recovers the sequence number and previous hash from existing logs.
+func (al *AuditLogger) recoverState() error {
+	files, err := al.listLogFiles()
 	if err != nil {
 		return err
 	}
 
-	if lastEntry != nil {
-		al.sequence = lastEntry.Sequence
-		al.previousHash = lastEntry.EntryHash
+	// Continue from the last entry written. Walk back from the newest file:
+	// it may hold no entries yet (for example a file opened by a run that
+	// logged nothing before it was stopped).
+	for i := len(files) - 1; i >= 0; i-- {
+		lastEntry, err := al.readLastEntry(files[i])
+		if err != nil {
+			return err
+		}
+		if lastEntry != nil {
+			al.sequence = lastEntry.Sequence
+			al.previousHash = lastEntry.EntryHash
+			return nil
+		}
 	}
 
 	return nil
@@ -477,21 +593,54 @@ func (al *AuditLogger) readLastEntry(path string) (*AuditEntry, error) {
 	return &entry, nil
 }
 
-// openLogFile opens or creates the current log file.
+// openLogFile opens the log file entries are written to at startup. It
+// continues today's newest log file, so a restart after a same-day rotation
+// keeps the chain in rotation order, unless that file is sealed: appending
+// would invalidate its checksum (and fail if it is immutable), so a new file
+// is started instead.
 func (al *AuditLogger) openLogFile() error {
-	if al.currentFile != nil {
-		al.currentFile.Close()
-	}
-
-	// Generate filename with date
-	filename := fmt.Sprintf("audit-%s.log", time.Now().Format("2006-01-02"))
-	path := filepath.Join(al.config.LogPath, filename)
-
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600) // #nosec G304 -- path is the operator-configured LogPath joined with a generated audit-<date>.log name, not external input
+	now := time.Now()
+	files, err := al.listLogFiles()
 	if err != nil {
 		return err
 	}
 
+	if latest, _, ok := latestLogFileOfDay(files, now.Format(logDayLayout)); ok && !isSealed(latest) {
+		f, err := os.OpenFile(latest, os.O_APPEND|os.O_WRONLY, 0600) // #nosec G304 -- latest is a log file name listed inside the operator-configured LogPath, not external input
+		if err == nil {
+			return al.useLogFile(f, latest)
+		}
+		al.logger.Warn("cannot append to newest audit log file, starting a new one", "path", latest, "error", err)
+	}
+
+	return al.openNewLogFile(files, now)
+}
+
+// openNewLogFile creates the next log file of now's day and makes it current.
+// Its name sorts after every existing file of that day (files must be the
+// directory listing in rotation order), so rotation order is preserved even
+// for several rotations within one second.
+func (al *AuditLogger) openNewLogFile(files []string, now time.Time) error {
+	day := now.Format(logDayLayout)
+	filename := logFilePrefix + day + logFileSuffix
+	if _, latest, ok := latestLogFileOfDay(files, day); ok {
+		n := now.Unix()
+		if n <= latest.rotation {
+			n = latest.rotation + 1
+		}
+		filename = fmt.Sprintf("%s%s-%d%s", logFilePrefix, day, n, logFileSuffix)
+	}
+	path := filepath.Join(al.config.LogPath, filename)
+
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600) // #nosec G304 -- path is the operator-configured LogPath joined with a generated audit-<date>[-<n>].log name, not external input
+	if err != nil {
+		return err
+	}
+	return al.useLogFile(f, path)
+}
+
+// useLogFile makes f, opened at path, the current log file.
+func (al *AuditLogger) useLogFile(f *os.File, path string) error {
 	stat, err := f.Stat()
 	if err != nil {
 		f.Close()
@@ -600,10 +749,10 @@ func (al *AuditLogger) writeEntryLocked(entry *AuditEntry) error {
 		}
 	}
 
-	// Check if new day
-	expectedFile := fmt.Sprintf("audit-%s.log", time.Now().Format("2006-01-02"))
-	if !strings.HasSuffix(al.currentPath, expectedFile) {
-		if err := al.openLogFile(); err != nil {
+	// Start a new file when the day changes. Files rotated earlier today
+	// (audit-<today>-<n>.log) belong to today as well.
+	if key, ok := parseLogFileName(filepath.Base(al.currentPath)); !ok || key.day != time.Now().Format(logDayLayout) {
+		if err := al.rotate(); err != nil {
 			return fmt.Errorf("failed to open new log file: %w", err)
 		}
 	}
@@ -665,18 +814,15 @@ func (al *AuditLogger) rotate() error {
 		}
 	}
 
-	// Open new file with timestamp
-	filename := fmt.Sprintf("audit-%s-%d.log", time.Now().Format("2006-01-02"), time.Now().Unix())
-	path := filepath.Join(al.config.LogPath, filename)
-
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600) // #nosec G304 -- path is the operator-configured LogPath joined with a generated audit-<date>-<unix>.log name, not external input
+	// Open the next file, named to sort after every existing file of today
+	files, err := al.listLogFiles()
 	if err != nil {
 		return err
 	}
-
-	al.currentFile = f
-	al.currentPath = path
-	al.currentSize = 0
+	if err := al.openNewLogFile(files, time.Now()); err != nil {
+		return err
+	}
+	path := al.currentPath
 
 	// Set append-only on new file
 	if al.immutableMgr != nil {
@@ -685,8 +831,16 @@ func (al *AuditLogger) rotate() error {
 		}
 	}
 
-	// Clean up old files
-	go al.cleanupOldFiles()
+	// Clean up old files. The goroutine gets the manager and the active path
+	// as arguments because it must not take al.mu: Close waits for it while
+	// holding al.mu. rotate always runs under al.mu, so Add never races
+	// Close's Wait.
+	im := al.immutableMgr
+	al.cleanupWG.Add(1)
+	go func() {
+		defer al.cleanupWG.Done()
+		al.cleanupOldFiles(im, path)
+	}()
 
 	return nil
 }
@@ -710,22 +864,70 @@ func (al *AuditLogger) writeFileChecksum(logPath string) error {
 	return os.WriteFile(checksumPath, []byte(checksum), 0600)
 }
 
-// cleanupOldFiles removes old log files beyond retention limit.
-func (al *AuditLogger) cleanupOldFiles() {
-	files, err := filepath.Glob(filepath.Join(al.config.LogPath, "audit-*.log"))
+// cleanupOldFiles enforces MaxFiles retention: it removes the oldest log
+// files, in rotation order, together with their checksum files. Only files
+// named by the logger count, and activePath (the file being written) is never
+// removed. Rotated files are immutable when an ImmutableManager is in use, so
+// im clears their attributes first; every failure is logged. MaxFiles <= 0
+// disables retention.
+func (al *AuditLogger) cleanupOldFiles(im *ImmutableManager, activePath string) {
+	if al.config.MaxFiles <= 0 {
+		return
+	}
+
+	// Rotations in quick succession must not remove the same files twice.
+	al.cleanupMu.Lock()
+	defer al.cleanupMu.Unlock()
+
+	files, err := al.listLogFiles()
 	if err != nil {
+		al.logger.Warn("failed to list audit log files for retention", "path", al.config.LogPath, "error", err)
+		return
+	}
+	managed := files[:0]
+	for _, f := range files {
+		if _, ok := parseLogFileName(filepath.Base(f)); ok {
+			managed = append(managed, f)
+		}
+	}
+	if len(managed) <= al.config.MaxFiles {
 		return
 	}
 
-	if len(files) <= al.config.MaxFiles {
+	ctx := context.Background()
+	for _, f := range managed[:len(managed)-al.config.MaxFiles] {
+		if f == activePath {
+			continue
+		}
+		al.removeExpiredFile(ctx, im, f)
+		al.removeExpiredFile(ctx, im, f+".sha256")
+	}
+}
+
+// removeExpiredFile removes one file past retention, clearing its immutable
+// and append-only attributes through im (when set) first. A file that does
+// not exist is skipped.
+func (al *AuditLogger) removeExpiredFile(ctx context.Context, im *ImmutableManager, path string) {
+	if _, err := os.Lstat(path); errors.Is(err, fs.ErrNotExist) {
 		return
 	}
 
-	sort.Strings(files)
-	for _, f := range files[:len(files)-al.config.MaxFiles] {
-		os.Remove(f)
-		os.Remove(f + ".sha256")
+	if im != nil {
+		if err := im.ClearImmutable(ctx, path); err != nil {
+			al.logger.Warn("failed to clear immutable attribute on expired audit log file", "path", path, "error", err)
+		}
+		if err := im.ClearAppendOnly(ctx, path); err != nil {
+			al.logger.Warn("failed to clear append-only attribute on expired audit log file", "path", path, "error", err)
+		}
 	}
+
+	if err := os.Remove(path); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			al.logger.Warn("failed to remove expired audit log file", "path", path, "error", err)
+		}
+		return
+	}
+	al.logger.Info("removed expired audit log file", "path", path)
 }
 
 // flushWorker periodically syncs the log file to disk.
@@ -790,12 +992,10 @@ func (al *AuditLogger) verifyWorker() {
 
 // VerifyIntegrity verifies the integrity of all log files.
 func (al *AuditLogger) VerifyIntegrity(ctx context.Context) error {
-	files, err := filepath.Glob(filepath.Join(al.config.LogPath, "audit-*.log"))
+	files, err := al.listLogFiles()
 	if err != nil {
 		return err
 	}
-
-	sort.Strings(files)
 
 	genesisHash := computeGenesisHash()
 
@@ -857,7 +1057,9 @@ func (al *AuditLogger) VerifyIntegrity(ctx context.Context) error {
 	return nil
 }
 
-// readLogFile reads all entries from a log file.
+// readLogFile reads all entries from a log file. If the file holds malformed
+// data (such as a line torn by a crash mid-write), it returns the entries
+// before it together with an error.
 func (al *AuditLogger) readLogFile(path string) ([]*AuditEntry, error) {
 	f, err := os.Open(path) // #nosec G304 -- path is an audit-*.log match globbed inside the operator-configured LogPath, not external input
 	if err != nil {
@@ -874,8 +1076,9 @@ func (al *AuditLogger) readLogFile(path string) ([]*AuditEntry, error) {
 			if err == io.EOF {
 				break
 			}
-			// Try to continue on partial JSON
-			continue
+			// json.Decoder errors are sticky: decoding cannot resume after
+			// malformed data, and retrying would loop forever.
+			return entries, fmt.Errorf("malformed data after entry %d: %w", len(entries), err)
 		}
 		entries = append(entries, &entry)
 	}
@@ -922,6 +1125,10 @@ func (al *AuditLogger) Close() error {
 	defer al.mu.Unlock()
 
 	ctx := context.Background()
+
+	// Wait for retention cleanups started by rotate. They never take al.mu,
+	// and rotate runs under al.mu, so none can start during the wait.
+	al.cleanupWG.Wait()
 
 	// Close syslog forwarder first to flush any pending messages
 	if al.syslogFwd != nil {
@@ -1019,18 +1226,17 @@ type AuditMetrics struct {
 
 // Query returns audit entries matching the criteria.
 func (al *AuditLogger) Query(ctx context.Context, opts QueryOptions) ([]*AuditEntry, error) {
-	files, err := filepath.Glob(filepath.Join(al.config.LogPath, "audit-*.log"))
+	files, err := al.listLogFiles()
 	if err != nil {
 		return nil, err
 	}
-
-	sort.Strings(files)
 
 	var results []*AuditEntry
 	for _, file := range files {
 		entries, err := al.readLogFile(file)
 		if err != nil {
-			continue
+			// Still search the entries read before the unreadable part.
+			al.logger.Warn("failed to read audit log file", "path", file, "error", err)
 		}
 
 		for _, entry := range entries {

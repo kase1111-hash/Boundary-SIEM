@@ -437,6 +437,56 @@ func TestFileProviderWithNewlines(t *testing.T) {
 	}
 }
 
+// TestNewManager_FileDir checks that Config.FileDir selects the directory the
+// file provider reads from, and that an empty FileDir falls back to
+// DefaultFileDir.
+func TestNewManager_FileDir(t *testing.T) {
+	customDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(customDir, "db_password"), []byte("from-custom-dir\n"), 0600); err != nil {
+		t.Fatalf("failed to write secret file: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		fileDir string
+		wantDir string
+	}{
+		{name: "custom directory", fileDir: customDir, wantDir: customDir},
+		{name: "empty uses default", fileDir: "", wantDir: DefaultFileDir},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, err := NewManager(&Config{EnableFile: true, FileDir: tt.fileDir, CacheTTL: time.Minute})
+			if err != nil {
+				t.Fatalf("NewManager() error = %v", err)
+			}
+			defer manager.Close()
+
+			if len(manager.providers) != 1 {
+				t.Fatalf("providers = %d, want 1", len(manager.providers))
+			}
+			fp, ok := manager.providers[0].(*FileProvider)
+			if !ok {
+				t.Fatalf("provider = %T, want *FileProvider", manager.providers[0])
+			}
+			if fp.baseDir != tt.wantDir {
+				t.Errorf("file provider dir = %q, want %q", fp.baseDir, tt.wantDir)
+			}
+
+			if tt.fileDir == customDir {
+				value, err := manager.Get(context.Background(), "db/password")
+				if err != nil {
+					t.Fatalf("Get() error = %v", err)
+				}
+				if value != "from-custom-dir" {
+					t.Errorf("Get() = %q, want %q", value, "from-custom-dir")
+				}
+			}
+		})
+	}
+}
+
 // BenchmarkManagerGet benchmarks secret retrieval.
 func BenchmarkManagerGet(b *testing.B) {
 	os.Setenv("BOUNDARY_BENCH_SECRET", "bench-value")

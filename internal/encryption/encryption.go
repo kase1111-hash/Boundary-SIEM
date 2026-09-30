@@ -162,15 +162,29 @@ func (e *Engine) Enabled() bool {
 // Encrypt encrypts plaintext using AES-256-GCM.
 // Returns base64-encoded ciphertext with embedded nonce and key version.
 func (e *Engine) Encrypt(plaintext []byte) (string, error) {
+	ciphertext, _, err := e.encryptVersioned(plaintext)
+	return ciphertext, err
+}
+
+// encryptVersioned encrypts plaintext and returns the key version it used.
+// The version is read under the same lock as the encryption, so it always
+// matches the version embedded in the ciphertext header even if RotateKey
+// runs concurrently.
+func (e *Engine) encryptVersioned(plaintext []byte) (string, int, error) {
 	if !e.enabled {
-		// If encryption is disabled, return plaintext as base64
-		return base64.StdEncoding.EncodeToString(plaintext), nil
+		// If encryption is disabled, return plaintext as base64. The key
+		// version of a disabled engine is never modified.
+		return base64.StdEncoding.EncodeToString(plaintext), e.keyVersion, nil
 	}
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	return e.encryptLocked(plaintext)
+	ciphertext, err := e.encryptLocked(plaintext)
+	if err != nil {
+		return "", 0, err
+	}
+	return ciphertext, e.keyVersion, nil
 }
 
 // encryptLocked performs encryption. Caller must hold at least a read lock.
@@ -491,15 +505,17 @@ type EncryptedField struct {
 }
 
 // EncryptField encrypts a field and returns metadata.
+// KeyVersion is taken together with the encryption, so it always names the
+// key recorded in the ciphertext even when RotateKey runs concurrently.
 func (e *Engine) EncryptField(plaintext string) (*EncryptedField, error) {
-	ciphertext, err := e.EncryptString(plaintext)
+	ciphertext, keyVersion, err := e.encryptVersioned([]byte(plaintext))
 	if err != nil {
 		return nil, err
 	}
 
 	return &EncryptedField{
 		Ciphertext:  ciphertext,
-		KeyVersion:  e.keyVersion,
+		KeyVersion:  keyVersion,
 		Algorithm:   "AES-256-GCM",
 		EncryptedAt: int64(time.Now().Unix()),
 	}, nil
