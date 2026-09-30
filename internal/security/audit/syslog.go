@@ -60,6 +60,10 @@ var (
 	ErrSyslogClosed       = errors.New("syslog client closed")
 )
 
+// syslogBatchSize is the maximum number of entries the send worker collects
+// from the buffer before sending them.
+const syslogBatchSize = 100
+
 // SyslogProtocol represents the transport protocol.
 type SyslogProtocol string
 
@@ -242,20 +246,23 @@ func NewSyslogForwarder(config *SyslogConfig) (*SyslogForwarder, error) {
 }
 
 // connect establishes a connection to a syslog server.
+// It is only called from NewSyslogForwarder and the single reconnect worker,
+// so it never runs concurrently with itself.
 func (sf *SyslogForwarder) connect() error {
-	sf.mu.Lock()
-	defer sf.mu.Unlock()
-
 	// Close existing connection
+	sf.mu.Lock()
 	if sf.conn != nil {
 		sf.conn.Close()
 		sf.conn = nil
 	}
+	startIdx := sf.addrIndex
+	sf.mu.Unlock()
 
-	// Try each address in order
+	// Try each address in order. Dialing is done without holding sf.mu so that
+	// Metrics and the send worker are not blocked for up to ConnectionTimeout.
 	var lastErr error
 	for i := 0; i < len(sf.config.Addresses); i++ {
-		idx := (sf.addrIndex + i) % len(sf.config.Addresses)
+		idx := (startIdx + i) % len(sf.config.Addresses)
 		addr := sf.config.Addresses[idx]
 
 		conn, err := sf.dialAddress(addr)
@@ -265,9 +272,11 @@ func (sf *SyslogForwarder) connect() error {
 			continue
 		}
 
+		sf.mu.Lock()
 		sf.conn = conn
 		sf.currentAddr = addr
 		sf.addrIndex = idx
+		sf.mu.Unlock()
 		sf.connected.Store(true)
 		atomic.AddUint64(&sf.reconnects, 1)
 
@@ -305,7 +314,10 @@ func (sf *SyslogForwarder) dialAddress(addr string) (net.Conn, error) {
 			return nil, fmt.Errorf("TLS config error: %w", err)
 		}
 
-		conn, err := tls.DialWithDialer(&dialer, "tcp", addr, tlsConfig)
+		// Use the context-aware dialer so Close can abort an in-flight
+		// connect or handshake instead of waiting for ConnectionTimeout.
+		tlsDialer := &tls.Dialer{NetDialer: &dialer, Config: tlsConfig}
+		conn, err := tlsDialer.DialContext(ctx, "tcp", addr)
 		if err != nil {
 			return nil, err
 		}
@@ -382,7 +394,7 @@ func (sf *SyslogForwarder) sendWorker() {
 	ticker := time.NewTicker(sf.config.FlushInterval)
 	defer ticker.Stop()
 
-	batch := make([]*AuditEntry, 0, 100)
+	batch := make([]*AuditEntry, 0, syslogBatchSize)
 
 	for {
 		select {
@@ -393,7 +405,7 @@ func (sf *SyslogForwarder) sendWorker() {
 
 		case entry := <-sf.buffer:
 			batch = append(batch, entry)
-			if len(batch) >= 100 {
+			if len(batch) >= syslogBatchSize {
 				sf.sendBatch(batch)
 				batch = batch[:0]
 			}
@@ -425,58 +437,105 @@ func (sf *SyslogForwarder) drainBuffer(batch []*AuditEntry) {
 
 // sendBatch sends a batch of messages.
 func (sf *SyslogForwarder) sendBatch(batch []*AuditEntry) {
+	abandoned := 0
 	for _, entry := range batch {
-		if err := sf.sendEntry(entry); err != nil {
+		err := sf.sendEntry(entry)
+		switch {
+		case err == nil:
+			atomic.AddUint64(&sf.sent, 1)
+		case errors.Is(err, ErrSyslogClosed):
+			// Shutting down with no usable connection: summarize below
+			// instead of logging every undeliverable entry.
+			abandoned++
+			atomic.AddUint64(&sf.errors, 1)
+		default:
 			sf.logger.Warn("failed to send syslog message",
 				"error", err,
 				"entry_id", entry.ID)
 			atomic.AddUint64(&sf.errors, 1)
-		} else {
-			atomic.AddUint64(&sf.sent, 1)
 		}
+	}
+
+	if abandoned > 0 {
+		sf.logger.Warn("syslog forwarder closed, discarded undeliverable messages",
+			"count", abandoned)
 	}
 }
 
-// sendEntry sends a single entry with retries.
+// sendEntry sends a single entry, making up to MaxRetries+1 attempts spaced
+// RetryInterval apart. Once the forwarder is closed it stops waiting between
+// attempts, so shutdown with an unreachable server is not delayed by
+// buffered entries x MaxRetries x RetryInterval; the entry then fails with
+// an error wrapping ErrSyslogClosed.
 func (sf *SyslogForwarder) sendEntry(entry *AuditEntry) error {
 	message := sf.formatMessage(entry)
 
-	for retry := 0; retry <= sf.config.MaxRetries; retry++ {
-		if !sf.connected.Load() {
-			// Wait for reconnection
-			time.Sleep(sf.config.RetryInterval)
-			continue
+	lastErr := ErrSyslogNotConnected
+	for attempt := 0; attempt <= sf.config.MaxRetries; attempt++ {
+		if attempt > 0 && !sf.waitRetry() {
+			return fmt.Errorf("%w: message not delivered: %w", ErrSyslogClosed, lastErr)
 		}
 
-		sf.mu.RLock()
-		conn := sf.conn
-		sf.mu.RUnlock()
-
+		conn := sf.activeConn()
 		if conn == nil {
-			time.Sleep(sf.config.RetryInterval)
+			// Wait for the reconnect worker
+			lastErr = ErrSyslogNotConnected
 			continue
 		}
 
-		// Set write deadline
-		if sf.config.WriteTimeout > 0 {
-			conn.SetWriteDeadline(time.Now().Add(sf.config.WriteTimeout))
+		if err := sf.writeMessage(conn, message); err != nil {
+			// Connection error, trigger reconnect
+			sf.connected.Store(false)
+			sf.logger.Debug("syslog write failed, will reconnect", "error", err)
+			lastErr = err
+			continue
 		}
 
-		_, err := conn.Write(message)
-		if err == nil {
-			return nil
-		}
+		return nil
+	}
 
-		// Connection error, trigger reconnect
-		sf.connected.Store(false)
-		sf.logger.Debug("syslog write failed, will reconnect", "error", err)
+	return fmt.Errorf("max retries exceeded: %w", lastErr)
+}
 
-		if retry < sf.config.MaxRetries {
-			time.Sleep(sf.config.RetryInterval)
+// activeConn returns the current connection, or nil if not connected.
+func (sf *SyslogForwarder) activeConn() net.Conn {
+	if !sf.connected.Load() {
+		return nil
+	}
+
+	sf.mu.RLock()
+	defer sf.mu.RUnlock()
+	return sf.conn
+}
+
+// writeMessage writes one formatted message to conn, honoring WriteTimeout.
+func (sf *SyslogForwarder) writeMessage(conn net.Conn, message []byte) error {
+	if sf.config.WriteTimeout > 0 {
+		if err := conn.SetWriteDeadline(time.Now().Add(sf.config.WriteTimeout)); err != nil {
+			return fmt.Errorf("set write deadline: %w", err)
 		}
 	}
 
-	return errors.New("max retries exceeded")
+	_, err := conn.Write(message)
+	return err
+}
+
+// waitRetry waits RetryInterval before the next send attempt. It returns
+// false without waiting out the interval if the forwarder is being closed.
+func (sf *SyslogForwarder) waitRetry() bool {
+	if sf.ctx.Err() != nil {
+		return false
+	}
+
+	timer := time.NewTimer(sf.config.RetryInterval)
+	defer timer.Stop()
+
+	select {
+	case <-sf.ctx.Done():
+		return false
+	case <-timer.C:
+		return true
+	}
 }
 
 // formatMessage formats an audit entry for syslog.
@@ -772,13 +831,17 @@ func (sf *SyslogForwarder) Close() error {
 
 // Metrics returns syslog forwarder metrics.
 func (sf *SyslogForwarder) Metrics() SyslogMetrics {
+	sf.mu.RLock()
+	addr := sf.currentAddr
+	sf.mu.RUnlock()
+
 	return SyslogMetrics{
 		Sent:       atomic.LoadUint64(&sf.sent),
 		Dropped:    atomic.LoadUint64(&sf.dropped),
 		Errors:     atomic.LoadUint64(&sf.errors),
 		Reconnects: atomic.LoadUint64(&sf.reconnects),
 		Connected:  sf.connected.Load(),
-		Address:    sf.currentAddr,
+		Address:    addr,
 	}
 }
 

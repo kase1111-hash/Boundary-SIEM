@@ -3,11 +3,55 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 )
+
+// mustLog logs an event and fails the test if it cannot be recorded.
+func mustLog(t *testing.T, al *AuditLogger, eventType EventType, severity Severity, message string) {
+	t.Helper()
+	if err := al.Log(context.Background(), eventType, severity, message, nil); err != nil {
+		t.Fatalf("Log(%s) error = %v", eventType, err)
+	}
+}
+
+// mustFlushAndClose flushes and closes al, failing the test on error.
+func mustFlushAndClose(t *testing.T, al *AuditLogger) {
+	t.Helper()
+	if err := al.ForceFlush(context.Background()); err != nil {
+		t.Fatalf("ForceFlush() error = %v", err)
+	}
+	if err := al.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+}
+
+// firstLogFile returns the first audit log file in dir.
+func firstLogFile(t *testing.T, dir string) string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(dir, "audit-*.log"))
+	if err != nil {
+		t.Fatalf("Glob() error = %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("No log files found")
+	}
+	return files[0]
+}
+
+// reopenLogger creates a new logger on config and closes it at test end.
+func reopenLogger(t *testing.T, config *AuditLoggerConfig) *AuditLogger {
+	t.Helper()
+	al, err := NewAuditLogger(config, nil)
+	if err != nil {
+		t.Fatalf("NewAuditLogger() reopen error = %v", err)
+	}
+	t.Cleanup(func() { al.Close() })
+	return al
+}
 
 func testConfig(t *testing.T) *AuditLoggerConfig {
 	t.Helper()
@@ -154,15 +198,10 @@ func TestAuditLogger_ChainIntegrity(t *testing.T) {
 	}
 
 	// Flush and close
-	al.ForceFlush(ctx)
-	al.Close()
+	mustFlushAndClose(t, al)
 
 	// Reopen and verify
-	al2, err := NewAuditLogger(config, nil)
-	if err != nil {
-		t.Fatalf("NewAuditLogger() reopen error = %v", err)
-	}
-	defer al2.Close()
+	al2 := reopenLogger(t, config)
 
 	// Verify integrity
 	err = al2.VerifyIntegrity(ctx)
@@ -182,11 +221,13 @@ func TestAuditLogger_Query(t *testing.T) {
 	ctx := context.Background()
 
 	// Log various events
-	al.Log(ctx, EventSystemStart, SeverityInfo, "Start", nil)
-	al.Log(ctx, EventAuthSuccess, SeverityInfo, "Login", nil)
-	al.Log(ctx, EventAuthFailure, SeverityWarning, "Bad login", nil)
-	al.Log(ctx, EventFirewallBlock, SeverityCritical, "Blocked", nil)
-	al.ForceFlush(ctx)
+	mustLog(t, al, EventSystemStart, SeverityInfo, "Start")
+	mustLog(t, al, EventAuthSuccess, SeverityInfo, "Login")
+	mustLog(t, al, EventAuthFailure, SeverityWarning, "Bad login")
+	mustLog(t, al, EventFirewallBlock, SeverityCritical, "Blocked")
+	if err := al.ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush() error = %v", err)
+	}
 
 	// Query by type
 	results, err := al.Query(ctx, QueryOptions{
@@ -240,9 +281,11 @@ func TestAuditLogger_Metrics(t *testing.T) {
 
 	// Log some events
 	for i := 0; i < 5; i++ {
-		al.Log(ctx, EventSystemStart, SeverityInfo, "Event", nil)
+		mustLog(t, al, EventSystemStart, SeverityInfo, "Event")
 	}
-	al.ForceFlush(ctx)
+	if err := al.ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush() error = %v", err)
+	}
 
 	// Check updated metrics
 	metrics = al.Metrics()
@@ -267,17 +310,12 @@ func TestAuditLogger_RecoverState(t *testing.T) {
 
 	// Log some events
 	for i := 0; i < 5; i++ {
-		al1.Log(ctx, EventSystemStart, SeverityInfo, "Event", nil)
+		mustLog(t, al1, EventSystemStart, SeverityInfo, "Event")
 	}
-	al1.ForceFlush(ctx)
-	al1.Close()
+	mustFlushAndClose(t, al1)
 
 	// Second logger should recover state
-	al2, err := NewAuditLogger(config, nil)
-	if err != nil {
-		t.Fatalf("NewAuditLogger() reopen error = %v", err)
-	}
-	defer al2.Close()
+	al2 := reopenLogger(t, config)
 
 	// Sequence should continue
 	if al2.sequence != 5 {
@@ -285,11 +323,16 @@ func TestAuditLogger_RecoverState(t *testing.T) {
 	}
 
 	// Log more events
-	al2.Log(ctx, EventSystemShutdown, SeverityInfo, "Shutdown", nil)
-	al2.ForceFlush(ctx)
+	mustLog(t, al2, EventSystemShutdown, SeverityInfo, "Shutdown")
+	if err := al2.ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush() error = %v", err)
+	}
 
 	// Query all events
-	results, _ := al2.Query(ctx, QueryOptions{})
+	results, err := al2.Query(ctx, QueryOptions{})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
 	if len(results) != 6 {
 		t.Errorf("Total entries = %d, want 6", len(results))
 	}
@@ -306,19 +349,18 @@ func TestAuditLogger_SequenceGapDetection(t *testing.T) {
 
 	// Log some events
 	for i := 0; i < 5; i++ {
-		al.Log(ctx, EventSystemStart, SeverityInfo, "Event", nil)
+		mustLog(t, al, EventSystemStart, SeverityInfo, "Event")
 	}
-	al.ForceFlush(ctx)
-	al.Close()
+	mustFlushAndClose(t, al)
 
 	// Manually tamper with the log file - remove an entry
-	files, _ := filepath.Glob(filepath.Join(config.LogPath, "audit-*.log"))
-	if len(files) == 0 {
-		t.Fatal("No log files found")
-	}
+	logFile := firstLogFile(t, config.LogPath)
 
 	// Read entries
-	data, _ := os.ReadFile(files[0])
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
 	lines := []string{}
 	for _, line := range splitLines(string(data)) {
 		if line != "" {
@@ -329,12 +371,13 @@ func TestAuditLogger_SequenceGapDetection(t *testing.T) {
 	// Remove middle entry (create gap)
 	if len(lines) >= 3 {
 		tamperedLines := append(lines[:2], lines[3:]...)
-		os.WriteFile(files[0], []byte(joinLines(tamperedLines)), 0600)
+		if err := os.WriteFile(logFile, []byte(joinLines(tamperedLines)), 0600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
 	}
 
 	// Reopen and verify - should detect gap
-	al2, _ := NewAuditLogger(config, nil)
-	defer al2.Close()
+	al2 := reopenLogger(t, config)
 
 	err = al2.VerifyIntegrity(ctx)
 	if err == nil {
@@ -374,28 +417,33 @@ func TestAuditLogger_SignatureTamperDetection(t *testing.T) {
 
 	ctx := context.Background()
 
-	al.Log(ctx, EventSystemStart, SeverityInfo, "Event", nil)
-	al.ForceFlush(ctx)
-	al.Close()
+	mustLog(t, al, EventSystemStart, SeverityInfo, "Event")
+	mustFlushAndClose(t, al)
 
 	// Tamper with entry
-	files, _ := filepath.Glob(filepath.Join(config.LogPath, "audit-*.log"))
-	if len(files) == 0 {
-		t.Fatal("No log files found")
-	}
+	logFile := firstLogFile(t, config.LogPath)
 
-	data, _ := os.ReadFile(files[0])
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
 	var entry AuditEntry
-	json.Unmarshal(data[:len(data)-1], &entry) // Remove newline
+	if err := json.Unmarshal(data[:len(data)-1], &entry); err != nil { // Remove newline
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
 
 	// Modify message
 	entry.Message = "TAMPERED"
-	tamperedData, _ := json.Marshal(entry)
-	os.WriteFile(files[0], append(tamperedData, '\n'), 0600)
+	tamperedData, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(logFile, append(tamperedData, '\n'), 0600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 
 	// Verify should detect tampering
-	al2, _ := NewAuditLogger(config, nil)
-	defer al2.Close()
+	al2 := reopenLogger(t, config)
 
 	err = al2.VerifyIntegrity(ctx)
 	if err == nil {
@@ -414,36 +462,87 @@ func TestAuditLogger_ChainLinkTamperDetection(t *testing.T) {
 
 	// Log multiple events
 	for i := 0; i < 3; i++ {
-		al.Log(ctx, EventSystemStart, SeverityInfo, "Event", nil)
+		mustLog(t, al, EventSystemStart, SeverityInfo, "Event")
 	}
-	al.ForceFlush(ctx)
-	al.Close()
+	mustFlushAndClose(t, al)
 
 	// Tamper with chain - modify previous_hash of second entry
-	files, _ := filepath.Glob(filepath.Join(config.LogPath, "audit-*.log"))
-	if len(files) == 0 {
-		t.Fatal("No log files found")
-	}
+	logFile := firstLogFile(t, config.LogPath)
 
-	data, _ := os.ReadFile(files[0])
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
 	lines := splitLines(string(data))
 
 	if len(lines) >= 2 {
 		var entry AuditEntry
-		json.Unmarshal([]byte(lines[1]), &entry)
+		if err := json.Unmarshal([]byte(lines[1]), &entry); err != nil {
+			t.Fatalf("Unmarshal() error = %v", err)
+		}
 		entry.PreviousHash = "tampered-hash"
-		tamperedLine, _ := json.Marshal(entry)
+		tamperedLine, err := json.Marshal(entry)
+		if err != nil {
+			t.Fatalf("Marshal() error = %v", err)
+		}
 		lines[1] = string(tamperedLine)
-		os.WriteFile(files[0], []byte(joinLines(lines)), 0600)
+		if err := os.WriteFile(logFile, []byte(joinLines(lines)), 0600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
 	}
 
 	// Verify should detect broken chain
-	al2, _ := NewAuditLogger(config, nil)
-	defer al2.Close()
+	al2 := reopenLogger(t, config)
 
 	err = al2.VerifyIntegrity(ctx)
 	if err == nil {
 		t.Error("VerifyIntegrity() should detect broken chain")
+	}
+}
+
+func TestAuditLogger_GenesisTamperDetection(t *testing.T) {
+	config := testConfig(t)
+	al, err := NewAuditLogger(config, nil)
+	if err != nil {
+		t.Fatalf("NewAuditLogger() error = %v", err)
+	}
+
+	mustLog(t, al, EventSystemStart, SeverityInfo, "Event")
+	mustFlushAndClose(t, al)
+
+	al2 := reopenLogger(t, config)
+	ctx := context.Background()
+	if err := al2.VerifyIntegrity(ctx); err != nil {
+		t.Fatalf("VerifyIntegrity() on untouched log error = %v", err)
+	}
+
+	// Re-link the first entry to a forged predecessor and re-sign it with the
+	// real key, so only the genesis check can catch it.
+	logFile := firstLogFile(t, config.LogPath)
+	data, err := os.ReadFile(logFile)
+	if err != nil {
+		t.Fatalf("ReadFile() error = %v", err)
+	}
+	var entry AuditEntry
+	if err := json.Unmarshal(data[:len(data)-1], &entry); err != nil { // Remove newline
+		t.Fatalf("Unmarshal() error = %v", err)
+	}
+	if entry.Sequence != 1 {
+		t.Fatalf("first entry sequence = %d, want 1", entry.Sequence)
+	}
+	entry.PreviousHash = "forged-predecessor-hash"
+	entry.Sign(al2.hmacKey)
+	tamperedData, err := json.Marshal(entry)
+	if err != nil {
+		t.Fatalf("Marshal() error = %v", err)
+	}
+	if err := os.WriteFile(logFile, append(tamperedData, '\n'), 0600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+
+	err = al2.VerifyIntegrity(ctx)
+	if !errors.Is(err, ErrChainBroken) {
+		t.Errorf("VerifyIntegrity() error = %v, want %v", err, ErrChainBroken)
 	}
 }
 
@@ -511,7 +610,7 @@ func TestAuditLogger_Close(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	al.Log(ctx, EventSystemStart, SeverityInfo, "Event", nil)
+	mustLog(t, al, EventSystemStart, SeverityInfo, "Event")
 
 	// Close
 	err = al.Close()
@@ -540,9 +639,11 @@ func TestAuditLogger_ConcurrentLogging(t *testing.T) {
 	// Concurrent writers
 	for i := 0; i < 100; i++ {
 		go func(idx int) {
-			al.Log(ctx, EventSystemStart, SeverityInfo, "Concurrent", map[string]interface{}{
+			if err := al.Log(ctx, EventSystemStart, SeverityInfo, "Concurrent", map[string]interface{}{
 				"index": idx,
-			})
+			}); err != nil {
+				t.Errorf("Log(%d) error = %v", idx, err)
+			}
 			done <- true
 		}(i)
 	}
@@ -552,7 +653,9 @@ func TestAuditLogger_ConcurrentLogging(t *testing.T) {
 		<-done
 	}
 
-	al.ForceFlush(ctx)
+	if err := al.ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush() error = %v", err)
+	}
 
 	// Verify integrity
 	err = al.VerifyIntegrity(ctx)
@@ -597,12 +700,17 @@ func TestAuditEvent_LogEvent(t *testing.T) {
 		t.Fatalf("LogEvent() error = %v", err)
 	}
 
-	al.ForceFlush(ctx)
+	if err := al.ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush() error = %v", err)
+	}
 
 	// Query and verify
-	results, _ := al.Query(ctx, QueryOptions{
+	results, err := al.Query(ctx, QueryOptions{
 		Types: []EventType{EventAuthSuccess},
 	})
+	if err != nil {
+		t.Fatalf("Query() error = %v", err)
+	}
 	if len(results) != 1 {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
@@ -620,8 +728,10 @@ func TestAuditLogger_QueryTimeRange(t *testing.T) {
 
 	// Log some events
 	now := time.Now()
-	al.Log(ctx, EventSystemStart, SeverityInfo, "Event 1", nil)
-	al.ForceFlush(ctx)
+	mustLog(t, al, EventSystemStart, SeverityInfo, "Event 1")
+	if err := al.ForceFlush(ctx); err != nil {
+		t.Fatalf("ForceFlush() error = %v", err)
+	}
 
 	// Query with time range
 	results, err := al.Query(ctx, QueryOptions{

@@ -141,7 +141,7 @@ func (e *AuditEntry) computeHash() string {
 
 	// Hash all fields in deterministic order
 	h.Write([]byte(e.ID))
-	h.Write([]byte(fmt.Sprintf("%d", e.Sequence)))
+	fmt.Fprintf(h, "%d", e.Sequence)
 	h.Write([]byte(e.Timestamp.Format(time.RFC3339Nano)))
 	h.Write([]byte(e.Type))
 	h.Write([]byte(e.Severity))
@@ -156,7 +156,7 @@ func (e *AuditEntry) computeHash() string {
 		sort.Strings(keys)
 		for _, k := range keys {
 			h.Write([]byte(k))
-			h.Write([]byte(fmt.Sprintf("%v", e.Data[k])))
+			fmt.Fprintf(h, "%v", e.Data[k])
 		}
 	}
 
@@ -165,11 +165,11 @@ func (e *AuditEntry) computeHash() string {
 	h.Write([]byte(e.ActorType))
 	h.Write([]byte(e.Target))
 	h.Write([]byte(e.TargetType))
-	h.Write([]byte(fmt.Sprintf("%t", e.Success)))
+	fmt.Fprintf(h, "%t", e.Success)
 	h.Write([]byte(e.Error))
 	h.Write([]byte(e.PreviousHash))
 	h.Write([]byte(e.Hostname))
-	h.Write([]byte(fmt.Sprintf("%d", e.ProcessID)))
+	fmt.Fprintf(h, "%d", e.ProcessID)
 
 	return hex.EncodeToString(h.Sum(nil))
 }
@@ -363,7 +363,7 @@ func loadOrGenerateHMACKey(basePath string) ([]byte, error) {
 	keyPath := filepath.Join(basePath, ".audit.key")
 
 	// Try to load existing key
-	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 {
+	if data, err := os.ReadFile(keyPath); err == nil && len(data) == 32 { // #nosec G304 -- keyPath is the operator-configured LogPath joined with the constant ".audit.key", not external input
 		return data, nil
 	}
 
@@ -415,7 +415,7 @@ func (al *AuditLogger) recoverState() error {
 
 // readLastEntry reads the last entry from a log file.
 func (al *AuditLogger) readLastEntry(path string) (*AuditEntry, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- path is an audit-*.log match globbed inside the operator-configured LogPath, not external input
 	if err != nil {
 		return nil, err
 	}
@@ -487,7 +487,7 @@ func (al *AuditLogger) openLogFile() error {
 	filename := fmt.Sprintf("audit-%s.log", time.Now().Format("2006-01-02"))
 	path := filepath.Join(al.config.LogPath, filename)
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600) // #nosec G304 -- path is the operator-configured LogPath joined with a generated audit-<date>.log name, not external input
 	if err != nil {
 		return err
 	}
@@ -548,8 +548,14 @@ func (al *AuditLogger) logEntry(eventType EventType, severity Severity, message 
 
 	// Forward to remote syslog if configured
 	if al.syslogFwd != nil {
-		// Don't block on syslog errors - it's async
-		al.syslogFwd.Forward(entry)
+		// Don't block or fail on syslog errors - it's async. The entry is
+		// already persisted locally, and rejected entries are counted in the
+		// forwarder's Dropped metric (see GetSyslogStatus).
+		if err := al.syslogFwd.Forward(entry); err != nil {
+			al.logger.Debug("audit entry not forwarded to remote syslog",
+				"sequence", entry.Sequence,
+				"error", err)
+		}
 	}
 
 	return nil
@@ -583,13 +589,6 @@ func generateEntryID() string {
 		return fmt.Sprintf("%d-%d", time.Now().UnixNano(), time.Now().Nanosecond())
 	}
 	return fmt.Sprintf("%d-%s", time.Now().UnixNano(), hex.EncodeToString(b))
-}
-
-// writeEntry writes an entry to the log file (acquires lock).
-func (al *AuditLogger) writeEntry(entry *AuditEntry) error {
-	al.mu.Lock()
-	defer al.mu.Unlock()
-	return al.writeEntryLocked(entry)
 }
 
 // writeEntryLocked writes an entry to the log file (caller must hold lock).
@@ -644,7 +643,9 @@ func (al *AuditLogger) rotate() error {
 		}
 
 		// Sync and close
-		al.currentFile.Sync()
+		if err := al.currentFile.Sync(); err != nil {
+			al.logger.Warn("failed to sync audit log before rotation", "path", rotatedPath, "error", err)
+		}
 		al.currentFile.Close()
 
 		// Compute and write checksum
@@ -668,7 +669,7 @@ func (al *AuditLogger) rotate() error {
 	filename := fmt.Sprintf("audit-%s-%d.log", time.Now().Format("2006-01-02"), time.Now().Unix())
 	path := filepath.Join(al.config.LogPath, filename)
 
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600) // #nosec G304 -- path is the operator-configured LogPath joined with a generated audit-<date>-<unix>.log name, not external input
 	if err != nil {
 		return err
 	}
@@ -692,7 +693,7 @@ func (al *AuditLogger) rotate() error {
 
 // writeFileChecksum writes a checksum file for integrity verification.
 func (al *AuditLogger) writeFileChecksum(logPath string) error {
-	f, err := os.Open(logPath)
+	f, err := os.Open(logPath) // #nosec G304 -- logPath is always al.currentPath, a generated file name inside the operator-configured LogPath
 	if err != nil {
 		return err
 	}
@@ -742,7 +743,9 @@ func (al *AuditLogger) flushWorker() {
 			// Sync to disk
 			al.mu.Lock()
 			if al.currentFile != nil {
-				al.currentFile.Sync()
+				if err := al.currentFile.Sync(); err != nil {
+					al.logger.Warn("failed to sync audit log", "path", al.currentPath, "error", err)
+				}
 			}
 			al.mu.Unlock()
 		}
@@ -770,10 +773,12 @@ func (al *AuditLogger) verifyWorker() {
 				atomic.AddUint64(&al.tampering, 1)
 
 				// Log the tamper detection as an audit event
-				al.Log(al.ctx, EventAuditTamper, SeverityAlert,
+				if logErr := al.Log(al.ctx, EventAuditTamper, SeverityAlert,
 					"Audit log tampering detected", map[string]interface{}{
 						"error": err.Error(),
-					})
+					}); logErr != nil {
+					al.logger.Error("failed to record audit tamper event", "error", logErr)
+				}
 
 				if al.config.OnTamperDetected != nil {
 					al.config.OnTamperDetected(nil, err)
@@ -792,6 +797,8 @@ func (al *AuditLogger) VerifyIntegrity(ctx context.Context) error {
 
 	sort.Strings(files)
 
+	genesisHash := computeGenesisHash()
+
 	var lastEntry *AuditEntry
 	for _, file := range files {
 		entries, err := al.readLogFile(file)
@@ -799,7 +806,7 @@ func (al *AuditLogger) VerifyIntegrity(ctx context.Context) error {
 			return fmt.Errorf("failed to read %s: %w", file, err)
 		}
 
-		for i, entry := range entries {
+		for _, entry := range entries {
 			// Verify signature
 			if !entry.Verify(al.hmacKey) {
 				return fmt.Errorf("%w at sequence %d in %s", ErrInvalidSignature, entry.Sequence, file)
@@ -821,11 +828,12 @@ func (al *AuditLogger) VerifyIntegrity(ctx context.Context) error {
 				if entry.Timestamp.Before(lastEntry.Timestamp) {
 					return fmt.Errorf("%w at sequence %d in %s", ErrTimestampAnomaly, entry.Sequence, file)
 				}
-			} else if i == 0 && file == files[0] {
-				// First entry should chain from genesis
-				if entry.PreviousHash != computeGenesisHash() && entry.Sequence == 1 {
-					// Only check genesis for sequence 1
-				}
+			} else if entry.Sequence == 1 && entry.PreviousHash != genesisHash {
+				// First entry should chain from genesis. Only check genesis for
+				// sequence 1: after retention cleanup the oldest remaining
+				// entry legitimately links to a deleted predecessor.
+				return fmt.Errorf("%w at sequence %d in %s: first entry does not chain from genesis",
+					ErrChainBroken, entry.Sequence, file)
 			}
 
 			lastEntry = entry
@@ -851,7 +859,7 @@ func (al *AuditLogger) VerifyIntegrity(ctx context.Context) error {
 
 // readLogFile reads all entries from a log file.
 func (al *AuditLogger) readLogFile(path string) ([]*AuditEntry, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) // #nosec G304 -- path is an audit-*.log match globbed inside the operator-configured LogPath, not external input
 	if err != nil {
 		return nil, err
 	}
@@ -877,12 +885,12 @@ func (al *AuditLogger) readLogFile(path string) ([]*AuditEntry, error) {
 
 // verifyFileChecksum verifies a file's checksum.
 func (al *AuditLogger) verifyFileChecksum(logPath, checksumPath string) error {
-	expected, err := os.ReadFile(checksumPath)
+	expected, err := os.ReadFile(checksumPath) // #nosec G304 -- checksumPath is a globbed audit-*.log path inside the operator-configured LogPath plus ".sha256", not external input
 	if err != nil {
 		return err
 	}
 
-	f, err := os.Open(logPath)
+	f, err := os.Open(logPath) // #nosec G304 -- logPath is an audit-*.log match globbed inside the operator-configured LogPath, not external input
 	if err != nil {
 		return err
 	}
@@ -917,23 +925,41 @@ func (al *AuditLogger) Close() error {
 
 	// Close syslog forwarder first to flush any pending messages
 	if al.syslogFwd != nil {
-		al.syslogFwd.Close()
+		if err := al.syslogFwd.Close(); err != nil {
+			al.logger.Warn("failed to close syslog forwarder", "error", err)
+		}
 	}
 
+	// Failing to persist the final entries is reported to the caller; the
+	// checksum and attribute steps are best-effort, as in rotate.
+	var errs []error
 	if al.currentFile != nil {
 		// Clear append-only before closing
 		if al.immutableMgr != nil {
-			al.immutableMgr.ClearAppendOnly(ctx, al.currentPath)
+			if err := al.immutableMgr.ClearAppendOnly(ctx, al.currentPath); err != nil {
+				al.logger.Warn("failed to clear append-only on current log", "path", al.currentPath, "error", err)
+			}
 		}
 
-		al.currentFile.Sync()
-		al.writeFileChecksum(al.currentPath)
-		al.currentFile.Close()
+		if err := al.currentFile.Sync(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to sync audit log: %w", err))
+		}
+		if err := al.writeFileChecksum(al.currentPath); err != nil {
+			al.logger.Warn("failed to write file checksum", "path", al.currentPath, "error", err)
+		}
+		if err := al.currentFile.Close(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to close audit log: %w", err))
+		}
 
 		// Set immutable on final file
 		if al.immutableMgr != nil {
-			al.immutableMgr.SetImmutable(ctx, al.currentPath)
-			al.immutableMgr.ProtectChecksumFile(ctx, al.currentPath+".sha256")
+			if err := al.immutableMgr.SetImmutable(ctx, al.currentPath); err != nil {
+				al.logger.Warn("failed to set immutable on final log file", "path", al.currentPath, "error", err)
+			}
+			checksumPath := al.currentPath + ".sha256"
+			if err := al.immutableMgr.ProtectChecksumFile(ctx, checksumPath); err != nil {
+				al.logger.Warn("failed to protect checksum file", "path", checksumPath, "error", err)
+			}
 		}
 	}
 
@@ -941,7 +967,7 @@ func (al *AuditLogger) Close() error {
 		"written", atomic.LoadUint64(&al.written),
 		"errors", atomic.LoadUint64(&al.errors))
 
-	return nil
+	return errors.Join(errs...)
 }
 
 // GetSyslogStatus returns the syslog forwarder status.
@@ -1100,9 +1126,11 @@ func (al *AuditLogger) Export(ctx context.Context, w io.Writer, opts QueryOption
 	}
 
 	// Log the export
-	al.Log(ctx, EventAuditExport, SeverityInfo, "Audit log exported", map[string]interface{}{
+	if err := al.Log(ctx, EventAuditExport, SeverityInfo, "Audit log exported", map[string]interface{}{
 		"entries": len(entries),
-	})
+	}); err != nil {
+		return fmt.Errorf("failed to record audit export event: %w", err)
+	}
 
 	return nil
 }

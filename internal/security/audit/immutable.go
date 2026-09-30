@@ -16,14 +16,6 @@ import (
 	"time"
 )
 
-// File attribute constants (matching Linux FS_*_FL flags)
-const (
-	// FS_APPEND_FL - file is append-only
-	attrAppendOnly = 0x00000020
-	// FS_IMMUTABLE_FL - file is immutable
-	attrImmutable = 0x00000010
-)
-
 // Common errors for immutable log operations.
 var (
 	ErrChattrNotFound      = errors.New("chattr command not found")
@@ -171,18 +163,27 @@ func (im *ImmutableManager) checkCapabilities() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, im.config.ChattrPath, "+a", tmpPath)
-	if err := cmd.Run(); err != nil {
+	if _, err := im.chattr(ctx, "+a", tmpPath); err != nil {
 		im.hasCapability = false
 		return ErrInsufficientCaps
 	}
 
 	// Remove the attribute
-	exec.CommandContext(ctx, im.config.ChattrPath, "-a", tmpPath).Run()
+	if output, err := im.chattr(ctx, "-a", tmpPath); err != nil {
+		// The probe file stays append-only and cannot be removed.
+		im.logger.Warn("failed to clear append-only attribute on capability probe file",
+			"path", tmpPath, "output", strings.TrimSpace(string(output)), "error", err)
+	}
 
 	im.hasCapability = true
 	im.logger.Debug("capability check passed, immutable attributes available")
 	return nil
+}
+
+// chattr runs chattr with a single attribute operation (e.g. "+a", "-i") on
+// path and returns its combined output.
+func (im *ImmutableManager) chattr(ctx context.Context, op, path string) ([]byte, error) {
+	return exec.CommandContext(ctx, im.config.ChattrPath, op, "--", path).CombinedOutput() // #nosec G204 -- binary is the operator-configured chattr path (or exec.LookPath result), argv is passed without a shell, op is a package constant and path follows "--" so it cannot be parsed as an option
 }
 
 // HasCapability returns whether we can set immutable attributes.
@@ -207,11 +208,13 @@ func (im *ImmutableManager) SetAppendOnly(ctx context.Context, path string) erro
 		return nil
 	}
 
-	// First remove any existing immutable attribute (in case of recovery)
-	im.clearImmutableLocked(ctx, path)
+	// First remove any existing immutable attribute (in case of recovery).
+	// A failure here surfaces as a chattr +a failure below.
+	if err := im.clearImmutableLocked(ctx, path); err != nil {
+		im.logger.Warn("failed to clear immutable attribute before setting append-only", "path", path, "error", err)
+	}
 
-	cmd := exec.CommandContext(ctx, im.config.ChattrPath, "+a", path)
-	output, err := cmd.CombinedOutput()
+	output, err := im.chattr(ctx, "+a", path)
 	if err != nil {
 		// Check for filesystem support
 		if strings.Contains(string(output), "Operation not supported") ||
@@ -241,11 +244,13 @@ func (im *ImmutableManager) SetImmutable(ctx context.Context, path string) error
 		return nil
 	}
 
-	// Remove append-only first if set (immutable includes append-only semantics)
-	im.clearAppendOnlyLocked(ctx, path)
+	// Remove append-only first if set (immutable includes append-only semantics).
+	// A failure here surfaces as a chattr +i failure below.
+	if err := im.clearAppendOnlyLocked(ctx, path); err != nil {
+		im.logger.Warn("failed to clear append-only attribute before setting immutable", "path", path, "error", err)
+	}
 
-	cmd := exec.CommandContext(ctx, im.config.ChattrPath, "+i", path)
-	output, err := cmd.CombinedOutput()
+	output, err := im.chattr(ctx, "+i", path)
 	if err != nil {
 		if strings.Contains(string(output), "Operation not supported") ||
 			strings.Contains(string(output), "Inappropriate ioctl") {
@@ -276,8 +281,7 @@ func (im *ImmutableManager) clearAppendOnlyLocked(ctx context.Context, path stri
 		return nil
 	}
 
-	cmd := exec.CommandContext(ctx, im.config.ChattrPath, "-a", path)
-	output, err := cmd.CombinedOutput()
+	output, err := im.chattr(ctx, "-a", path)
 	if err != nil {
 		// Ignore errors if attribute wasn't set
 		if !strings.Contains(string(output), "Operation not permitted") {
@@ -306,8 +310,7 @@ func (im *ImmutableManager) clearImmutableLocked(ctx context.Context, path strin
 		return nil
 	}
 
-	cmd := exec.CommandContext(ctx, im.config.ChattrPath, "-i", path)
-	output, err := cmd.CombinedOutput()
+	output, err := im.chattr(ctx, "-i", path)
 	if err != nil {
 		// Ignore errors if attribute wasn't set
 		if !strings.Contains(string(output), "Operation not permitted") {
@@ -326,8 +329,7 @@ func (im *ImmutableManager) GetAttributes(ctx context.Context, path string) (Fil
 		return attrs, nil
 	}
 
-	cmd := exec.CommandContext(ctx, im.config.LsattrPath, "-d", path)
-	output, err := cmd.CombinedOutput()
+	output, err := exec.CommandContext(ctx, im.config.LsattrPath, "-d", "--", path).CombinedOutput() // #nosec G204 -- binary is the operator-configured lsattr path (or exec.LookPath result), argv is passed without a shell and path follows "--" so it cannot be parsed as an option
 	if err != nil {
 		return attrs, fmt.Errorf("lsattr failed: %s: %w", string(output), err)
 	}
@@ -490,10 +492,6 @@ func (im *ImmutableManager) ProtectKeyFile(ctx context.Context, path string) err
 // SecureDelete securely deletes a file by overwriting before removal.
 // This clears immutable attributes first if present.
 func (im *ImmutableManager) SecureDelete(ctx context.Context, path string) error {
-	// Clear any immutable attributes first
-	im.ClearImmutable(ctx, path)
-	im.ClearAppendOnly(ctx, path)
-
 	// Get file size
 	info, err := os.Stat(path)
 	if err != nil {
@@ -503,8 +501,17 @@ func (im *ImmutableManager) SecureDelete(ctx context.Context, path string) error
 		return err
 	}
 
+	// Clear any immutable attributes first. A failure here surfaces as an
+	// open/remove error below.
+	if err := im.ClearImmutable(ctx, path); err != nil {
+		im.logger.Warn("failed to clear immutable attribute before secure delete", "path", path, "error", err)
+	}
+	if err := im.ClearAppendOnly(ctx, path); err != nil {
+		im.logger.Warn("failed to clear append-only attribute before secure delete", "path", path, "error", err)
+	}
+
 	// Overwrite with zeros
-	f, err := os.OpenFile(path, os.O_WRONLY, 0)
+	f, err := os.OpenFile(path, os.O_WRONLY, 0) // #nosec G304 -- by contract SecureDelete overwrites the caller-specified file; no caller in this module passes externally supplied paths
 	if err != nil {
 		return err
 	}
@@ -524,9 +531,15 @@ func (im *ImmutableManager) SecureDelete(ctx context.Context, path string) error
 		remaining -= int64(n)
 	}
 
-	// Sync and close
-	f.Sync()
-	f.Close()
+	// Sync and close. Only remove the file once the zeros are known to be
+	// on disk, otherwise the original contents may survive the delete.
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("failed to sync overwritten file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("failed to close overwritten file: %w", err)
+	}
 
 	// Remove the file
 	return os.Remove(path)
@@ -559,7 +572,7 @@ type ImmutableStatus struct {
 func CheckFilesystemSupport(path string) (bool, error) {
 	// Create a test file
 	testFile := filepath.Join(path, ".immutable-test")
-	f, err := os.Create(testFile)
+	f, err := os.Create(testFile) // #nosec G304 -- creates a probe file with a constant name inside the caller-supplied directory; no caller in this module passes externally supplied paths
 	if err != nil {
 		return false, err
 	}
@@ -596,15 +609,16 @@ func WithImmutableLogs(al *AuditLogger, config *ImmutableConfig) error {
 
 	al.mu.Lock()
 	al.immutableMgr = im
+	currentPath := al.currentPath
 	al.mu.Unlock()
 
 	// Set append-only on current file
-	if al.currentPath != "" && config.AppendOnlyActive {
+	if currentPath != "" && config.AppendOnlyActive {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 
-		if err := im.SetAppendOnly(ctx, al.currentPath); err != nil {
-			al.logger.Warn("failed to set append-only on current log", "path", al.currentPath, "error", err)
+		if err := im.SetAppendOnly(ctx, currentPath); err != nil {
+			al.logger.Warn("failed to set append-only on current log", "path", currentPath, "error", err)
 		}
 	}
 
