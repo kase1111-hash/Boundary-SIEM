@@ -12,28 +12,33 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   gosec:
     name: Gosec Security Scanner
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
+      # Report-only: findings are published to code scanning. The blocking
+      # gosec gate is the "Security Scan" job in ci.yml (same version/flags).
       - name: Run gosec
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.29.0
         with:
-          args: '-no-fail -fmt=sarif -out=gosec-results.sarif ./...'
+          args: '-no-fail -fmt=sarif -out=gosec-results.sarif -severity=medium ./...'
 
       - name: Upload gosec SARIF results
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        if: always() && hashFiles('gosec-results.sarif') != ''
         with:
           sarif_file: gosec-results.sarif
 
@@ -43,12 +48,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # setup-go v6 installs the Go version from go.mod's `toolchain` directive
+      # (the patched stdlib that ships in release builds) and exports
+      # GOTOOLCHAIN=local, so govulncheck scans exactly that standard library.
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
+      # govulncheck@latest may require a newer Go than the project toolchain;
+      # let the go command fetch one just to build the tool.
       - name: Install govulncheck
+        env:
+          GOTOOLCHAIN: auto
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
       - name: Run govulncheck
@@ -63,7 +75,7 @@ jobs:
           fetch-depth: 0
 
       - name: TruffleHog secret scan
-        uses: trufflesecurity/trufflehog@main
+        uses: trufflesecurity/trufflehog@4dd8831c5f12599465d4d45c3c447b4018a34c85 # v3.97.9
         with:
           extra_args: --only-verified
 
@@ -76,7 +88,10 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # vitest 5 / vite 8 require Node ^22.12 (see web/package.json engines)
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
 
       - name: Install dependencies
         working-directory: web

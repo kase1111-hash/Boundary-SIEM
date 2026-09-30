@@ -2,6 +2,8 @@ module boundary-siem
 
 go 1.25.0
 
+toolchain go1.25.14
+
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.47.0
 	github.com/aws/aws-sdk-go-v2 v1.42.1

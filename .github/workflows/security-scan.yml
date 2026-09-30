@@ -12,7 +12,6 @@ on:
 
 permissions:
   contents: read
-  security-events: write
 
 jobs:
   govulncheck:
@@ -22,20 +21,28 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # setup-go v6 installs the Go version from go.mod's `toolchain` directive
+      # (the patched stdlib that ships in release builds) and exports
+      # GOTOOLCHAIN=local, so govulncheck scans exactly that standard library.
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
 
+      # govulncheck@latest may require a newer Go than the project toolchain;
+      # let the go command fetch one just to build the tool.
       - name: Install govulncheck
+        env:
+          GOTOOLCHAIN: auto
         run: go install golang.org/x/vuln/cmd/govulncheck@latest
 
-      - name: Run govulncheck
+      # JSON mode always exits 0; it only produces the report artifact.
+      - name: Generate govulncheck JSON report
         run: govulncheck -json ./... > govulncheck-report.json
-        continue-on-error: true
 
-      - name: Display results
+      # Text mode exits non-zero when vulnerable code is reachable.
+      - name: Run govulncheck
         run: govulncheck ./...
 
       - name: Upload scan results
@@ -44,6 +51,7 @@ jobs:
         with:
           name: govulncheck-results
           path: govulncheck-report.json
+          if-no-files-found: ignore
           retention-days: 30
 
   dependency-review:
@@ -63,35 +71,44 @@ jobs:
   gosec:
     name: Security Scan with gosec
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
+      # Same pinned version and flags as the gosec gate in ci.yml.
       - name: Run gosec
-        uses: securego/gosec@master
+        uses: securego/gosec@v2.29.0
         with:
-          args: '-fmt sarif -out gosec-results.sarif ./...'
+          args: '-fmt=sarif -out=gosec-results.sarif -severity=medium ./...'
 
       - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        if: always() && hashFiles('gosec-results.sarif') != ''
         with:
           sarif_file: gosec-results.sarif
 
   trivy-scan:
     name: Trivy Vulnerability Scanner
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
       - name: Run Trivy vulnerability scanner in repo mode
-        uses: aquasecurity/trivy-action@master
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: 'fs'
           scan-ref: '.'
@@ -100,43 +117,69 @@ jobs:
           severity: 'CRITICAL,HIGH,MEDIUM'
 
       - name: Upload Trivy results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
-        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        if: always() && hashFiles('trivy-results.sarif') != ''
         with:
           sarif_file: 'trivy-results.sarif'
 
+  # Nancy v2 queries Sonatype Guide / OSS Index, which no longer serve
+  # unauthenticated requests. The job is therefore opt-in: it scans only when a
+  # GUIDE_TOKEN repository secret is configured (free token from
+  # https://guide.sonatype.com) and otherwise skips with a notice. Go
+  # dependencies are still covered by govulncheck and Trivy above.
   nancy:
     name: Nancy - Check for vulnerable dependencies
     runs-on: ubuntu-latest
+    env:
+      GUIDE_TOKEN: ${{ secrets.GUIDE_TOKEN }}
     steps:
+      - name: Skip (Sonatype token not configured)
+        if: env.GUIDE_TOKEN == ''
+        run: echo "::notice title=Nancy skipped::Add a GUIDE_TOKEN repository secret (https://guide.sonatype.com) to enable Nancy scanning."
+
       - name: Checkout code
+        if: env.GUIDE_TOKEN != ''
         uses: actions/checkout@v4
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        if: env.GUIDE_TOKEN != ''
+        uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
 
       - name: Generate dependency list
-        run: go list -json -deps ./... > dependencies.json
+        if: env.GUIDE_TOKEN != ''
+        run: go list -json -deps ./... > go.list
 
       - name: Run Nancy
-        uses: sonatype-nexus-community/nancy-github-action@main
+        if: env.GUIDE_TOKEN != ''
+        uses: sonatype-nexus-community/nancy-github-action@726e338312e68ecdd4b4195765f174d3b3ce1533 # v1.0.3
         with:
-          target: dependencies.json
+          nancyVersion: v2.1.0
+          goListFile: go.list
 
   security-summary:
     name: Security Scan Summary
     runs-on: ubuntu-latest
-    needs: [govulncheck, gosec, trivy-scan]
+    needs: [govulncheck, gosec, trivy-scan, nancy]
     if: always()
     steps:
       - name: Summary
+        env:
+          GOVULNCHECK_RESULT: ${{ needs.govulncheck.result }}
+          GOSEC_RESULT: ${{ needs.gosec.result }}
+          TRIVY_RESULT: ${{ needs.trivy-scan.result }}
+          NANCY_RESULT: ${{ needs.nancy.result }}
         run: |
-          echo "# Security Scan Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "✅ govulncheck: ${{ needs.govulncheck.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "✅ gosec: ${{ needs.gosec.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "✅ trivy: ${{ needs.trivy-scan.result }}" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Check individual job outputs for detailed results." >> $GITHUB_STEP_SUMMARY
+          {
+            echo "# Security Scan Results"
+            echo ""
+            echo "| Scanner | Result |"
+            echo "| --- | --- |"
+            echo "| govulncheck | ${GOVULNCHECK_RESULT} |"
+            echo "| gosec | ${GOSEC_RESULT} |"
+            echo "| trivy | ${TRIVY_RESULT} |"
+            echo "| nancy | ${NANCY_RESULT} |"
+            echo ""
+            echo "Check individual job outputs for detailed results."
+          } >> "$GITHUB_STEP_SUMMARY"
