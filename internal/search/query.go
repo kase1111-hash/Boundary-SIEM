@@ -2,12 +2,14 @@
 package search
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 )
 
 // TokenType represents the type of a query token.
@@ -29,6 +31,9 @@ const (
 type Token struct {
 	Type  TokenType
 	Value string
+	// Quoted is true for a value written in quotes; its Value has the
+	// quotes removed and \" (or \') and \\ unescaped.
+	Quoted bool
 }
 
 // Operator represents a comparison operator.
@@ -47,6 +52,20 @@ const (
 	OpNotExists   Operator = "!exists"
 )
 
+// negatedOperators maps each operator to its logical complement.
+var negatedOperators = map[Operator]Operator{
+	OpEquals:      OpNotEquals,
+	OpNotEquals:   OpEquals,
+	OpGreater:     OpLessEq,
+	OpLessEq:      OpGreater,
+	OpGreaterEq:   OpLess,
+	OpLess:        OpGreaterEq,
+	OpContains:    OpNotContains,
+	OpNotContains: OpContains,
+	OpExists:      OpNotExists,
+	OpNotExists:   OpExists,
+}
+
 // Condition represents a single search condition.
 type Condition struct {
 	Field       string
@@ -61,6 +80,11 @@ type Condition struct {
 }
 
 // Query represents a parsed search query.
+//
+// Conditions are joined by Logic: Logic[i] connects Conditions[i] and
+// Conditions[i+1], so ParseQuery always returns len(Logic) ==
+// len(Conditions)-1. AND binds tighter than OR, as in SQL; OpenParens and
+// CloseParens group conditions explicitly.
 type Query struct {
 	Conditions []Condition
 	Logic      []string // "AND" or "OR" between conditions
@@ -78,36 +102,43 @@ type TimeRange struct {
 	End   time.Time
 }
 
-// Lexer tokenizes a query string.
+// Lexer tokenizes a query string. The input is decoded as UTF-8; pos is the
+// byte offset of current.
 type Lexer struct {
 	input   string
 	pos     int
+	width   int // byte width of current
 	current rune
 }
 
 // NewLexer creates a new lexer for the input string.
 func NewLexer(input string) *Lexer {
 	l := &Lexer{input: input}
-	if len(input) > 0 {
-		l.current = rune(input[0])
-	}
+	l.decode()
 	return l
 }
 
-func (l *Lexer) advance() {
-	l.pos++
-	if l.pos < len(l.input) {
-		l.current = rune(l.input[l.pos])
-	} else {
-		l.current = 0
+// decode loads the rune at pos into current.
+func (l *Lexer) decode() {
+	if l.pos >= len(l.input) {
+		l.current, l.width = 0, 0
+		return
 	}
+	l.current, l.width = utf8.DecodeRuneInString(l.input[l.pos:])
+}
+
+func (l *Lexer) advance() {
+	l.pos += l.width
+	l.decode()
 }
 
 func (l *Lexer) peek() rune {
-	if l.pos+1 < len(l.input) {
-		return rune(l.input[l.pos+1])
+	next := l.pos + l.width
+	if next >= len(l.input) {
+		return 0
 	}
-	return 0
+	r, _ := utf8.DecodeRuneInString(l.input[next:])
+	return r
 }
 
 func (l *Lexer) skipWhitespace() {
@@ -190,23 +221,28 @@ func (l *Lexer) readOperator() Token {
 	return Token{Type: TokenOperator, Value: l.input[start:l.pos]}
 }
 
+// readQuotedString reads a quoted value. A backslash escapes the quote
+// character and itself; any other backslash is kept literally.
 func (l *Lexer) readQuotedString() Token {
 	quote := l.current
 	l.advance()
-	start := l.pos
 
+	var sb strings.Builder
 	for l.current != 0 && l.current != quote {
-		if l.current == '\\' && l.peek() == quote {
-			l.advance()
+		if l.current == '\\' {
+			if next := l.peek(); next == quote || next == '\\' {
+				l.advance()
+			}
 		}
+		// Copy the source bytes so invalid UTF-8 is preserved as-is.
+		sb.WriteString(l.input[l.pos : l.pos+l.width])
 		l.advance()
 	}
 
-	value := l.input[start:l.pos]
 	if l.current == quote {
 		l.advance()
 	}
-	return Token{Type: TokenValue, Value: value}
+	return Token{Type: TokenValue, Value: sb.String(), Quoted: true}
 }
 
 func (l *Lexer) readIdentifier() Token {
@@ -242,10 +278,25 @@ func (l *Lexer) readIdentifier() Token {
 	return Token{Type: TokenValue, Value: value}
 }
 
+// maxQueryDepth limits parenthesis nesting.
+const maxQueryDepth = 64
+
 // Parser parses query tokens into a Query structure.
+//
+// Grammar (AND binds tighter than OR; adjacent terms are implicitly ANDed):
+//
+//	query   = or
+//	or      = and { OR and }
+//	and     = unary { [AND] unary }
+//	unary   = { NOT } primary
+//	primary = "(" or ")" | condition
+//
+// The expression tree is flattened into Query.Conditions and Query.Logic.
+// NOT is pushed down to the conditions (De Morgan), negating each operator.
 type Parser struct {
 	lexer   *Lexer
 	current Token
+	depth   int
 }
 
 // NewParser creates a new parser for the query string.
@@ -259,6 +310,14 @@ func (p *Parser) advance() {
 	p.current = p.lexer.NextToken()
 }
 
+// exprNode is a node of the boolean expression tree: a condition (op == "")
+// or an AND/OR of two or more children.
+type exprNode struct {
+	op       string
+	cond     Condition
+	children []*exprNode
+}
+
 // Parse parses the query string into a Query structure.
 func (p *Parser) Parse() (*Query, error) {
 	query := &Query{
@@ -267,82 +326,185 @@ func (p *Parser) Parse() (*Query, error) {
 		OrderDesc: true,
 	}
 
-	pendingParens := 0 // tracks open parens before next condition
-	depth := 0         // currently open parens; must never go negative
+	root, err := p.parseOr()
+	if err != nil {
+		return nil, err
+	}
+	if p.current.Type == TokenRParen {
+		return nil, errors.New("unbalanced parentheses: unexpected ')'")
+	}
 
-	for p.current.Type != TokenEOF {
+	f := flattener{query: query}
+	f.emit(root, "")
+	return query, nil
+}
+
+func (p *Parser) parseOr() (*exprNode, error) {
+	var children []*exprNode
+	for {
+		n, err := p.parseAnd()
+		if err != nil {
+			return nil, err
+		}
+		if n != nil {
+			children = append(children, n)
+		}
+		if p.current.Type != TokenOr {
+			return combine("OR", children), nil
+		}
+		p.advance()
+	}
+}
+
+func (p *Parser) parseAnd() (*exprNode, error) {
+	var children []*exprNode
+	for {
 		switch p.current.Type {
-		case TokenField:
-			cond, err := p.parseCondition()
-			if err != nil {
-				return nil, err
-			}
-			cond.OpenParens = pendingParens
-			pendingParens = 0
-			query.Conditions = append(query.Conditions, cond)
-
+		case TokenEOF, TokenRParen, TokenOr:
+			return combine("AND", children), nil
 		case TokenAnd:
-			if len(query.Conditions) > 0 {
-				query.Logic = append(query.Logic, "AND")
-			}
+			// An explicit AND; with nothing on one side it is ignored.
 			p.advance()
+			continue
+		}
 
-		case TokenOr:
-			if len(query.Conditions) > 0 {
-				query.Logic = append(query.Logic, "OR")
-			}
-			p.advance()
+		n, err := p.parseUnary()
+		if err != nil {
+			return nil, err
+		}
+		if n != nil {
+			children = append(children, n)
+		}
+	}
+}
 
-		case TokenLParen:
-			pendingParens++
-			depth++
-			p.advance()
-
-		case TokenRParen:
-			switch {
-			case pendingParens > 0:
-				// Empty group "()" -- nothing to wrap
-				pendingParens--
-			case depth > 0 && len(query.Conditions) > 0:
-				// Attach close paren to the last condition
-				query.Conditions[len(query.Conditions)-1].CloseParens++
-			default:
-				return nil, fmt.Errorf("unbalanced parentheses: unexpected ')'")
-			}
-			depth--
-			p.advance()
-
-		case TokenNot:
-			p.advance()
-			if p.current.Type == TokenField {
-				cond, err := p.parseCondition()
-				if err != nil {
-					return nil, err
-				}
-				// Negate the condition
-				switch cond.Operator {
-				case OpEquals:
-					cond.Operator = OpNotEquals
-				case OpContains:
-					cond.Operator = OpNotContains
-				case OpExists:
-					cond.Operator = OpNotExists
-				}
-				cond.OpenParens = pendingParens
-				pendingParens = 0
-				query.Conditions = append(query.Conditions, cond)
-			}
-
-		default:
-			p.advance()
+func (p *Parser) parseUnary() (*exprNode, error) {
+	negate := false
+	for p.current.Type == TokenNot {
+		negate = !negate
+		p.advance()
+		switch p.current.Type {
+		case TokenEOF, TokenRParen, TokenAnd, TokenOr:
+			return nil, errors.New("NOT must be followed by a condition or a parenthesized group")
 		}
 	}
 
-	if depth != 0 {
-		return nil, fmt.Errorf("unbalanced parentheses: missing ')'")
+	n, err := p.parsePrimary()
+	if err != nil || !negate {
+		return n, err
+	}
+	return negateExpr(n)
+}
+
+func (p *Parser) parsePrimary() (*exprNode, error) {
+	switch p.current.Type {
+	case TokenLParen:
+		if p.depth >= maxQueryDepth {
+			return nil, fmt.Errorf("query nests parentheses deeper than %d", maxQueryDepth)
+		}
+		p.depth++
+		p.advance()
+		n, err := p.parseOr()
+		if err != nil {
+			return nil, err
+		}
+		if p.current.Type != TokenRParen {
+			return nil, errors.New("unbalanced parentheses: missing ')'")
+		}
+		p.depth--
+		p.advance()
+		return n, nil
+
+	case TokenField:
+		cond, err := p.parseCondition()
+		if err != nil {
+			return nil, err
+		}
+		return &exprNode{cond: cond}, nil
+
+	default:
+		// Bare values and stray operators name no field; they are ignored.
+		p.advance()
+		return nil, nil
+	}
+}
+
+// combine joins children with op; nil when there are none.
+func combine(op string, children []*exprNode) *exprNode {
+	switch len(children) {
+	case 0:
+		return nil
+	case 1:
+		return children[0]
+	}
+	return &exprNode{op: op, children: children}
+}
+
+// negateExpr returns the negation of n, pushing NOT down to the conditions:
+// NOT (a OR b) = NOT a AND NOT b, NOT (a AND b) = NOT a OR NOT b, and NOT a
+// negates a's operator.
+func negateExpr(n *exprNode) (*exprNode, error) {
+	if n == nil {
+		return nil, nil
+	}
+	if n.op == "" {
+		cond := n.cond
+		negated, ok := negatedOperators[cond.Operator]
+		if !ok {
+			return nil, fmt.Errorf("cannot negate operator %q", cond.Operator)
+		}
+		cond.Operator = negated
+		return &exprNode{cond: cond}, nil
 	}
 
-	return query, nil
+	out := &exprNode{op: "AND"}
+	if n.op == "AND" {
+		out.op = "OR"
+	}
+	for _, child := range n.children {
+		c, err := negateExpr(child)
+		if err != nil {
+			return nil, err
+		}
+		out.children = append(out.children, c)
+	}
+	return out, nil
+}
+
+// flattener writes an expression tree into a Query's flat condition list.
+type flattener struct {
+	query       *Query
+	pendingOpen int
+}
+
+// emit appends n's conditions and connectives. An OR inside an AND is
+// wrapped in parentheses; every other nesting already has the right
+// precedence without them.
+func (f *flattener) emit(n *exprNode, parentOp string) {
+	if n == nil {
+		return
+	}
+	if n.op == "" {
+		cond := n.cond
+		cond.OpenParens, cond.CloseParens = f.pendingOpen, 0
+		f.pendingOpen = 0
+		f.query.Conditions = append(f.query.Conditions, cond)
+		return
+	}
+
+	grouped := n.op == "OR" && parentOp == "AND"
+	if grouped {
+		f.pendingOpen++
+	}
+	for i, child := range n.children {
+		if i > 0 {
+			f.query.Logic = append(f.query.Logic, n.op)
+		}
+		f.emit(child, n.op)
+	}
+	if grouped {
+		f.query.Conditions[len(f.query.Conditions)-1].CloseParens++
+	}
 }
 
 func (p *Parser) parseCondition() (Condition, error) {
@@ -351,15 +513,9 @@ func (p *Parser) parseCondition() (Condition, error) {
 		Operator: OpEquals,
 	}
 
-	// Detect metadata fields (metadata.key or meta.key)
-	fieldLower := strings.ToLower(cond.Field)
-	if strings.HasPrefix(fieldLower, "metadata.") {
-		cond.IsMetadata = true
-		cond.MetadataKey = cond.Field[len("metadata."):]
-	} else if strings.HasPrefix(fieldLower, "meta.") {
-		cond.IsMetadata = true
-		cond.MetadataKey = cond.Field[len("meta."):]
-	}
+	// Detect metadata fields (metadata.key, meta.key, or an alias such as
+	// vendor that is stored in metadata).
+	cond.MetadataKey, cond.IsMetadata = metadataKey(cond.Field)
 
 	p.advance()
 
@@ -371,42 +527,73 @@ func (p *Parser) parseCondition() (Condition, error) {
 
 	// Parse value
 	if p.current.Type == TokenValue || p.current.Type == TokenField {
-		value := p.current.Value
-
-		// Detect phrase search: value came from a quoted string and contains spaces
-		if strings.Contains(value, " ") {
-			cond.IsPhrase = true
-		}
-
-		// Check for wildcard
-		if strings.Contains(value, "*") && !cond.IsPhrase {
-			cond.IsRegex = true
-			// Convert wildcard to regex
-			value = "^" + regexp.QuoteMeta(value)
-			value = strings.ReplaceAll(value, "\\*", ".*")
-			value += "$"
-		}
-
-		// Try to parse as number (skip for phrases)
-		if !cond.IsPhrase && !cond.IsRegex {
-			if num, err := strconv.ParseInt(value, 10, 64); err == nil {
-				cond.Value = num
-			} else if num, err := strconv.ParseFloat(value, 64); err == nil {
-				cond.Value = num
-			} else if dur, ok := parseDuration(value); ok {
-				// Handle relative time like "now-1h"
-				cond.Value = time.Now().Add(-dur)
-			} else {
-				cond.Value = value
-			}
-		} else {
-			cond.Value = value
-		}
-
+		setConditionValue(&cond, p.current)
 		p.advance()
 	}
 
 	return cond, nil
+}
+
+// setConditionValue interprets a value token for cond.
+//
+// A quoted value is always a literal string: no wildcards, numbers or
+// relative times. An unquoted value containing '*' is a wildcard pattern.
+// Otherwise the value is typed by the field: strings for string columns and
+// for metadata equality/contains, numbers or relative times ("now-1h") for
+// numeric and time columns, metadata comparisons, and unknown fields.
+func setConditionValue(cond *Condition, tok Token) {
+	value := tok.Value
+
+	if tok.Quoted {
+		cond.Value = value
+		cond.IsPhrase = strings.Contains(value, " ")
+		return
+	}
+
+	if strings.Contains(value, "*") {
+		cond.IsRegex = true
+		value = "^" + regexp.QuoteMeta(value)
+		value = strings.ReplaceAll(value, "\\*", ".*")
+		cond.Value = value + "$"
+		return
+	}
+
+	if isStringValued(*cond) {
+		cond.Value = value
+		return
+	}
+
+	if num, err := strconv.ParseInt(value, 10, 64); err == nil {
+		cond.Value = num
+	} else if num, err := strconv.ParseFloat(value, 64); err == nil {
+		cond.Value = num
+	} else if dur, ok := parseDuration(value); ok {
+		// Handle relative time like "now-1h"
+		cond.Value = time.Now().Add(-dur)
+	} else {
+		cond.Value = value
+	}
+}
+
+// numericColumns and timeColumns are the non-string columns of the events
+// table that conditions can address.
+var (
+	numericColumns = map[string]bool{"severity": true}
+	timeColumns    = map[string]bool{"timestamp": true, "received_at": true}
+)
+
+// isStringValued reports whether cond compares against a string, so that a
+// value like 000123 must not be turned into a number.
+func isStringValued(cond Condition) bool {
+	if cond.IsMetadata {
+		switch cond.Operator {
+		case OpGreater, OpGreaterEq, OpLess, OpLessEq:
+			return false // compared with JSONExtractFloat
+		}
+		return true
+	}
+	column, known := MapField(cond.Field)
+	return known && !numericColumns[column] && !timeColumns[column]
 }
 
 // parseDuration parses relative time expressions like "now-1h", "now-24h"
@@ -450,7 +637,13 @@ func ParseQuery(query string) (*Query, error) {
 	return parser.Parse()
 }
 
-// FieldMapping maps query field names to database columns.
+// metadataColumnPrefix marks a FieldMapping target stored as a key of the
+// metadata JSON column rather than as a column of its own.
+const metadataColumnPrefix = "metadata."
+
+// FieldMapping maps query field names to database columns. Every target is a
+// column of the events table (see internal/storage/migrations) or
+// "metadata.<key>" for a value stored in the metadata JSON.
 var FieldMapping = map[string]string{
 	"event_id":       "event_id",
 	"id":             "event_id",
@@ -466,18 +659,26 @@ var FieldMapping = map[string]string{
 	"target":         "target",
 	"raw":            "raw",
 	"schema_version": "schema_version",
-	// Source fields
-	"source.product":  "source_product",
-	"source.vendor":   "source_vendor",
-	"source.version":  "source_version",
-	"source.hostname": "source_hostname",
-	"source.ip":       "source_ip",
-	"product":         "source_product",
-	"vendor":          "source_vendor",
+	"request_id":     "request_id",
+	// Source fields. The events table has no vendor or source IP column:
+	// the CEF normalizer keeps the vendor in metadata.device_vendor and the
+	// device host or IP address in source_host.
+	"source.product":     "source_product",
+	"source.host":        "source_host",
+	"source.hostname":    "source_host",
+	"source.ip":          "source_host",
+	"source.instance_id": "source_instance_id",
+	"source.version":     "source_version",
+	"source.vendor":      "metadata.device_vendor",
+	"product":            "source_product",
+	"vendor":             "metadata.device_vendor",
+	"host":               "source_host",
+	"hostname":           "source_host",
 	// Actor fields
 	"actor.name":       "actor_name",
 	"actor.id":         "actor_id",
 	"actor.type":       "actor_type",
+	"actor.email":      "actor_email",
 	"actor.ip":         "actor_ip",
 	"actor.ip_address": "actor_ip",
 	"user":             "actor_name",
@@ -498,6 +699,22 @@ func MapField(field string) (string, bool) {
 		return field, true
 	}
 	return field, false
+}
+
+// metadataKey returns the metadata JSON key a field addresses: the part after
+// "metadata." or "meta.", or the key of an alias mapped to "metadata.<key>".
+func metadataKey(field string) (string, bool) {
+	lower := strings.ToLower(field)
+	switch {
+	case strings.HasPrefix(lower, "metadata."):
+		return field[len("metadata."):], true
+	case strings.HasPrefix(lower, "meta."):
+		return field[len("meta."):], true
+	}
+	if col, ok := FieldMapping[lower]; ok && strings.HasPrefix(col, metadataColumnPrefix) {
+		return col[len(metadataColumnPrefix):], true
+	}
+	return "", false
 }
 
 // String returns a string representation of the query.

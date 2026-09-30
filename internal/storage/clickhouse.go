@@ -5,9 +5,11 @@ import (
 	"context"
 	"crypto/tls"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -52,7 +54,57 @@ type ClickHouseClient struct {
 }
 
 // NewClickHouseClient creates a new ClickHouse client.
+//
+// If the configured database does not exist yet it is created (CREATE
+// DATABASE IF NOT EXISTS, through a connection to the server's default
+// database), so a fresh server needs no manual setup before migrations run.
 func NewClickHouseClient(cfg ClickHouseConfig) (*ClickHouseClient, error) {
+	if cfg.Database != "" && !validIdentifier.MatchString(cfg.Database) {
+		return nil, fmt.Errorf("%w: invalid ClickHouse database name %q", ErrInvalidData, cfg.Database)
+	}
+
+	opts := clickHouseOptions(cfg)
+
+	conn, err := clickhouse.Open(opts)
+	if err != nil {
+		return nil, WrapConnectionError("Open", err)
+	}
+
+	// Verify connection
+	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout(cfg))
+	defer cancel()
+
+	if err := conn.Ping(ctx); err != nil {
+		if !isUnknownDatabase(err) {
+			_ = conn.Close()
+			return nil, WrapConnectionError("Ping", err)
+		}
+		slog.Info("ClickHouse database does not exist, creating it", "database", cfg.Database)
+		if err := createDatabase(ctx, cfg); err != nil {
+			_ = conn.Close()
+			return nil, WrapConnectionError("CreateDatabase", err)
+		}
+		if err := conn.Ping(ctx); err != nil {
+			_ = conn.Close()
+			return nil, WrapConnectionError("Ping", err)
+		}
+	}
+
+	// Also create a database/sql compatible connection for search queries
+	sqlDB := clickhouse.OpenDB(opts)
+	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
+	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
+	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
+
+	return &ClickHouseClient{
+		conn:   conn,
+		sqlDB:  sqlDB,
+		config: cfg,
+	}, nil
+}
+
+// clickHouseOptions builds the driver options for cfg.
+func clickHouseOptions(cfg ClickHouseConfig) *clickhouse.Options {
 	opts := &clickhouse.Options{
 		Addr: cfg.Hosts,
 		Auth: clickhouse.Auth{
@@ -83,30 +135,51 @@ func NewClickHouseClient(cfg ClickHouseConfig) (*ClickHouseClient, error) {
 		}
 	}
 
-	conn, err := clickhouse.Open(opts)
+	return opts
+}
+
+// connectTimeout bounds the initial ping and database bootstrap.
+func connectTimeout(cfg ClickHouseConfig) time.Duration {
+	if cfg.DialTimeout > 5*time.Second {
+		return cfg.DialTimeout
+	}
+	return 5 * time.Second
+}
+
+// codeUnknownDatabase is ClickHouse's UNKNOWN_DATABASE error code.
+const codeUnknownDatabase = 81
+
+// isUnknownDatabase reports whether err is ClickHouse's "Database ... does
+// not exist" error.
+func isUnknownDatabase(err error) bool {
+	var ex *clickhouse.Exception
+	return errors.As(err, &ex) && ex.Code == codeUnknownDatabase
+}
+
+// createDatabase creates cfg.Database through a short-lived connection to the
+// server's default database.
+func createDatabase(ctx context.Context, cfg ClickHouseConfig) error {
+	bootstrap := cfg
+	bootstrap.Database = ""
+	bootstrap.MaxOpenConns = 1
+	bootstrap.MaxIdleConns = 1
+
+	conn, err := clickhouse.Open(clickHouseOptions(bootstrap))
 	if err != nil {
-		return nil, WrapConnectionError("Open", err)
+		return err
 	}
+	defer conn.Close()
 
-	// Verify connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+	return conn.Exec(ctx, createDatabaseSQL(cfg.Database))
+}
 
-	if err := conn.Ping(ctx); err != nil {
-		return nil, WrapConnectionError("Ping", err)
-	}
+// validIdentifier matches database names that are safe to embed in DDL.
+var validIdentifier = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-	// Also create a database/sql compatible connection for search queries
-	sqlDB := clickhouse.OpenDB(opts)
-	sqlDB.SetMaxOpenConns(cfg.MaxOpenConns)
-	sqlDB.SetMaxIdleConns(cfg.MaxIdleConns)
-	sqlDB.SetConnMaxLifetime(cfg.ConnMaxLifetime)
-
-	return &ClickHouseClient{
-		conn:   conn,
-		sqlDB:  sqlDB,
-		config: cfg,
-	}, nil
+// createDatabaseSQL returns the CREATE DATABASE statement for name, which the
+// caller has checked against validIdentifier.
+func createDatabaseSQL(name string) string {
+	return "CREATE DATABASE IF NOT EXISTS `" + name + "`"
 }
 
 // Close closes the ClickHouse connection.
@@ -159,7 +232,10 @@ func (c *ClickHouseClient) Database() string {
 }
 
 // EnsureDatabase creates the database if it doesn't exist.
+// NewClickHouseClient already does this when the database is missing.
 func (c *ClickHouseClient) EnsureDatabase(ctx context.Context) error {
-	query := fmt.Sprintf("CREATE DATABASE IF NOT EXISTS %s", c.config.Database)
-	return c.conn.Exec(ctx, query)
+	if !validIdentifier.MatchString(c.config.Database) {
+		return fmt.Errorf("%w: invalid ClickHouse database name %q", ErrInvalidData, c.config.Database)
+	}
+	return c.conn.Exec(ctx, createDatabaseSQL(c.config.Database))
 }

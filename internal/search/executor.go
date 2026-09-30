@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"time"
 
@@ -15,21 +16,32 @@ import (
 
 // SearchResult represents a single event in search results.
 type SearchResult struct {
-	EventID       uuid.UUID              `json:"event_id"`
-	Timestamp     time.Time              `json:"timestamp"`
-	ReceivedAt    time.Time              `json:"received_at"`
-	TenantID      string                 `json:"tenant_id"`
-	Action        string                 `json:"action"`
-	Outcome       string                 `json:"outcome"`
-	Severity      int                    `json:"severity"`
-	Target        string                 `json:"target,omitempty"`
-	Raw           string                 `json:"raw,omitempty"`
-	SourceProduct string                 `json:"source_product"`
-	SourceVendor  string                 `json:"source_vendor"`
+	EventID          uuid.UUID `json:"event_id"`
+	Timestamp        time.Time `json:"timestamp"`
+	ReceivedAt       time.Time `json:"received_at"`
+	TenantID         string    `json:"tenant_id"`
+	Action           string    `json:"action"`
+	Outcome          string    `json:"outcome"`
+	Severity         int       `json:"severity"`
+	Target           string    `json:"target,omitempty"`
+	Raw              string    `json:"raw,omitempty"`
+	SourceProduct    string    `json:"source_product"`
+	SourceHost       string    `json:"source_host,omitempty"`
+	SourceInstanceID string    `json:"source_instance_id,omitempty"`
+	SourceVersion    string    `json:"source_version,omitempty"`
+	// SourceVendor is metadata["device_vendor"] (set by the CEF normalizer);
+	// the events table has no vendor column.
+	SourceVendor string `json:"source_vendor"`
+	// SourceIP is SourceHost when that is an IP address; the events table has
+	// no separate source IP column.
 	SourceIP      string                 `json:"source_ip,omitempty"`
+	ActorType     string                 `json:"actor_type,omitempty"`
 	ActorName     string                 `json:"actor_name,omitempty"`
 	ActorID       string                 `json:"actor_id,omitempty"`
+	ActorEmail    string                 `json:"actor_email,omitempty"`
 	ActorIP       string                 `json:"actor_ip,omitempty"`
+	SchemaVersion string                 `json:"schema_version,omitempty"`
+	RequestID     string                 `json:"request_id,omitempty"`
 	Metadata      map[string]interface{} `json:"metadata,omitempty"`
 }
 
@@ -79,10 +91,73 @@ func NewExecutor(db *sql.DB) *Executor {
 	return &Executor{db: db}
 }
 
-// eventColumns is the projection returned by Search and GetEvent.
-const eventColumns = `event_id, timestamp, received_at, tenant_id, action, outcome, severity,
-		target, raw, source_product, source_vendor, source_ip,
-		actor_name, actor_id, actor_ip, metadata`
+// eventColumnList is the projection returned by Search and GetEvent, in the
+// order scanEvent reads it. Every entry must be a column of the events table
+// (TestEventColumnsExistInMigrations checks this against the migrations).
+var eventColumnList = []string{
+	"event_id", "timestamp", "received_at", "tenant_id", "action", "outcome", "severity",
+	"target", "raw", "source_product", "source_host", "source_instance_id", "source_version",
+	"actor_type", "actor_name", "actor_id", "actor_email", "actor_ip",
+	"schema_version", "request_id", "metadata",
+}
+
+// eventColumns is eventColumnList as a SELECT list.
+var eventColumns = strings.Join(eventColumnList, ", ")
+
+// rowScanner is implemented by *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanEvent reads one row selected with eventColumns.
+func scanEvent(row rowScanner) (*SearchResult, error) {
+	var r SearchResult
+	var metadataJSON string
+
+	if err := row.Scan(
+		&r.EventID,
+		&r.Timestamp,
+		&r.ReceivedAt,
+		&r.TenantID,
+		&r.Action,
+		&r.Outcome,
+		&r.Severity,
+		&r.Target,
+		&r.Raw,
+		&r.SourceProduct,
+		&r.SourceHost,
+		&r.SourceInstanceID,
+		&r.SourceVersion,
+		&r.ActorType,
+		&r.ActorName,
+		&r.ActorID,
+		&r.ActorEmail,
+		&r.ActorIP,
+		&r.SchemaVersion,
+		&r.RequestID,
+		&metadataJSON,
+	); err != nil {
+		return nil, err
+	}
+
+	if metadataJSON != "" {
+		r.Metadata = make(map[string]interface{})
+		if err := json.Unmarshal([]byte(metadataJSON), &r.Metadata); err != nil {
+			slog.Warn("failed to unmarshal event metadata", "event_id", r.EventID, "error", err)
+		}
+	}
+
+	// Compatibility fields for API clients written against source_vendor and
+	// source_ip.
+	if vendor, ok := r.Metadata["device_vendor"].(string); ok {
+		r.SourceVendor = vendor
+	}
+	if net.ParseIP(r.SourceHost) != nil {
+		r.SourceIP = r.SourceHost
+	}
+
+	return &r, nil
+}
 
 // joinSQL assembles a statement from SQL fragments separated by spaces,
 // skipping empty ones. Each fragment must be a string constant, an identifier
@@ -150,47 +225,11 @@ func (e *Executor) Search(ctx context.Context, query *Query) (*SearchResponse, e
 
 	var results []*SearchResult
 	for rows.Next() {
-		var r SearchResult
-		var metadataJSON string
-		var target, raw, sourceIP, actorName, actorID, actorIP sql.NullString
-
-		err := rows.Scan(
-			&r.EventID,
-			&r.Timestamp,
-			&r.ReceivedAt,
-			&r.TenantID,
-			&r.Action,
-			&r.Outcome,
-			&r.Severity,
-			&target,
-			&raw,
-			&r.SourceProduct,
-			&r.SourceVendor,
-			&sourceIP,
-			&actorName,
-			&actorID,
-			&actorIP,
-			&metadataJSON,
-		)
+		r, err := scanEvent(rows)
 		if err != nil {
 			return nil, fmt.Errorf("scan failed: %w", err)
 		}
-
-		r.Target = target.String
-		r.Raw = raw.String
-		r.SourceIP = sourceIP.String
-		r.ActorName = actorName.String
-		r.ActorID = actorID.String
-		r.ActorIP = actorIP.String
-
-		if metadataJSON != "" {
-			r.Metadata = make(map[string]interface{})
-			if err := json.Unmarshal([]byte(metadataJSON), &r.Metadata); err != nil {
-				slog.Warn("failed to unmarshal event metadata", "event_id", r.EventID, "error", err)
-			}
-		}
-
-		results = append(results, &r)
+		results = append(results, r)
 	}
 
 	if err := rows.Err(); err != nil {
@@ -320,75 +359,29 @@ func (e *Executor) Aggregate(ctx context.Context, query *Query, field string, ag
 	return result, nil
 }
 
-// GetEvent retrieves a single event by ID.
-func (e *Executor) GetEvent(ctx context.Context, eventID uuid.UUID) (*SearchResult, error) {
-	query := `
-		SELECT
-			event_id,
-			timestamp,
-			received_at,
-			tenant_id,
-			action,
-			outcome,
-			severity,
-			target,
-			raw,
-			source_product,
-			source_vendor,
-			source_ip,
-			actor_name,
-			actor_id,
-			actor_ip,
-			metadata
-		FROM events
-		WHERE event_id = ?
-		LIMIT 1
-	`
+// GetEvent retrieves a single event of the given tenant by ID. It returns
+// nil, nil when the tenant has no such event, including when the ID belongs
+// to another tenant.
+func (e *Executor) GetEvent(ctx context.Context, tenantID string, eventID uuid.UUID) (*SearchResult, error) {
+	if tenantID == "" {
+		return nil, fmt.Errorf("tenant_id is required for event lookups")
+	}
 
-	var r SearchResult
-	var metadataJSON string
-	var target, raw, sourceIP, actorName, actorID, actorIP sql.NullString
-
-	err := e.db.QueryRowContext(ctx, query, eventID.String()).Scan(
-		&r.EventID,
-		&r.Timestamp,
-		&r.ReceivedAt,
-		&r.TenantID,
-		&r.Action,
-		&r.Outcome,
-		&r.Severity,
-		&target,
-		&raw,
-		&r.SourceProduct,
-		&r.SourceVendor,
-		&sourceIP,
-		&actorName,
-		&actorID,
-		&actorIP,
-		&metadataJSON,
+	query := joinSQL(
+		"SELECT", eventColumns,
+		"FROM events",
+		"WHERE tenant_id = ? AND event_id = ?",
+		"LIMIT 1",
 	)
-	if err == sql.ErrNoRows {
+
+	r, err := scanEvent(e.db.QueryRowContext(ctx, query, tenantID, eventID.String()))
+	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("query failed: %w", err)
 	}
-
-	r.Target = target.String
-	r.Raw = raw.String
-	r.SourceIP = sourceIP.String
-	r.ActorName = actorName.String
-	r.ActorID = actorID.String
-	r.ActorIP = actorIP.String
-
-	if metadataJSON != "" {
-		r.Metadata = make(map[string]interface{})
-		if err := json.Unmarshal([]byte(metadataJSON), &r.Metadata); err != nil {
-			slog.Warn("failed to unmarshal event metadata", "event_id", r.EventID, "error", err)
-		}
-	}
-
-	return &r, nil
+	return r, nil
 }
 
 // buildWhereClause builds a SQL WHERE clause from query conditions.
@@ -467,7 +460,14 @@ func (e *Executor) buildConditionExpr(query *Query) (string, []interface{}, erro
 		}
 
 		// Metadata conditions address the JSON column through a bound key and
-		// never use the column identifier.
+		// never use the column identifier. Fields aliased to a metadata key
+		// (e.g. vendor) are metadata conditions even when the Query was built
+		// without ParseQuery.
+		if !cond.IsMetadata {
+			if key, ok := metadataKey(cond.Field); ok {
+				cond.IsMetadata, cond.MetadataKey = true, key
+			}
+		}
 		var column string
 		if !cond.IsMetadata {
 			mapped, _ := MapField(cond.Field)
@@ -504,7 +504,7 @@ func (e *Executor) buildConditionClause(column string, cond Condition) (string, 
 	case OpEquals:
 		if cond.IsRegex {
 			// Validate regex pattern length to prevent resource exhaustion in ClickHouse
-			if pattern, ok := cond.Value.(string); ok && len(pattern) > 1024 {
+			if tooLongPattern(cond.Value) {
 				return "1=0", nil // reject overly long patterns
 			}
 			return fmt.Sprintf("match(%s, ?)", column), []interface{}{cond.Value}
@@ -516,6 +516,16 @@ func (e *Executor) buildConditionClause(column string, cond Condition) (string, 
 		return fmt.Sprintf("%s = ?", column), []interface{}{cond.Value}
 
 	case OpNotEquals:
+		// The complement of each OpEquals form (NOT pushes down to here).
+		if cond.IsRegex {
+			if tooLongPattern(cond.Value) {
+				return "1=0", nil
+			}
+			return fmt.Sprintf("NOT match(%s, ?)", column), []interface{}{cond.Value}
+		}
+		if cond.IsPhrase {
+			return fmt.Sprintf("position(%s, ?) = 0", column), []interface{}{cond.Value}
+		}
 		return fmt.Sprintf("%s != ?", column), []interface{}{cond.Value}
 
 	case OpGreater:
@@ -547,14 +557,38 @@ func (e *Executor) buildConditionClause(column string, cond Condition) (string, 
 	}
 }
 
+// tooLongPattern reports whether a regex value exceeds the accepted length.
+func tooLongPattern(value interface{}) bool {
+	pattern, ok := value.(string)
+	return ok && len(pattern) > 1024
+}
+
 // buildMetadataClause builds a SQL clause for a metadata JSON field query.
 func (e *Executor) buildMetadataClause(cond Condition) (string, []interface{}) {
 	jsonPath := cond.MetadataKey
 
 	switch cond.Operator {
 	case OpEquals:
+		if cond.IsRegex {
+			if tooLongPattern(cond.Value) {
+				return "1=0", nil
+			}
+			return "match(JSONExtractString(metadata, ?), ?)", []interface{}{jsonPath, cond.Value}
+		}
+		if cond.IsPhrase {
+			return "position(JSONExtractString(metadata, ?), ?) > 0", []interface{}{jsonPath, cond.Value}
+		}
 		return "JSONExtractString(metadata, ?) = ?", []interface{}{jsonPath, cond.Value}
 	case OpNotEquals:
+		if cond.IsRegex {
+			if tooLongPattern(cond.Value) {
+				return "1=0", nil
+			}
+			return "NOT match(JSONExtractString(metadata, ?), ?)", []interface{}{jsonPath, cond.Value}
+		}
+		if cond.IsPhrase {
+			return "position(JSONExtractString(metadata, ?), ?) = 0", []interface{}{jsonPath, cond.Value}
+		}
 		return "JSONExtractString(metadata, ?) != ?", []interface{}{jsonPath, cond.Value}
 	case OpGreater:
 		return "JSONExtractFloat(metadata, ?) > ?", []interface{}{jsonPath, cond.Value}
@@ -566,6 +600,8 @@ func (e *Executor) buildMetadataClause(cond Condition) (string, []interface{}) {
 		return "JSONExtractFloat(metadata, ?) <= ?", []interface{}{jsonPath, cond.Value}
 	case OpContains:
 		return "position(JSONExtractString(metadata, ?), ?) > 0", []interface{}{jsonPath, cond.Value}
+	case OpNotContains:
+		return "position(JSONExtractString(metadata, ?), ?) = 0", []interface{}{jsonPath, cond.Value}
 	case OpExists:
 		return "JSONHas(metadata, ?) = 1", []interface{}{jsonPath}
 	case OpNotExists:
@@ -602,28 +638,30 @@ func sanitizeAggFunction(fn string) (string, bool) {
 }
 
 // validColumns is an allowlist of known safe column names for SQL queries.
+// Every entry must be a column of the events table (checked against the
+// migrations by TestEventColumnsExistInMigrations).
 var validColumns = map[string]string{
-	"event_id":        "event_id",
-	"timestamp":       "timestamp",
-	"received_at":     "received_at",
-	"tenant_id":       "tenant_id",
-	"action":          "action",
-	"outcome":         "outcome",
-	"severity":        "severity",
-	"target":          "target",
-	"raw":             "raw",
-	"source_product":  "source_product",
-	"source_vendor":   "source_vendor",
-	"source_version":  "source_version",
-	"source_hostname": "source_hostname",
-	"source_ip":       "source_ip",
-	"actor_name":      "actor_name",
-	"actor_id":        "actor_id",
-	"actor_type":      "actor_type",
-	"actor_ip":        "actor_ip",
-	"metadata":        "metadata",
-	"schema_version":  "schema_version",
-	"request_id":      "request_id",
+	"event_id":           "event_id",
+	"timestamp":          "timestamp",
+	"received_at":        "received_at",
+	"tenant_id":          "tenant_id",
+	"action":             "action",
+	"outcome":            "outcome",
+	"severity":           "severity",
+	"target":             "target",
+	"raw":                "raw",
+	"source_product":     "source_product",
+	"source_host":        "source_host",
+	"source_instance_id": "source_instance_id",
+	"source_version":     "source_version",
+	"actor_name":         "actor_name",
+	"actor_id":           "actor_id",
+	"actor_type":         "actor_type",
+	"actor_email":        "actor_email",
+	"actor_ip":           "actor_ip",
+	"metadata":           "metadata",
+	"schema_version":     "schema_version",
+	"request_id":         "request_id",
 }
 
 // validOrderByColumns is the subset of columns results may be sorted by.

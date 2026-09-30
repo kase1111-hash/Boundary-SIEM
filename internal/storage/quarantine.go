@@ -2,10 +2,32 @@ package storage
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"boundary-siem/internal/schema"
+
 	"github.com/google/uuid"
+)
+
+// Quarantine error codes stored in events_quarantine.error_code.
+const (
+	// QuarantineCodeValidationFailed marks an event that parsed but failed
+	// schema validation.
+	QuarantineCodeValidationFailed = "validation_failed"
+	// QuarantineCodeParseFailed marks a payload that could not be parsed
+	// into an event (malformed JSON or CEF).
+	QuarantineCodeParseFailed = "parse_failed"
+	// QuarantineCodeStorageFailed marks a valid event that could not be
+	// written to the events table (see QuarantineWriter.DeadLetter).
+	QuarantineCodeStorageFailed = "storage_write_failed"
+)
+
+// Quarantine source formats stored in events_quarantine.source_format.
+const (
+	QuarantineFormatJSON = "json"
+	QuarantineFormatCEF  = "cef"
 )
 
 // QuarantineEntry represents an invalid event stored in quarantine.
@@ -17,6 +39,29 @@ type QuarantineEntry struct {
 	ErrorCode        string
 }
 
+// NewQuarantineEntry builds an entry for a rejected raw payload, such as a
+// CEF line or a JSON event that failed to parse or validate.
+func NewQuarantineEntry(raw, sourceIP, format, code string, validationErrors ...string) *QuarantineEntry {
+	return &QuarantineEntry{
+		RawEvent:         raw,
+		SourceIP:         sourceIP,
+		SourceFormat:     format,
+		ValidationErrors: validationErrors,
+		ErrorCode:        code,
+	}
+}
+
+// QuarantineEntryForEvent builds an entry for a parsed event, storing the
+// event's JSON encoding as the raw payload (or event.Raw if it cannot be
+// encoded).
+func QuarantineEntryForEvent(event *schema.Event, sourceIP, format, code string, validationErrors ...string) *QuarantineEntry {
+	raw, err := json.Marshal(event)
+	if err != nil {
+		raw = []byte(event.Raw)
+	}
+	return NewQuarantineEntry(string(raw), sourceIP, format, code, validationErrors...)
+}
+
 // QuarantineWriter handles writing invalid events to the quarantine table.
 type QuarantineWriter struct {
 	client *ClickHouseClient
@@ -25,6 +70,28 @@ type QuarantineWriter struct {
 // NewQuarantineWriter creates a new QuarantineWriter.
 func NewQuarantineWriter(client *ClickHouseClient) *QuarantineWriter {
 	return &QuarantineWriter{client: client}
+}
+
+// DeadLetter stores events that could not be written to the events table in
+// events_quarantine with error code QuarantineCodeStorageFailed, so they can
+// be inspected and reprocessed. It satisfies DeadLetterFunc; pass it to
+// NewBatchWriter with WithDeadLetter. It cannot help while ClickHouse itself
+// is unreachable, in which case it fails and the BatchWriter counts the
+// events as dropped.
+func (qw *QuarantineWriter) DeadLetter(ctx context.Context, events []*schema.Event, cause error) error {
+	reason := "events insert failed"
+	if cause != nil {
+		reason = cause.Error()
+	}
+	entries := make([]*QuarantineEntry, 0, len(events))
+	for _, event := range events {
+		sourceIP := ""
+		if event.Actor != nil {
+			sourceIP = event.Actor.IPAddress
+		}
+		entries = append(entries, QuarantineEntryForEvent(event, sourceIP, QuarantineFormatJSON, QuarantineCodeStorageFailed, reason))
+	}
+	return qw.WriteBatch(ctx, entries)
 }
 
 // Write stores a single quarantine entry.
@@ -61,6 +128,8 @@ func (qw *QuarantineWriter) WriteBatch(ctx context.Context, entries []*Quarantin
 	if err != nil {
 		return fmt.Errorf("failed to prepare quarantine batch: %w", err)
 	}
+	// Release the connection if Send is never reached; a no-op after Send.
+	defer func() { _ = batch.Close() }()
 
 	for _, entry := range entries {
 		err := batch.Append(

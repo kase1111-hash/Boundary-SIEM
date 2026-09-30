@@ -71,8 +71,10 @@ func (r *RetentionManager) ApplyTTLs(ctx context.Context) error {
 			days = 1
 		}
 
+		// The TTL columns are DateTime64; ClickHouse before 25.x only accepts
+		// a DateTime or Date TTL expression, hence toDateTime().
 		query := fmt.Sprintf(
-			"ALTER TABLE %s MODIFY TTL %s + INTERVAL %d DAY DELETE",
+			"ALTER TABLE %s MODIFY TTL toDateTime(%s) + INTERVAL %d DAY DELETE",
 			p.table, p.column, days,
 		)
 

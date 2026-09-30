@@ -770,11 +770,14 @@ func TestMapField_AdditionalCases(t *testing.T) {
 		{"id", "event_id", true},
 		{"tenant", "tenant_id", true},
 		{"product", "source_product", true},
-		{"vendor", "source_vendor", true},
+		// These two used to map to source_vendor and source_hostname, which
+		// are not columns of the events table (R03): every search on them
+		// failed in ClickHouse. The vendor lives in metadata.
+		{"vendor", "metadata.device_vendor", true},
 		{"dst", "target", true},
 		{"suser", "actor_name", true},
 		{"actor.ip_address", "actor_ip", true},
-		{"source.hostname", "source_hostname", true},
+		{"source.hostname", "source_host", true},
 		{"source.version", "source_version", true},
 		{"schema_version", "schema_version", true},
 

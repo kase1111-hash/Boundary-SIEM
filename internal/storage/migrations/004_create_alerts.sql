@@ -44,5 +44,5 @@ CREATE TABLE IF NOT EXISTS alerts (
 ENGINE = ReplacingMergeTree(updated_at)
 PARTITION BY toYYYYMM(created_at)
 ORDER BY (tenant_id, status, created_at, alert_id)
-TTL created_at + INTERVAL 365 DAY DELETE
+TTL toDateTime(created_at) + INTERVAL 365 DAY DELETE
 SETTINGS index_granularity = 8192;

@@ -1,6 +1,7 @@
 package search
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -10,14 +11,89 @@ import (
 	"github.com/google/uuid"
 )
 
+// DefaultTenantID is the tenant searched when a request carries none. It
+// matches the tenant the storage layer assigns to events ingested without
+// one (storage.DefaultTenantID) and the default of the
+// ingest.cef.normalizer.default_tenant_id setting.
+const DefaultTenantID = "default"
+
 // Handler provides HTTP handlers for search operations.
+//
+// Every query is scoped to one tenant, resolved per request in this order:
+// the TenantResolver (WithTenantResolver), the tenant stored in the request
+// context (ContextWithTenant), and the default tenant (WithDefaultTenant,
+// DefaultTenantID unless changed). The tenant is never taken from request
+// parameters or headers. A request for which no tenant resolves gets 403.
 type Handler struct {
-	executor *Executor
+	executor      *Executor
+	defaultTenant string
+	resolveTenant TenantResolver
+}
+
+// TenantResolver returns the tenant an authenticated request may search, or
+// "" when the request carries no tenant.
+type TenantResolver func(r *http.Request) string
+
+// HandlerOption configures a Handler.
+type HandlerOption func(*Handler)
+
+// WithDefaultTenant sets the tenant searched when a request carries no
+// tenant. An empty tenant disables the fallback, so such requests get 403.
+func WithDefaultTenant(tenantID string) HandlerOption {
+	return func(h *Handler) { h.defaultTenant = tenantID }
+}
+
+// WithTenantResolver sets a function that extracts the tenant from a request,
+// e.g. from the authenticated user an auth middleware stored in its context.
+func WithTenantResolver(resolve TenantResolver) HandlerOption {
+	return func(h *Handler) { h.resolveTenant = resolve }
 }
 
 // NewHandler creates a new search handler.
-func NewHandler(executor *Executor) *Handler {
-	return &Handler{executor: executor}
+func NewHandler(executor *Executor, opts ...HandlerOption) *Handler {
+	h := &Handler{executor: executor, defaultTenant: DefaultTenantID}
+	for _, opt := range opts {
+		opt(h)
+	}
+	return h
+}
+
+type tenantContextKey struct{}
+
+// ContextWithTenant returns a context carrying the tenant that search
+// requests using it are scoped to. Authentication middleware can call it so
+// the Handler picks the tenant up without a TenantResolver.
+func ContextWithTenant(ctx context.Context, tenantID string) context.Context {
+	return context.WithValue(ctx, tenantContextKey{}, tenantID)
+}
+
+// TenantFromContext returns the tenant stored by ContextWithTenant.
+func TenantFromContext(ctx context.Context) (string, bool) {
+	tenantID, ok := ctx.Value(tenantContextKey{}).(string)
+	return tenantID, ok && tenantID != ""
+}
+
+// tenant resolves the tenant r is scoped to.
+func (h *Handler) tenant(r *http.Request) (string, bool) {
+	if h.resolveTenant != nil {
+		if tenantID := h.resolveTenant(r); tenantID != "" {
+			return tenantID, true
+		}
+	}
+	if tenantID, ok := TenantFromContext(r.Context()); ok {
+		return tenantID, true
+	}
+	return h.defaultTenant, h.defaultTenant != ""
+}
+
+// requireTenant resolves the request's tenant, writing a 403 when there is
+// none.
+func (h *Handler) requireTenant(w http.ResponseWriter, r *http.Request) (string, bool) {
+	tenantID, ok := h.tenant(r)
+	if !ok {
+		h.writeError(w, http.StatusForbidden, "tenant_required", "request is not scoped to a tenant", "")
+	}
+	return tenantID, ok
 }
 
 // SearchRequest represents a search API request.
@@ -93,6 +169,12 @@ func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	tenantID, ok := h.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	query.TenantID = tenantID
+
 	// Execute search
 	result, err := h.executor.Search(ctx, query)
 	if err != nil {
@@ -155,6 +237,12 @@ func (h *Handler) HandleSearchGet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	tenantID, ok := h.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	query.TenantID = tenantID
+
 	// Execute search
 	result, err := h.executor.Search(ctx, query)
 	if err != nil {
@@ -196,6 +284,12 @@ func (h *Handler) HandleAggregation(w http.ResponseWriter, r *http.Request) {
 	} else {
 		query = &Query{}
 	}
+
+	tenantID, ok := h.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	query.TenantID = tenantID
 
 	// Execute aggregation
 	var result *AggregationResult
@@ -245,8 +339,13 @@ func (h *Handler) HandleGetEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get the event
-	event, err := h.executor.GetEvent(ctx, eventID)
+	tenantID, ok := h.requireTenant(w, r)
+	if !ok {
+		return
+	}
+
+	// Get the event (events of other tenants are reported as not found)
+	event, err := h.executor.GetEvent(ctx, tenantID, eventID)
 	if err != nil {
 		slog.Error("get event failed", "error", err, "event_id", idStr)
 		h.writeError(w, http.StatusInternalServerError, "query_error", "failed to get event", "")
@@ -290,6 +389,12 @@ func (h *Handler) HandleFieldValues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	tenantID, ok := h.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	query.TenantID = tenantID
+
 	result, err := h.executor.TopN(ctx, query, field, n)
 	if err != nil {
 		slog.Error("field values query failed", "error", err, "field", field)
@@ -325,41 +430,55 @@ func (h *Handler) HandleStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Get various stats
+	tenantID, ok := h.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	query.TenantID = tenantID
+
+	// Get various stats. Any failure is reported: an empty object used to
+	// hide errors and looked like "no events".
 	stats := make(map[string]interface{})
+	fail := func(what string, err error) {
+		slog.Error("stats query failed", "stat", what, "error", err)
+		h.writeError(w, http.StatusInternalServerError, "stats_error", "failed to compute statistics", "")
+	}
 
 	// Total events
 	searchResp, err := h.executor.Search(ctx, &Query{
+		TenantID:  tenantID,
 		TimeRange: query.TimeRange,
 		Limit:     0,
 	})
-	if err == nil {
-		stats["total_events"] = searchResp.TotalCount
+	if err != nil {
+		fail("total_events", err)
+		return
 	}
+	stats["total_events"] = searchResp.TotalCount
 
-	// Events by severity
-	sevResult, err := h.executor.TopN(ctx, query, "severity", 10)
-	if err == nil {
-		stats["by_severity"] = sevResult.Buckets
-	}
-
-	// Events by action
-	actionResult, err := h.executor.TopN(ctx, query, "action", 10)
-	if err == nil {
-		stats["by_action"] = actionResult.Buckets
-	}
-
-	// Events by outcome
-	outcomeResult, err := h.executor.TopN(ctx, query, "outcome", 5)
-	if err == nil {
-		stats["by_outcome"] = outcomeResult.Buckets
+	for _, topN := range []struct {
+		key, field string
+		n          int
+	}{
+		{"by_severity", "severity", 10},
+		{"by_action", "action", 10},
+		{"by_outcome", "outcome", 5},
+	} {
+		result, err := h.executor.TopN(ctx, query, topN.field, topN.n)
+		if err != nil {
+			fail(topN.key, err)
+			return
+		}
+		stats[topN.key] = result.Buckets
 	}
 
 	// Time histogram
 	histResult, err := h.executor.TimeHistogram(ctx, query, "1h")
-	if err == nil {
-		stats["time_histogram"] = histResult.Buckets
+	if err != nil {
+		fail("time_histogram", err)
+		return
 	}
+	stats["time_histogram"] = histResult.Buckets
 
 	h.writeJSON(w, http.StatusOK, stats)
 }
@@ -403,6 +522,12 @@ func (h *Handler) HandleExplain(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	tenantID, ok := h.requireTenant(w, r)
+	if !ok {
+		return
+	}
+	query.TenantID = tenantID
 
 	result, err := h.executor.Explain(ctx, query)
 	if err != nil {
