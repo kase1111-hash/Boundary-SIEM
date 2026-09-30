@@ -253,10 +253,6 @@ func (e *Executor) Aggregate(ctx context.Context, query *Query, field string, ag
 		return nil, fmt.Errorf("tenant_id is required for aggregation queries")
 	}
 
-	// Map field name to column
-	column, _ := MapField(field)
-	column = e.sanitizeColumn(column)
-
 	// Build WHERE clause
 	whereClause, args, err := e.buildWhereClause(query)
 	if err != nil {
@@ -266,16 +262,24 @@ func (e *Executor) Aggregate(ctx context.Context, query *Query, field string, ag
 	aggType = strings.ToLower(aggType)
 	singleValue := false
 
+	// The field expression comes first in the statement, so its bound
+	// arguments (a metadata key) precede the WHERE clause arguments.
 	var sqlQuery string
 	switch aggType {
-	case "count":
+	case "count", "terms":
+		limit := "LIMIT 100"
+		if aggType == "terms" {
+			limit = "LIMIT 20"
+		}
+		expr, exprArgs := e.fieldExpr(field, false)
+		args = withArgs(exprArgs, args...)
 		sqlQuery = joinSQL(
-			"SELECT", column, "AS key, count(*) AS cnt",
+			"SELECT", expr, "AS key, count(*) AS cnt",
 			"FROM events",
 			whereClause,
-			"GROUP BY", column,
+			"GROUP BY key",
 			"ORDER BY cnt DESC",
-			"LIMIT 100",
+			limit,
 		)
 
 	case "sum", "avg", "min", "max":
@@ -284,8 +288,10 @@ func (e *Executor) Aggregate(ctx context.Context, query *Query, field string, ag
 			return nil, fmt.Errorf("unsupported aggregation function: %s", aggType)
 		}
 		singleValue = true
+		expr, exprArgs := e.fieldExpr(field, true)
+		args = withArgs(exprArgs, args...)
 		sqlQuery = joinSQL(
-			"SELECT", safeFn+"("+column+") AS value",
+			"SELECT", safeFn+"("+expr+") AS value",
 			"FROM events",
 			whereClause,
 		)
@@ -298,16 +304,6 @@ func (e *Executor) Aggregate(ctx context.Context, query *Query, field string, ag
 			whereClause,
 			"GROUP BY key",
 			"ORDER BY key",
-		)
-
-	case "terms":
-		sqlQuery = joinSQL(
-			"SELECT", column, "AS key, count(*) AS cnt",
-			"FROM events",
-			whereClause,
-			"GROUP BY", column,
-			"ORDER BY cnt DESC",
-			"LIMIT 20",
 		)
 
 	default:
@@ -687,6 +683,23 @@ func (e *Executor) sanitizeColumn(column string) string {
 	return "timestamp"
 }
 
+// fieldExpr returns the SQL expression that aggregations group or aggregate
+// a field by, with its bound arguments. Metadata fields (metadata.<key>,
+// meta.<key>, and aliases stored in metadata such as vendor) are extracted
+// from the metadata JSON with the key bound as an argument — as a string, or
+// as a number when numeric is set. Other fields resolve to an allowlisted
+// column (see sanitizeColumn).
+func (e *Executor) fieldExpr(field string, numeric bool) (string, []interface{}) {
+	if key, ok := metadataKey(field); ok {
+		if numeric {
+			return "JSONExtractFloat(metadata, ?)", []interface{}{key}
+		}
+		return "JSONExtractString(metadata, ?)", []interface{}{key}
+	}
+	column, _ := MapField(field)
+	return e.sanitizeColumn(column), nil
+}
+
 // sanitizeOrderBy ensures order by column is valid.
 func (e *Executor) sanitizeOrderBy(orderBy string) string {
 	if safe, ok := validOrderByColumns[e.sanitizeColumn(orderBy)]; ok {
@@ -780,9 +793,6 @@ func (e *Executor) TopN(ctx context.Context, query *Query, field string, n int) 
 		return nil, fmt.Errorf("tenant_id is required for top-n queries")
 	}
 
-	column, _ := MapField(field)
-	column = e.sanitizeColumn(column)
-
 	if n <= 0 || n > MaxTopN {
 		n = 10
 	}
@@ -792,8 +802,9 @@ func (e *Executor) TopN(ctx context.Context, query *Query, field string, n int) 
 		return nil, fmt.Errorf("invalid top-n query: %w", err)
 	}
 
+	expr, exprArgs := e.fieldExpr(field, false)
 	sqlQuery := joinSQL(
-		"SELECT", column, "AS key, count(*) AS cnt",
+		"SELECT", expr, "AS key, count(*) AS cnt",
 		"FROM events",
 		whereClause,
 		"GROUP BY key",
@@ -801,7 +812,8 @@ func (e *Executor) TopN(ctx context.Context, query *Query, field string, n int) 
 		"LIMIT ?",
 	)
 
-	rows, err := e.db.QueryContext(ctx, sqlQuery, withArgs(args, n)...)
+	args = withArgs(withArgs(exprArgs, args...), n)
+	rows, err := e.db.QueryContext(ctx, sqlQuery, args...)
 	if err != nil {
 		return nil, fmt.Errorf("top-n query failed: %w", err)
 	}

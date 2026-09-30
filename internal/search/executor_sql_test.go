@@ -410,6 +410,80 @@ func TestExecutor_AggregationIdentifiersAreAllowlisted(t *testing.T) {
 	})
 }
 
+// Review regression: vendor and source.vendor were remapped to the metadata
+// JSON, but TopN and Aggregate only knew columns, so field values and terms
+// for them silently grouped by the timestamp fallback. Metadata fields now
+// group by the JSON value, with the key bound as an argument.
+func TestExecutor_AggregationsOnMetadataFields(t *testing.T) {
+	ctx := context.Background()
+	hostileKey := "metadata.x') AS key FROM events; DROP TABLE events -- " + injectionMarker
+
+	tests := []struct {
+		name       string
+		run        func(*Executor) error
+		wantPrefix string
+		wantKey    string
+	}{
+		{
+			name:       "top-n on alias",
+			run:        func(e *Executor) error { _, err := e.TopN(ctx, &Query{TenantID: "t"}, "vendor", 5); return err },
+			wantPrefix: "SELECT JSONExtractString(metadata, ?) AS key, count(*) AS cnt FROM events WHERE tenant_id = ? GROUP BY key",
+			wantKey:    "device_vendor",
+		},
+		{
+			name: "terms on alias",
+			run: func(e *Executor) error {
+				_, err := e.Aggregate(ctx, &Query{TenantID: "t"}, "source.vendor", "terms")
+				return err
+			},
+			wantPrefix: "SELECT JSONExtractString(metadata, ?) AS key, count(*) AS cnt FROM events WHERE tenant_id = ? GROUP BY key",
+			wantKey:    "device_vendor",
+		},
+		{
+			name: "count on metadata key",
+			run: func(e *Executor) error {
+				_, err := e.Aggregate(ctx, &Query{TenantID: "t"}, "meta.chain_id", "count")
+				return err
+			},
+			wantPrefix: "SELECT JSONExtractString(metadata, ?) AS key",
+			wantKey:    "chain_id",
+		},
+		{
+			name: "sum on metadata key",
+			run: func(e *Executor) error {
+				_, err := e.Aggregate(ctx, &Query{TenantID: "t"}, "metadata.gas", "sum")
+				return err
+			},
+			wantPrefix: "SELECT SUM(JSONExtractFloat(metadata, ?)) AS value FROM events WHERE tenant_id = ?",
+			wantKey:    "gas",
+		},
+		{
+			name:       "hostile metadata key is bound",
+			run:        func(e *Executor) error { _, err := e.TopN(ctx, &Query{TenantID: "t"}, hostileKey, 5); return err },
+			wantPrefix: "SELECT JSONExtractString(metadata, ?) AS key",
+			wantKey:    strings.TrimPrefix(hostileKey, "metadata."),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			exec, rec := newRecordingExecutor(t)
+			if err := tt.run(exec); err != nil {
+				t.Fatalf("error = %v", err)
+			}
+			stmts := rec.recorded()
+			assertNoMarkerInSQL(t, stmts)
+			if len(stmts) != 1 || !strings.HasPrefix(stmts[0].query, tt.wantPrefix) {
+				t.Fatalf("statements = %v, want prefix %q", stmts, tt.wantPrefix)
+			}
+			assertTenantScoped(t, stmts[0].query)
+			args := stmts[0].args
+			if len(args) < 2 || args[0].Value != tt.wantKey || args[1].Value != "t" {
+				t.Errorf("args = %v, want metadata key %q then tenant", args, tt.wantKey)
+			}
+		})
+	}
+}
+
 // ---------------------------------------------------------------------------
 // End to end: hostile search expressions through every entry point
 // ---------------------------------------------------------------------------

@@ -58,11 +58,10 @@ type ClickHouseClient struct {
 // If the configured database does not exist yet it is created (CREATE
 // DATABASE IF NOT EXISTS, through a connection to the server's default
 // database), so a fresh server needs no manual setup before migrations run.
+// Only names matching validIdentifier are created automatically; an existing
+// database may have any name, since the name is only sent in the connection
+// handshake and never embedded in SQL.
 func NewClickHouseClient(cfg ClickHouseConfig) (*ClickHouseClient, error) {
-	if cfg.Database != "" && !validIdentifier.MatchString(cfg.Database) {
-		return nil, fmt.Errorf("%w: invalid ClickHouse database name %q", ErrInvalidData, cfg.Database)
-	}
-
 	opts := clickHouseOptions(cfg)
 
 	conn, err := clickhouse.Open(opts)
@@ -82,6 +81,9 @@ func NewClickHouseClient(cfg ClickHouseConfig) (*ClickHouseClient, error) {
 		slog.Info("ClickHouse database does not exist, creating it", "database", cfg.Database)
 		if err := createDatabase(ctx, cfg); err != nil {
 			_ = conn.Close()
+			if errors.Is(err, ErrInvalidData) {
+				return nil, err
+			}
 			return nil, WrapConnectionError("CreateDatabase", err)
 		}
 		if err := conn.Ping(ctx); err != nil {
@@ -157,8 +159,14 @@ func isUnknownDatabase(err error) bool {
 }
 
 // createDatabase creates cfg.Database through a short-lived connection to the
-// server's default database.
+// server's default database. It refuses names that do not match
+// validIdentifier (ErrInvalidData) without connecting.
 func createDatabase(ctx context.Context, cfg ClickHouseConfig) error {
+	if !validIdentifier.MatchString(cfg.Database) {
+		return fmt.Errorf("%w: ClickHouse database %q does not exist and is not created automatically "+
+			"(only names matching %s are); create it manually", ErrInvalidData, cfg.Database, validIdentifier)
+	}
+
 	bootstrap := cfg
 	bootstrap.Database = ""
 	bootstrap.MaxOpenConns = 1

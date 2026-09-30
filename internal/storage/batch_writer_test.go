@@ -628,6 +628,55 @@ func TestBatchWriterRequeuesFailedBatch(t *testing.T) {
 	}
 }
 
+// Review regression: with a negative max_retries the retry loop never ran, so
+// insertBatchWithRetries returned a nil error, and the requeue logic took that
+// as success: every batch was discarded unwritten, with no error and no
+// metric. The insert must always be attempted at least once.
+func TestBatchWriterNegativeMaxRetriesStillInserts(t *testing.T) {
+	var outage atomic.Bool
+	conn := &sinkConn{sendErr: func(int) error {
+		if outage.Load() {
+			return errors.New("connection refused")
+		}
+		return nil
+	}}
+	bw := NewBatchWriter(newMockClient(conn), BatchWriterConfig{
+		BatchSize:     2,
+		FlushInterval: time.Hour,
+		MaxRetries:    -1,
+		RetryDelay:    time.Millisecond,
+	})
+
+	for i := 0; i < 2; i++ {
+		if err := bw.Write(newTestEvent()); err != nil {
+			t.Fatalf("Write() error = %v", err)
+		}
+	}
+	if got := len(conn.writtenIDs()); got != 2 {
+		t.Fatalf("written = %d events, want 2", got)
+	}
+
+	// A failing insert is reported and requeued, not taken for a success.
+	outage.Store(true)
+	for i := 0; i < 2; i++ {
+		err := bw.Write(newTestEvent())
+		if i == 1 && !errors.Is(err, ErrBatchInsertFailed) {
+			t.Fatalf("Write() triggering the failing flush error = %v, want ErrBatchInsertFailed", err)
+		}
+	}
+	if m := bw.Metrics(); m.Written != 2 || m.Pending != 2 || m.Requeued != 2 {
+		t.Errorf("metrics = %+v, want Written 2, Pending 2, Requeued 2", m)
+	}
+
+	outage.Store(false)
+	if err := bw.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if m := bw.Metrics(); m.Written != 4 || m.Failed != 0 || m.Pending != 0 {
+		t.Errorf("metrics after Close = %+v, want Written 4", m)
+	}
+}
+
 // Requeued events go before events written while the failing insert ran.
 func TestBatchWriterRequeuePreservesOrder(t *testing.T) {
 	conn := &sinkConn{sendErr: func(send int) error {

@@ -316,10 +316,12 @@ func eventsOf(pending []pendingEvent) []*schema.Event {
 }
 
 // insertBatchWithRetries attempts to insert a batch with exponential backoff.
-// Must NOT be called with the mutex held.
+// The insert is always attempted at least once, even if MaxRetries is
+// negative: a loop that never ran would report success for a batch that was
+// never written. Must NOT be called with the mutex held.
 func (bw *BatchWriter) insertBatchWithRetries(events []*schema.Event) error {
 	var lastErr error
-	for attempt := 0; attempt <= bw.config.MaxRetries; attempt++ {
+	for attempt := 0; attempt <= max(bw.config.MaxRetries, 0); attempt++ {
 		if attempt > 0 {
 			time.Sleep(bw.config.RetryDelay * time.Duration(1<<(attempt-1)))
 		}

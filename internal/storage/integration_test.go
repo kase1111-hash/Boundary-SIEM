@@ -179,6 +179,45 @@ func TestIntegrationRepairsBogusMigrationHistory(t *testing.T) {
 	}
 }
 
+// Review regression: an existing database whose name is not a plain
+// identifier (e.g. "siem-prod") must still be usable; only automatic creation
+// is limited to plain identifiers, and a missing database with such a name is
+// reported as ErrInvalidData instead of being created.
+func TestIntegrationExistingDatabaseWithNonIdentifierName(t *testing.T) {
+	cfg := integrationConfig(t)
+	cfg.Database = strings.ReplaceAll(cfg.Database, "siem_it_", "siem-it-")
+	ctx := context.Background()
+
+	admin := cfg
+	admin.Database = "default"
+	adminClient, err := NewClickHouseClient(admin)
+	if err != nil {
+		t.Fatalf("connect to default database: %v", err)
+	}
+	defer adminClient.Close()
+	dropDB := func() { _ = adminClient.Exec(ctx, "DROP DATABASE IF EXISTS `"+cfg.Database+"`") }
+	defer dropDB()
+
+	if _, err := NewClickHouseClient(cfg); !errors.Is(err, ErrInvalidData) {
+		t.Fatalf("NewClickHouseClient(missing %q) error = %v, want ErrInvalidData", cfg.Database, err)
+	}
+
+	if err := adminClient.Exec(ctx, "CREATE DATABASE `"+cfg.Database+"`"); err != nil {
+		t.Fatalf("create %s: %v", cfg.Database, err)
+	}
+	client, err := NewClickHouseClient(cfg)
+	if err != nil {
+		t.Fatalf("NewClickHouseClient(existing %q) error = %v", cfg.Database, err)
+	}
+	defer client.Close()
+	if err := NewMigrator(client).Run(ctx); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if got := integrationTables(t, client); strings.Join(got, ",") != strings.Join(integrationSchema, ",") {
+		t.Errorf("tables = %v, want %v", got, integrationSchema)
+	}
+}
+
 func integrationEvent(tenant string, i int) *schema.Event {
 	now := time.Now().UTC()
 	return &schema.Event{

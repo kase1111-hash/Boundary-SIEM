@@ -176,6 +176,12 @@ func TestIntegrationSearchAPI(t *testing.T) {
 		{"sum aggregation", "/v1/aggregations", `{"field":"severity","type":"sum"}`, `"value":21`},
 		{"histogram aggregation", "/v1/aggregations", `{"field":"timestamp","type":"histogram","interval":"1m"}`, `"total":4`},
 		{"field values", "/v1/fields/outcome/values", "", `"total":4`},
+		// Fields stored in the metadata JSON group by the JSON value, not by
+		// the timestamp fallback for unknown columns (review regression).
+		{"metadata alias field values", "/v1/fields/vendor/values", "", `"buckets":[{"key":"Acme","count":4}]`},
+		{"metadata terms aggregation", "/v1/aggregations", `{"field":"source.vendor","type":"terms"}`, `"buckets":[{"key":"Acme","count":4}]`},
+		{"metadata count aggregation", "/v1/aggregations", `{"field":"metadata.device_vendor","type":"count","query":"severity>5"}`, `"buckets":[{"key":"Acme","count":2}]`},
+		{"metadata sum aggregation", "/v1/aggregations", `{"field":"metadata.gas","type":"sum"}`, `"value":600`},
 		{"stats", "/v1/stats", "", `"total_events":4`},
 		{"explain", "/v1/search/explain", `{"query":"action:auth.login"}`, `"plan":[`},
 	} {
