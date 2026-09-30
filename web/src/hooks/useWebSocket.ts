@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, useCallback } from "react";
+import { getApiKey, handleUnauthorized, subscribeAuth } from "../services/auth";
+import { EventSocket, type WSStatus } from "../services/wsClient";
 
-export type WSStatus = "connecting" | "connected" | "disconnected";
+export type { WSStatus } from "../services/wsClient";
 
 interface UseWebSocketOptions {
   url?: string;
@@ -11,8 +13,19 @@ interface UseWebSocketOptions {
   enabled?: boolean;
 }
 
+function defaultUrl(): string {
+  const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return `${proto}//${window.location.host}/ws/events`;
+}
+
+/**
+ * Connects to the live event stream, authenticating with the stored API key
+ * (see services/wsClient.ts for the protocol). Reconnects when the key
+ * changes; a rejected key triggers the API key prompt.
+ */
 export function useWebSocket(options: UseWebSocketOptions = {}) {
   const {
+    url,
     onMessage,
     reconnectInterval = 2000,
     maxReconnectInterval = 30000,
@@ -22,124 +35,48 @@ export function useWebSocket(options: UseWebSocketOptions = {}) {
 
   const [status, setStatus] = useState<WSStatus>("disconnected");
   const [lastMessage, setLastMessage] = useState<unknown>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const retriesRef = useRef(0);
-  const timerRef = useRef<ReturnType<typeof setTimeout>>();
-  const heartbeatRef = useRef<ReturnType<typeof setInterval>>();
-  const queueRef = useRef<string[]>([]);
+  const socketRef = useRef<EventSocket | null>(null);
 
-  const getUrl = useCallback(() => {
-    if (options.url) return options.url;
-    const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
-    return `${proto}//${window.location.host}/ws/events`;
-  }, [options.url]);
-
-  const flushQueue = useCallback((ws: WebSocket) => {
-    while (queueRef.current.length > 0 && ws.readyState === WebSocket.OPEN) {
-      const msg = queueRef.current.shift()!;
-      ws.send(msg);
-    }
-  }, []);
-
-  const startHeartbeat = useCallback(
-    (ws: WebSocket) => {
-      if (heartbeatRef.current) clearInterval(heartbeatRef.current);
-      heartbeatRef.current = setInterval(() => {
-        if (ws.readyState === WebSocket.OPEN) {
-          ws.send(JSON.stringify({ type: "ping" }));
-        }
-      }, heartbeatInterval);
-    },
-    [heartbeatInterval],
-  );
-
-  const stopHeartbeat = useCallback(() => {
-    if (heartbeatRef.current) {
-      clearInterval(heartbeatRef.current);
-      heartbeatRef.current = undefined;
-    }
-  }, []);
-
-  const connect = useCallback(() => {
-    if (!enabled) return;
-
-    try {
-      const ws = new WebSocket(getUrl());
-      wsRef.current = ws;
-      setStatus("connecting");
-
-      ws.onopen = () => {
-        setStatus("connected");
-        retriesRef.current = 0;
-        flushQueue(ws);
-        startHeartbeat(ws);
-      };
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data?.type === "pong") return;
-          setLastMessage(data);
-          onMessage?.(data);
-        } catch {
-          // Non-JSON message
-          setLastMessage(event.data);
-        }
-      };
-
-      ws.onclose = () => {
-        setStatus("disconnected");
-        wsRef.current = null;
-        stopHeartbeat();
-
-        // Exponential backoff reconnect
-        const delay = Math.min(
-          reconnectInterval * Math.pow(2, retriesRef.current),
-          maxReconnectInterval,
-        );
-        retriesRef.current++;
-        timerRef.current = setTimeout(connect, delay);
-      };
-
-      ws.onerror = () => {
-        ws.close();
-      };
-    } catch {
-      setStatus("disconnected");
-    }
-  }, [
-    enabled,
-    getUrl,
-    onMessage,
-    reconnectInterval,
-    maxReconnectInterval,
-    flushQueue,
-    startHeartbeat,
-    stopHeartbeat,
-  ]);
+  // Keep the latest callback without reconnecting when it changes identity
+  const onMessageRef = useRef(onMessage);
+  onMessageRef.current = onMessage;
 
   useEffect(() => {
-    connect();
+    if (!enabled) return;
+
+    let keyUsed: string | null = null;
+    const socket = new EventSocket({
+      url: url ?? defaultUrl(),
+      getApiKey: () => {
+        keyUsed = getApiKey();
+        return keyUsed;
+      },
+      onStatus: setStatus,
+      onMessage: (data) => {
+        setLastMessage(data);
+        onMessageRef.current?.(data);
+      },
+      onUnauthorized: (reason) => handleUnauthorized(keyUsed, reason),
+      reconnectInterval,
+      maxReconnectInterval,
+      heartbeatInterval,
+    });
+    socketRef.current = socket;
+    socket.start();
+
+    const unsubscribe = subscribeAuth((event) => {
+      if (event.type === "changed") socket.reconnectNow();
+    });
+
     return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-      stopHeartbeat();
-      if (wsRef.current) {
-        wsRef.current.onclose = null; // prevent reconnect on cleanup
-        wsRef.current.close();
-      }
+      unsubscribe();
+      socket.stop();
+      socketRef.current = null;
     };
-  }, [connect, stopHeartbeat]);
+  }, [enabled, url, reconnectInterval, maxReconnectInterval, heartbeatInterval]);
 
   const send = useCallback((data: unknown) => {
-    const msg = JSON.stringify(data);
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
-      wsRef.current.send(msg);
-    } else {
-      // Queue messages while disconnected (cap at 100 to avoid unbounded growth)
-      if (queueRef.current.length < 100) {
-        queueRef.current.push(msg);
-      }
-    }
+    socketRef.current?.send(data);
   }, []);
 
   return { status, lastMessage, send };

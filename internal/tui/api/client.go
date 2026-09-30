@@ -4,17 +4,95 @@ package api
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 )
 
+// DefaultAuthHeader is the header siem-ingest reads the API key from unless
+// auth.api_key_header in config.yaml says otherwise.
+const DefaultAuthHeader = "X-API-Key"
+
+// Authentication states reported in Stats.AuthStatus.
+const (
+	AuthUnknown     = "unknown"
+	AuthAccepted    = "accepted"
+	AuthNotRequired = "not required"
+	AuthRejected    = "rejected"
+)
+
+// maxErrorBody bounds how much of an error response body is read.
+const maxErrorBody = 4096
+
 // Client handles API communication with the SIEM backend
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
+	baseURL      string
+	httpClient   *http.Client
+	apiKey       string
+	apiKeyHeader string
+}
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithAPIKey sets the API key sent with every request.
+func WithAPIKey(key string) Option {
+	return func(c *Client) {
+		c.apiKey = key
+	}
+}
+
+// WithAPIKeyHeader overrides the header the API key is sent in. An empty
+// name keeps DefaultAuthHeader.
+func WithAPIKeyHeader(header string) Option {
+	return func(c *Client) {
+		if header != "" {
+			c.apiKeyHeader = header
+		}
+	}
+}
+
+// HTTPError is returned when the backend answers with a non-2xx status.
+type HTTPError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *HTTPError) Error() string {
+	if e.Message == "" {
+		return fmt.Sprintf("HTTP %d", e.StatusCode)
+	}
+	return fmt.Sprintf("HTTP %d: %s", e.StatusCode, e.Message)
+}
+
+// ComponentStatus is the state of one server module as reported in the
+// optional "components" object of GET /health. The server may send either a
+// bare status string ("up") or an object ({"status":"up","address":":5514"}).
+type ComponentStatus struct {
+	Status  string `json:"status"`
+	Enabled *bool  `json:"enabled,omitempty"`
+	Address string `json:"address,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+// UnmarshalJSON accepts both the string and the object form.
+func (cs *ComponentStatus) UnmarshalJSON(data []byte) error {
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		*cs = ComponentStatus{Status: s}
+		return nil
+	}
+	type plain ComponentStatus
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*cs = ComponentStatus(p)
+	return nil
 }
 
 // Stats represents system statistics
@@ -34,6 +112,16 @@ type Stats struct {
 	StatusReason    string  `json:"status_reason"`
 	Activity        string  `json:"activity"`
 	ActivityDesc    string  `json:"activity_description"`
+
+	// Connected is true when GET /health answered.
+	Connected bool `json:"connected"`
+	// AuthStatus is AuthUnknown, AuthAccepted, AuthNotRequired or
+	// AuthRejected, derived from an authenticated request.
+	AuthStatus string `json:"auth_status"`
+	// AuthDetail carries the server's reason when the check failed.
+	AuthDetail string `json:"auth_detail,omitempty"`
+	// Components holds module status reported by /health, if any.
+	Components map[string]ComponentStatus `json:"components,omitempty"`
 }
 
 // DreamingResponse represents the system dreaming status
@@ -98,29 +186,87 @@ type SearchResult struct {
 
 // HealthResponse represents health check response
 type HealthResponse struct {
-	Status        string `json:"status"`
-	QueueDepth    int    `json:"queue_depth"`
-	QueueCapacity int    `json:"queue_capacity"`
-	UptimeSeconds int    `json:"uptime_seconds"`
+	Status        string                     `json:"status"`
+	QueueDepth    int                        `json:"queue_depth"`
+	QueueCapacity int                        `json:"queue_capacity"`
+	UptimeSeconds int                        `json:"uptime_seconds"`
+	Components    map[string]ComponentStatus `json:"components,omitempty"`
 }
 
-// NewClient creates a new API client
-func NewClient(baseURL string) *Client {
-	return &Client{
-		baseURL: baseURL,
+// NewClient creates a new API client. Options such as WithAPIKey configure
+// authentication; without them no credentials are sent.
+func NewClient(baseURL string, opts ...Option) *Client {
+	c := &Client{
+		baseURL:      strings.TrimRight(baseURL, "/"),
+		apiKeyHeader: DefaultAuthHeader,
 		httpClient: &http.Client{
 			Timeout: 5 * time.Second,
 		},
 	}
+	for _, opt := range opts {
+		opt(c)
+	}
+	return c
+}
+
+// BaseURL returns the server URL the client talks to.
+func (c *Client) BaseURL() string {
+	if c == nil {
+		return ""
+	}
+	return c.baseURL
+}
+
+// HasAPIKey reports whether an API key is configured.
+func (c *Client) HasAPIKey() bool {
+	return c.apiKey != ""
+}
+
+// get issues a GET request for path, attaching the API key if configured.
+func (c *Client) get(path string) (*http.Response, error) {
+	req, err := http.NewRequest(http.MethodGet, c.baseURL+path, nil)
+	if err != nil {
+		return nil, err
+	}
+	if c.apiKey != "" {
+		req.Header.Set(c.apiKeyHeader, c.apiKey)
+	}
+	return c.httpClient.Do(req)
+}
+
+// checkStatus converts a non-2xx response into an *HTTPError carrying the
+// server's error message.
+func checkStatus(resp *http.Response) error {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return nil
+	}
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBody))
+	return &HTTPError{StatusCode: resp.StatusCode, Message: errorMessage(body)}
+}
+
+// errorMessage extracts the "error" field of a JSON error body, falling back
+// to the trimmed body text.
+func errorMessage(body []byte) string {
+	var parsed struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Error != "" {
+		return parsed.Error
+	}
+	return strings.TrimSpace(string(body))
 }
 
 // GetHealth fetches health status
 func (c *Client) GetHealth() (*HealthResponse, error) {
-	resp, err := c.httpClient.Get(c.baseURL + "/health")
+	resp, err := c.get("/health")
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if err := checkStatus(resp); err != nil {
+		return nil, fmt.Errorf("health check failed: %w", err)
+	}
 
 	var health HealthResponse
 	if err := json.NewDecoder(resp.Body).Decode(&health); err != nil {
@@ -152,13 +298,18 @@ func (c *Client) parsePrometheusMetrics(body string) map[string]float64 {
 	return metrics
 }
 
-// GetDreaming fetches the system dreaming status
+// GetDreaming fetches the system dreaming status. A non-2xx answer (for
+// example 401 when the API key is missing) is returned as an *HTTPError.
 func (c *Client) GetDreaming() (*DreamingResponse, error) {
-	resp, err := c.httpClient.Get(c.baseURL + "/api/system/dreaming")
+	resp, err := c.get("/api/system/dreaming")
 	if err != nil {
 		return nil, fmt.Errorf("connection failed: %w", err)
 	}
 	defer resp.Body.Close()
+
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
 
 	var dreaming DreamingResponse
 	if err := json.NewDecoder(resp.Body).Decode(&dreaming); err != nil {
@@ -179,6 +330,7 @@ func (c *Client) GetStats() (*Stats, error) {
 		StatusReason: "Unable to connect to backend",
 		Activity:     "unknown",
 		ActivityDesc: "Cannot connect to backend service",
+		AuthStatus:   AuthUnknown,
 	}
 
 	if healthErr != nil {
@@ -187,6 +339,8 @@ func (c *Client) GetStats() (*Stats, error) {
 	}
 
 	// Health endpoint returns status as "healthy" or "degraded"
+	stats.Connected = true
+	stats.Components = health.Components
 	stats.HealthStatus = health.Status
 	stats.Healthy = health.Status == "healthy"
 	stats.QueueSize = health.QueueDepth
@@ -205,29 +359,34 @@ func (c *Client) GetStats() (*Stats, error) {
 		stats.StatusReason = "All systems operational"
 	}
 
-	// Try to get dreaming status (activity info)
-	if dreaming, err := c.GetDreaming(); err == nil {
+	// Try to get dreaming status (activity info). /health and /metrics are
+	// public, so this authenticated endpoint also tells whether the API key
+	// is accepted.
+	dreaming, err := c.GetDreaming()
+	if err == nil {
+		stats.AuthStatus = AuthAccepted
+		if c.apiKey == "" {
+			stats.AuthStatus = AuthNotRequired
+		}
 		stats.Activity = dreaming.Activity
 		stats.ActivityDesc = dreaming.Description
 		// Use dreaming metrics if available (more comprehensive)
 		stats.EventsTotal = dreaming.Metrics.EventsTotal
 		stats.EventsPerSecond = dreaming.Metrics.EventsPerSec
 		stats.QueueUsage = dreaming.Metrics.QueueUsage
+	} else {
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) &&
+			(httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden) {
+			stats.AuthStatus = AuthRejected
+			stats.AuthDetail = httpErr.Message
+		} else {
+			stats.AuthDetail = err.Error()
+		}
 	}
 
 	// Try to get additional metrics from Prometheus endpoint
-	resp, err := c.httpClient.Get(c.baseURL + "/metrics")
-	if err == nil {
-		defer resp.Body.Close()
-		buf := new(strings.Builder)
-		buf.Grow(4096)
-		scanner := bufio.NewScanner(resp.Body)
-		for scanner.Scan() {
-			buf.WriteString(scanner.Text())
-			buf.WriteString("\n")
-		}
-		metrics := c.parsePrometheusMetrics(buf.String())
-
+	if metrics, err := c.getMetrics(); err == nil {
 		// Queue processing metrics
 		if pushed, ok := metrics["siem_queue_pushed_total"]; ok {
 			stats.QueuePushed = int64(pushed)
@@ -255,12 +414,55 @@ func (c *Client) GetStats() (*Stats, error) {
 	return stats, nil
 }
 
+// getMetrics fetches and parses GET /metrics.
+func (c *Client) getMetrics() (map[string]float64, error) {
+	resp, err := c.get("/metrics")
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if err := checkStatus(resp); err != nil {
+		return nil, err
+	}
+
+	buf := new(strings.Builder)
+	buf.Grow(4096)
+	scanner := bufio.NewScanner(resp.Body)
+	for scanner.Scan() {
+		buf.WriteString(scanner.Text())
+		buf.WriteString("\n")
+	}
+	return c.parsePrometheusMetrics(buf.String()), nil
+}
+
 // EventsResponse wraps the events list with metadata
 type EventsResponse struct {
 	Events     []Event `json:"events"`
 	TotalCount int64   `json:"total_count"`
 	HasMore    bool    `json:"has_more"`
 	Error      string  `json:"error,omitempty"`
+	// StatusCode is the HTTP status of a failed search (0 when no response
+	// was received).
+	StatusCode int `json:"status_code,omitempty"`
+	// Hint suggests how to resolve Error.
+	Hint string `json:"hint,omitempty"`
+}
+
+// searchErrorHint explains a failed search request to the operator.
+func searchErrorHint(status int) string {
+	switch {
+	case status == 0:
+		return "Check that siem-ingest is running and reachable at the -server URL."
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return "Set a valid API key with -api-key or SIEM_API_KEY (header name: -api-key-header)."
+	case status == http.StatusNotFound:
+		return "The search API is not registered: enable storage in config.yaml to persist and query events."
+	case status >= 500:
+		return "The server failed to run the search; check the siem-ingest logs."
+	default:
+		return "The server rejected the search request."
+	}
 }
 
 // GetEvents fetches events from the search API
@@ -269,18 +471,25 @@ func (c *Client) GetEvents(limit int) (*EventsResponse, error) {
 		limit = 50
 	}
 
-	url := fmt.Sprintf("%s/v1/search?limit=%d&order=desc", c.baseURL, limit)
-	resp, err := c.httpClient.Get(url)
+	resp, err := c.get(fmt.Sprintf("/v1/search?limit=%d&order=desc", limit))
 	if err != nil {
 		return &EventsResponse{
 			Error: fmt.Sprintf("connection failed: %v", err),
+			Hint:  searchErrorHint(0),
 		}, nil
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
+	if err := checkStatus(resp); err != nil {
+		status := 0
+		var httpErr *HTTPError
+		if errors.As(err, &httpErr) {
+			status = httpErr.StatusCode
+		}
 		return &EventsResponse{
-			Error: fmt.Sprintf("search API returned status %d", resp.StatusCode),
+			Error:      fmt.Sprintf("search API returned %v", err),
+			StatusCode: status,
+			Hint:       searchErrorHint(status),
 		}, nil
 	}
 

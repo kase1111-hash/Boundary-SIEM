@@ -115,7 +115,9 @@ func (d *DashboardScene) View() string {
 
 	// Status indicator with explanation
 	var statusText string
-	if d.stats.Healthy {
+	if !d.stats.Connected {
+		statusText = styles.StatusError.Render("● UNREACHABLE")
+	} else if d.stats.Healthy {
 		statusText = styles.StatusOK.Render("● HEALTHY")
 	} else if d.stats.HealthStatus == "degraded" {
 		statusText = styles.StatusWarning.Render("● DEGRADED")
@@ -159,11 +161,11 @@ func (d *DashboardScene) View() string {
 	b.WriteString(cardRow2)
 	b.WriteString("\n\n")
 
-	// Service status section
-	b.WriteString(styles.Subtitle.Render("  Active Services"))
+	// Service status section: only what the server reports, never guesses
+	b.WriteString(styles.Subtitle.Render("  Backend Services"))
 	b.WriteString("\n")
-	b.WriteString(d.renderServiceStatus())
-	b.WriteString("\n")
+	b.WriteString(renderServices(d.client, d.stats))
+	b.WriteString("\n\n")
 
 	// Last update
 	if !d.lastUpdate.IsZero() {
@@ -187,44 +189,6 @@ func (d *DashboardScene) renderMetricCard(label, value string) string {
 	)
 
 	return card.Render(content)
-}
-
-func (d *DashboardScene) renderServiceStatus() string {
-	// Services with their actual status based on typical secure defaults
-	services := []struct {
-		name    string
-		enabled bool
-		port    string
-	}{
-		{"HTTP API", true, "8080"},
-		{"CEF TCP", true, "5515"},
-		{"CEF UDP", false, "5514"},  // Disabled by default (insecure)
-		{"CEF DTLS", false, "5516"}, // Disabled until certs configured
-		{"Queue Consumer", true, "-"},
-		{"Storage", false, "-"}, // Placeholder mode
-	}
-
-	var rows []string
-	for _, svc := range services {
-		var statusIcon, statusText string
-		if svc.enabled {
-			statusIcon = styles.StatusOK.Render("●")
-			statusText = ""
-		} else {
-			statusIcon = styles.Muted.Render("○")
-			statusText = styles.Muted.Render(" (disabled)")
-		}
-
-		portText := svc.port
-		if svc.port == "-" {
-			portText = "-"
-		}
-
-		row := fmt.Sprintf("  %s %-16s Port: %-6s%s", statusIcon, svc.name, portText, statusText)
-		rows = append(rows, row)
-	}
-
-	return strings.Join(rows, "\n")
 }
 
 func formatNumber(n int64) string {

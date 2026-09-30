@@ -8,7 +8,7 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from "recharts";
-import { searchEvents, aggregate } from "../services/api";
+import { searchEvents, aggregate, describeError } from "../services/api";
 import type { SearchResult } from "../types/api";
 
 // --- Saved searches (localStorage) ---
@@ -136,7 +136,7 @@ export const EventsPage: React.FC = () => {
     [queryStr],
   );
 
-  const { data, isLoading, isFetching, isError, refetch } = useQuery({
+  const { data, isLoading, isFetching, isError, error, refetch } = useQuery({
     queryKey: ["search", submittedQuery, page],
     queryFn: () =>
       searchEvents({
@@ -339,7 +339,9 @@ export const EventsPage: React.FC = () => {
       {/* Results table */}
       {isError ? (
         <div className="bg-gray-800 rounded-lg p-8 text-center">
-          <p className="text-red-400 mb-2">Search failed</p>
+          <p className="text-red-400 mb-2">
+            Search failed: {describeError(error)}
+          </p>
           <button
             onClick={() => refetch()}
             className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-500"

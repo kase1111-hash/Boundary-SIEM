@@ -107,44 +107,28 @@ func (s *SystemScene) View() string {
 	// Connection Status
 	b.WriteString(styles.Subtitle.Render("  Backend Connection"))
 	b.WriteString("\n")
-	if s.stats.Healthy {
-		fmt.Fprintf(&b, "  %s Connected to backend\n", styles.StatusOK.Render("●"))
+	if s.stats.Connected {
+		healthStyle := styles.StatusOK
+		if !s.stats.Healthy {
+			healthStyle = styles.StatusWarning
+		}
+		fmt.Fprintf(&b, "  %s Connected to %s\n", healthStyle.Render("●"), s.client.BaseURL())
 		fmt.Fprintf(&b, "  %s Status: %s\n", styles.Muted.Render("├"), s.stats.HealthStatus)
+		if s.stats.StatusReason != "" {
+			fmt.Fprintf(&b, "  %s Reason: %s\n", styles.Muted.Render("├"), s.stats.StatusReason)
+		}
 		fmt.Fprintf(&b, "  %s Uptime: %s\n", styles.Muted.Render("└"), s.stats.Uptime)
 	} else {
-		fmt.Fprintf(&b, "  %s Not connected\n", styles.StatusError.Render("●"))
+		fmt.Fprintf(&b, "  %s Not connected to %s\n", styles.StatusError.Render("●"), s.client.BaseURL())
 		fmt.Fprintf(&b, "  %s Reason: %s\n", styles.Muted.Render("└"), s.stats.StatusReason)
 	}
 	b.WriteString("\n")
 
-	// Server Endpoints
-	b.WriteString(styles.Subtitle.Render("  Server Endpoints"))
+	// Server modules, as reported by the server ("unknown" otherwise)
+	b.WriteString(styles.Subtitle.Render("  Server Modules"))
 	b.WriteString("\n")
-	endpoints := []struct {
-		name    string
-		port    string
-		enabled bool
-		note    string
-	}{
-		{"HTTP API", "8080", true, "REST API & Health checks"},
-		{"CEF TCP", "5515", true, "Secure CEF ingestion"},
-		{"CEF UDP", "5514", false, "Disabled (insecure)"},
-		{"CEF DTLS", "5516", false, "Encrypted UDP (configure certs)"},
-	}
-	for _, ep := range endpoints {
-		var status string
-		if ep.enabled {
-			status = styles.StatusOK.Render("●")
-		} else {
-			status = styles.Muted.Render("○")
-		}
-		note := ""
-		if ep.note != "" {
-			note = styles.Muted.Render(" - " + ep.note)
-		}
-		fmt.Fprintf(&b, "  %s %-12s Port %-6s%s\n", status, ep.name, ep.port, note)
-	}
-	b.WriteString("\n")
+	b.WriteString(renderServices(s.client, s.stats))
+	b.WriteString("\n\n")
 
 	// Queue Configuration
 	b.WriteString(styles.Subtitle.Render("  Queue Configuration"))
@@ -184,10 +168,11 @@ func (s *SystemScene) View() string {
 		{"IntentLog", "Prose-based version control"},
 		{"RRA-Module", "Revenant Repo Agent"},
 	}
-	b.WriteString(styles.Muted.Render("  Configure in config.yaml to enable:\n"))
+	b.WriteString(styles.Muted.Render("  Configure in config.yaml to enable:"))
+	b.WriteString("\n")
 	for _, intg := range integrations {
 		fmt.Fprintf(&b, "  %s %-20s %s\n",
-			styles.Muted.Render("○"),
+			styles.Muted.Render("-"),
 			intg.name,
 			styles.Muted.Render(intg.description))
 	}

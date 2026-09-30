@@ -8,6 +8,7 @@ import {
   resolveAlert,
   addAlertNote,
   assignAlert,
+  describeError,
 } from "../services/api";
 import type { AlertStatus, Severity } from "../types/api";
 import { SeverityBadge } from "../components/SeverityBadge";
@@ -25,7 +26,7 @@ export const AlertListPage: React.FC = () => {
   const { addToast } = useToast();
   const limit = 25;
 
-  const { data, isLoading, isError, refetch } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["alerts", statusFilter, severityFilter, page],
     queryFn: () =>
       listAlerts({
@@ -146,7 +147,9 @@ export const AlertListPage: React.FC = () => {
       <div className="bg-gray-800 rounded-lg overflow-hidden">
         {isError ? (
           <div className="p-8 text-center">
-            <p className="text-red-400 mb-2">Failed to load alerts</p>
+            <p className="text-red-400 mb-2">
+              Failed to load alerts: {describeError(error)}
+            </p>
             <button
               onClick={() => refetch()}
               className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-500"
@@ -280,6 +283,7 @@ export const AlertDetailPage: React.FC = () => {
     data: alert,
     isLoading,
     isError,
+    error,
     refetch,
   } = useQuery({
     queryKey: ["alert", id],
@@ -335,7 +339,9 @@ export const AlertDetailPage: React.FC = () => {
   if (isError) {
     return (
       <div className="text-center py-12">
-        <p className="text-red-400 mb-2">Failed to load alert</p>
+        <p className="text-red-400 mb-2">
+          Failed to load alert: {describeError(error)}
+        </p>
         <button
           onClick={() => refetch()}
           className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-500"

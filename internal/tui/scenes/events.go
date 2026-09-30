@@ -26,6 +26,7 @@ type EventsScene struct {
 	loading    bool
 	maxRows    int
 	lastUpdate time.Time
+	hint       string
 }
 
 // eventsMsg carries updated events
@@ -33,6 +34,7 @@ type eventsMsg struct {
 	events     []api.Event
 	totalCount int64
 	err        string
+	hint       string
 }
 
 // NewEventsScene creates a new events scene
@@ -57,7 +59,7 @@ func (e *EventsScene) fetchEvents() tea.Cmd {
 			return eventsMsg{err: err.Error()}
 		}
 		if resp.Error != "" {
-			return eventsMsg{err: resp.Error}
+			return eventsMsg{err: resp.Error, hint: resp.Hint}
 		}
 		return eventsMsg{
 			events:     resp.Events,
@@ -116,6 +118,7 @@ func (e *EventsScene) Update(msg tea.Msg) (*EventsScene, tea.Cmd) {
 		e.events = msg.events
 		e.totalCount = msg.totalCount
 		e.err = msg.err
+		e.hint = msg.hint
 		e.lastUpdate = time.Now()
 		// Reset cursor if out of bounds
 		if e.cursor >= len(e.events) {
@@ -152,8 +155,10 @@ func (e *EventsScene) View() string {
 	if e.err != "" {
 		b.WriteString(styles.StatusError.Render(fmt.Sprintf("  Error: %s", e.err)))
 		b.WriteString("\n\n")
-		b.WriteString(styles.Muted.Render("  Make sure storage is enabled in config.yaml to persist and query events."))
-		b.WriteString("\n")
+		if e.hint != "" {
+			b.WriteString(styles.Muted.Render("  " + e.hint))
+			b.WriteString("\n")
+		}
 		b.WriteString(styles.Muted.Render("  Press [r] to retry."))
 		return b.String()
 	}

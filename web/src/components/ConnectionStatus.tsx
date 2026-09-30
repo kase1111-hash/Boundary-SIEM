@@ -5,6 +5,7 @@ const statusConfig: Record<WSStatus, { color: string; label: string }> = {
   connected: { color: "bg-green-500", label: "Live" },
   connecting: { color: "bg-yellow-500", label: "Connecting" },
   disconnected: { color: "bg-red-500", label: "Offline" },
+  unauthorized: { color: "bg-orange-500", label: "Auth required" },
 };
 
 export const ConnectionStatus: React.FC<{ status: WSStatus }> = ({

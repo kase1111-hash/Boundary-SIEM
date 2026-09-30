@@ -42,9 +42,10 @@ type Model struct {
 	quitting bool
 }
 
-// New creates a new TUI model
-func New(baseURL string) *Model {
-	client := api.NewClient(baseURL)
+// New creates a new TUI model. opts configure the API client, e.g.
+// api.WithAPIKey for servers with auth.enabled.
+func New(baseURL string, opts ...api.Option) *Model {
+	client := api.NewClient(baseURL, opts...)
 
 	return &Model{
 		client:    client,
@@ -248,9 +249,9 @@ func (m *Model) renderFooter() string {
 	return styles.Help.Render(help)
 }
 
-// Run starts the TUI application
-func Run(baseURL string) error {
-	m := New(baseURL)
+// Run starts the TUI application. opts configure the API client.
+func Run(baseURL string, opts ...api.Option) error {
+	m := New(baseURL, opts...)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err

@@ -12,7 +12,12 @@ import {
   Pie,
   Cell,
 } from "recharts";
-import { getEventStats, getAlertStats, listAlerts } from "../services/api";
+import {
+  getEventStats,
+  getAlertStats,
+  listAlerts,
+  describeError,
+} from "../services/api";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { StatusBadge } from "../components/StatusBadge";
 
@@ -40,6 +45,7 @@ export const DashboardPage: React.FC = () => {
   const {
     data: stats,
     isError: statsError,
+    error: statsErrorDetail,
     refetch: refetchStats,
   } = useQuery({
     queryKey: ["event-stats"],
@@ -87,7 +93,7 @@ export const DashboardPage: React.FC = () => {
       {statsError && (
         <div className="bg-gray-800 border border-red-800 rounded-lg px-4 py-3 flex items-center justify-between">
           <span className="text-red-400 text-sm">
-            Failed to load dashboard data
+            Failed to load dashboard data: {describeError(statsErrorDetail)}
           </span>
           <button
             onClick={() => refetchStats()}

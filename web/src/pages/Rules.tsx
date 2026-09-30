@@ -6,8 +6,9 @@ import {
   createRule,
   deleteRule,
   testRule,
+  describeError,
 } from "../services/api";
-import type { Rule, RuleType } from "../types/api";
+import type { Rule, RuleListResponse, RuleType } from "../types/api";
 
 // --- Severity number to label ---
 function severityLabel(sev: number): string {
@@ -22,6 +23,42 @@ function severityColor(sev: number): string {
   if (sev >= 5) return "text-orange-400";
   if (sev >= 3) return "text-yellow-400";
   return "text-blue-400";
+}
+
+// Rules come from the API and may lack fields the type marks as required
+// (older servers, custom rules); every accessor below tolerates that.
+
+function ruleName(rule: Rule): string {
+  return rule.name || rule.id || "(unnamed rule)";
+}
+
+/** Applies the search box and category filter. */
+export function filterRules(
+  rules: Rule[],
+  { search, category }: { search: string; category: string },
+): Rule[] {
+  const q = search.toLowerCase();
+  return rules.filter((rule) => {
+    if (category && rule.category !== category) return false;
+    if (!q) return true;
+    return [rule.name, rule.id, rule.description].some((field) =>
+      String(field ?? "").toLowerCase().includes(q),
+    );
+  });
+}
+
+/** Counts for the summary line, over all returned rules. */
+export function summarizeRules(data: RuleListResponse | undefined): {
+  total: number;
+  enabled: number;
+  custom: number;
+} {
+  const rules = data?.rules ?? [];
+  return {
+    total: data?.total ?? rules.length,
+    enabled: rules.filter((r) => r.enabled === true).length,
+    custom: rules.filter((r) => r.source === "custom").length,
+  };
 }
 
 const ruleTypeLabels: Record<RuleType, string> = {
@@ -44,7 +81,7 @@ export const RulesPage: React.FC = () => {
   const [testResults, setTestResults] = useState<Record<string, unknown> | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["rules", typeFilter],
     queryFn: () =>
       listRules({
@@ -75,24 +112,23 @@ export const RulesPage: React.FC = () => {
     },
   });
 
+  const rules = data?.rules ?? [];
+
   // Get unique categories for filter
   const categories = Array.from(
-    new Set(data?.rules?.map((r) => r.category).filter(Boolean) || []),
+    new Set(
+      rules
+        .map((r) => r.category)
+        .filter((c): c is string => typeof c === "string" && c !== ""),
+    ),
   );
 
   // Filter rules
-  const filtered = (data?.rules || []).filter((rule) => {
-    if (categoryFilter && rule.category !== categoryFilter) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        rule.name.toLowerCase().includes(q) ||
-        rule.id.toLowerCase().includes(q) ||
-        rule.description?.toLowerCase().includes(q)
-      );
-    }
-    return true;
+  const filtered = filterRules(rules, {
+    search,
+    category: categoryFilter,
   });
+  const summary = summarizeRules(data);
 
   return (
     <div className="space-y-4">
@@ -146,18 +182,26 @@ export const RulesPage: React.FC = () => {
 
       {/* Rules summary */}
       <div className="flex gap-4 text-sm text-gray-400">
-        <span>Total: {data?.total ?? 0}</span>
-        <span>
-          Enabled: {filtered.filter((r) => r.enabled).length}
-        </span>
-        <span>
-          Custom: {filtered.filter((r) => r.source === "custom").length}
-        </span>
+        <span>Total: {summary.total}</span>
+        <span>Enabled: {summary.enabled}</span>
+        <span>Custom: {summary.custom}</span>
       </div>
 
       {/* Rules table */}
       <div className="bg-gray-800 rounded-lg overflow-hidden">
-        {isLoading ? (
+        {isError ? (
+          <div className="p-8 text-center">
+            <p className="text-red-400 mb-2">
+              Failed to load rules: {describeError(error)}
+            </p>
+            <button
+              onClick={() => refetch()}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-500"
+            >
+              Retry
+            </button>
+          </div>
+        ) : isLoading ? (
           <div className="p-8 text-center text-gray-500">Loading rules...</div>
         ) : (
           <table className="w-full text-sm">
@@ -173,9 +217,9 @@ export const RulesPage: React.FC = () => {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((rule) => (
+              {filtered.map((rule, idx) => (
                 <tr
-                  key={rule.id}
+                  key={rule.id || `rule-${idx}`}
                   className="border-b border-gray-700/50 hover:bg-gray-700/30"
                 >
                   <td className="p-3">
@@ -198,23 +242,31 @@ export const RulesPage: React.FC = () => {
                     </button>
                   </td>
                   <td className="p-3">
-                    <p className="text-gray-300">{rule.name}</p>
+                    <p className="text-gray-300">{ruleName(rule)}</p>
                     <p className="text-gray-500 text-xs mt-0.5 truncate max-w-md">
                       {rule.description}
                     </p>
                   </td>
                   <td className="p-3">
                     <span className="px-2 py-0.5 bg-gray-700 text-gray-300 rounded text-xs">
-                      {ruleTypeLabels[rule.type] || rule.type}
+                      {ruleTypeLabels[rule.type] || rule.type || "—"}
                     </span>
                   </td>
                   <td className="p-3">
-                    <span className={`font-medium ${severityColor(rule.severity)}`}>
-                      {severityLabel(rule.severity)}
-                    </span>
-                    <span className="text-gray-500 text-xs ml-1">
-                      ({rule.severity})
-                    </span>
+                    {typeof rule.severity === "number" ? (
+                      <>
+                        <span
+                          className={`font-medium ${severityColor(rule.severity)}`}
+                        >
+                          {severityLabel(rule.severity)}
+                        </span>
+                        <span className="text-gray-500 text-xs ml-1">
+                          ({rule.severity})
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-gray-500">—</span>
+                    )}
                   </td>
                   <td className="p-3 text-gray-400 text-xs">
                     {rule.category || "—"}
@@ -253,7 +305,7 @@ export const RulesPage: React.FC = () => {
                             onClick={() => {
                               if (
                                 confirm(
-                                  `Delete rule "${rule.name}"?`,
+                                  `Delete rule "${ruleName(rule)}"?`,
                                 )
                               )
                                 deleteMutation.mutate(rule.id);

@@ -12,11 +12,14 @@ import type {
   EventStats,
 } from "../types/api";
 
+import { API_KEY_HEADER, getApiKey, handleUnauthorized } from "./auth";
+
 const BASE = "";
 
 const MUTATING_METHODS = new Set(["POST", "PUT", "DELETE", "PATCH"]);
 
 function getCsrfToken(): string | undefined {
+  if (typeof document === "undefined") return undefined;
   const match = document.cookie
     .split("; ")
     .find((row) => row.startsWith("XSRF-TOKEN="));
@@ -31,6 +34,12 @@ async function request<T>(
     "Content-Type": "application/json",
     ...((init?.headers as Record<string, string>) ?? {}),
   };
+
+  // siem-ingest authenticates with a static API key (auth.api_key_header)
+  const apiKey = getApiKey();
+  if (apiKey) {
+    headers[API_KEY_HEADER] = apiKey;
+  }
 
   // Attach CSRF token for state-changing requests
   const method = (init?.method ?? "GET").toUpperCase();
@@ -48,9 +57,15 @@ async function request<T>(
   });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
-    throw new ApiError(res.status, body.error || res.statusText, body.code);
+    const message: string = body.error || res.statusText || `HTTP ${res.status}`;
+    if (res.status === 401) {
+      // Drop the rejected key and let the UI prompt for a new one
+      handleUnauthorized(apiKey, message);
+    }
+    throw new ApiError(res.status, message, body.code);
   }
-  return res.json();
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export class ApiError extends Error {
@@ -62,6 +77,25 @@ export class ApiError extends Error {
     super(message);
     this.name = "ApiError";
   }
+}
+
+/** Human-readable explanation of a failed request for error banners. */
+export function describeError(err: unknown): string {
+  if (err instanceof ApiError && err.status === 401) {
+    return `Authentication required: ${err.message}. Enter a valid API key.`;
+  }
+  if (err instanceof ApiError && err.status === 403) {
+    return `Access denied: ${err.message}`;
+  }
+  if (err instanceof Error && err.message) {
+    return err.message;
+  }
+  return "Request failed";
+}
+
+/** True for errors that retrying without a new API key cannot fix. */
+export function isAuthError(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 401 || err.status === 403);
 }
 
 // --- Alerts ---
