@@ -11,6 +11,7 @@ export const API_KEY_HEADER: string =
   import.meta.env.VITE_API_KEY_HEADER || "X-API-Key";
 
 const STORAGE_KEY = "boundary-siem.apiKey";
+const ANALYST_STORAGE_KEY = "boundary-siem.analyst";
 
 export type AuthEvent =
   | { type: "changed" }
@@ -33,20 +34,54 @@ function storage(kind: StorageKind): Storage | undefined {
   }
 }
 
-function readStored(kind: StorageKind): string | null {
+function readStored(kind: StorageKind, key = STORAGE_KEY): string | null {
   try {
-    return storage(kind)?.getItem(STORAGE_KEY) ?? null;
+    return storage(kind)?.getItem(key) ?? null;
   } catch {
     return null;
   }
 }
 
-function removeStored(): void {
+function removeStored(key = STORAGE_KEY): void {
   for (const kind of ["sessionStorage", "localStorage"] as const) {
     try {
-      storage(kind)?.removeItem(STORAGE_KEY);
+      storage(kind)?.removeItem(key);
     } catch {
       // storage blocked: nothing stored there
+    }
+  }
+}
+
+let memoryAnalyst: string | null = null;
+
+/**
+ * The analyst name sent with alert actions (acknowledge, resolve, notes), or
+ * "" when none was entered. The server records it with the API key that
+ * made the request; without a name it records the key alone. (The
+ * dashboard used to send the fixed name "operator".)
+ */
+export function getAnalystName(): string {
+  return (
+    readStored("sessionStorage", ANALYST_STORAGE_KEY) ||
+    readStored("localStorage", ANALYST_STORAGE_KEY) ||
+    memoryAnalyst ||
+    ""
+  );
+}
+
+/** Stores the analyst name like the API key (see setApiKey). */
+export function setAnalystName(name: string, remember = false): void {
+  const trimmed = name.trim();
+  removeStored(ANALYST_STORAGE_KEY);
+  memoryAnalyst = trimmed || null;
+  if (trimmed) {
+    try {
+      storage(remember ? "localStorage" : "sessionStorage")?.setItem(
+        ANALYST_STORAGE_KEY,
+        trimmed,
+      );
+    } catch {
+      // storage blocked: keep the in-memory copy only
     }
   }
 }
@@ -85,10 +120,12 @@ export function setApiKey(key: string, remember = false): void {
   emit({ type: "changed" });
 }
 
-/** Forgets the API key (sign out). */
+/** Forgets the API key and the analyst name (sign out). */
 export function clearApiKey(): void {
   removeStored();
+  removeStored(ANALYST_STORAGE_KEY);
   memoryKey = null;
+  memoryAnalyst = null;
   emit({ type: "changed" });
 }
 

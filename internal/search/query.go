@@ -2,6 +2,7 @@
 package search
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"regexp"
@@ -34,6 +35,9 @@ type Token struct {
 	// Quoted is true for a value written in quotes; its Value has the
 	// quotes removed and \" (or \') and \\ unescaped.
 	Quoted bool
+	// Text is the source of an operator written differently from its
+	// Value (":" for "="), for error messages; "" otherwise.
+	Text string
 }
 
 // Operator represents a comparison operator.
@@ -117,6 +121,13 @@ type Lexer struct {
 	pos     int
 	width   int // byte width of current
 	current rune
+	// err is set when the input is malformed (an unterminated quote).
+	err error
+}
+
+// Err reports the first malformed input the lexer met, if any.
+func (l *Lexer) Err() error {
+	return l.err
 }
 
 // NewLexer creates a new lexer for the input string.
@@ -193,7 +204,7 @@ func (l *Lexer) readOperator() Token {
 	switch l.current {
 	case ':':
 		l.advance()
-		return Token{Type: TokenOperator, Value: "="}
+		return Token{Type: TokenOperator, Value: "=", Text: ":"}
 	case '=':
 		l.advance()
 		return Token{Type: TokenOperator, Value: "="}
@@ -230,9 +241,12 @@ func (l *Lexer) readOperator() Token {
 }
 
 // readQuotedString reads a quoted value. A backslash escapes the quote
-// character and itself; any other backslash is kept literally.
+// character and itself; any other backslash is kept literally. A quote that
+// is never closed is an error (Err): it used to take the rest of the query
+// as its value, so a lone quote searched for every event.
 func (l *Lexer) readQuotedString() Token {
 	quote := l.current
+	start := l.pos
 	l.advance()
 
 	var sb strings.Builder
@@ -249,6 +263,8 @@ func (l *Lexer) readQuotedString() Token {
 
 	if l.current == quote {
 		l.advance()
+	} else if l.err == nil {
+		l.err = fmt.Errorf("unterminated quoted string at offset %d: close it with %c", start, quote)
 	}
 	return Token{Type: TokenValue, Value: sb.String(), Quoted: true}
 }
@@ -335,6 +351,9 @@ func (p *Parser) Parse() (*Query, error) {
 	}
 
 	root, err := p.parseOr()
+	if lexErr := p.lexer.Err(); lexErr != nil {
+		return nil, lexErr
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -347,39 +366,74 @@ func (p *Parser) Parse() (*Query, error) {
 	return query, nil
 }
 
+// errDanglingConnective is the error of an AND or OR without a condition on
+// each side ("AND a", "a OR", "a AND OR b"). Such connectives used to be
+// dropped, so a query of just "AND" searched for every event.
+func errDanglingConnective(connective string) error {
+	return fmt.Errorf("%s needs a condition on each side", connective)
+}
+
+// endsOperand reports whether t cannot start a condition: the end of the
+// query or group, or a connective.
+func endsOperand(t TokenType) bool {
+	switch t {
+	case TokenEOF, TokenRParen, TokenAnd, TokenOr:
+		return true
+	}
+	return false
+}
+
+// parseOr parses an OR of AND groups. A nil node matches every event: an
+// AND group of only "*" terms (or the empty query), and so an OR with such
+// a group.
 func (p *Parser) parseOr() (*exprNode, error) {
 	var children []*exprNode
+	matchAll := false
 	for {
+		if p.current.Type == TokenOr {
+			return nil, errDanglingConnective("OR")
+		}
 		n, err := p.parseAnd()
 		if err != nil {
 			return nil, err
 		}
-		if n != nil {
+		if n == nil {
+			matchAll = true
+		} else {
 			children = append(children, n)
 		}
 		if p.current.Type != TokenOr {
+			if matchAll {
+				return nil, nil
+			}
 			return combine("OR", children), nil
 		}
 		p.advance()
+		if endsOperand(p.current.Type) {
+			return nil, errDanglingConnective("OR")
+		}
 	}
 }
 
 func (p *Parser) parseAnd() (*exprNode, error) {
 	var children []*exprNode
+	operands := 0 // terms parsed, including ones that match every event
 	for {
 		switch p.current.Type {
 		case TokenEOF, TokenRParen, TokenOr:
 			return combine("AND", children), nil
 		case TokenAnd:
-			// An explicit AND; with nothing on one side it is ignored.
 			p.advance()
-			continue
+			if operands == 0 || endsOperand(p.current.Type) {
+				return nil, errDanglingConnective("AND")
+			}
 		}
 
 		n, err := p.parseUnary()
 		if err != nil {
 			return nil, err
 		}
+		operands++
 		if n != nil {
 			children = append(children, n)
 		}
@@ -401,6 +455,10 @@ func (p *Parser) parseUnary() (*exprNode, error) {
 	if err != nil || !negate {
 		return n, err
 	}
+	if n == nil {
+		// NOT * (or NOT (*)) would match no event; it used to match all.
+		return nil, errors.New("NOT cannot negate a term that matches every event")
+	}
 	return negateExpr(n)
 }
 
@@ -412,6 +470,11 @@ func (p *Parser) parsePrimary() (*exprNode, error) {
 		}
 		p.depth++
 		p.advance()
+		if p.current.Type == TokenRParen {
+			// "()" used to be dropped, so a query of just "()" searched
+			// for every event.
+			return nil, errors.New("empty parentheses: put a condition inside them")
+		}
 		n, err := p.parseOr()
 		if err != nil {
 			return nil, err
@@ -435,6 +498,9 @@ func (p *Parser) parsePrimary() (*exprNode, error) {
 		// to be dropped, so "alice" returned every event.)
 		tok := p.current
 		p.advance()
+		if tok.Quoted && tok.Value == "" {
+			return nil, errors.New(`empty quoted term ""`)
+		}
 		cond, ok := freeTextCondition(tok)
 		if !ok {
 			return nil, nil
@@ -442,9 +508,10 @@ func (p *Parser) parsePrimary() (*exprNode, error) {
 		return &exprNode{cond: cond}, nil
 
 	default:
-		// A stray operator names no field; it is ignored.
-		p.advance()
-		return nil, nil
+		// An operator without a field before it ("=x", "a:b:c"). It used to
+		// be dropped, so "a:b:c" searched for a=b and the free text c.
+		return nil, fmt.Errorf("unexpected %q without a field before it: quote values that contain ':', '=', '<', '>', '!' or '~' (e.g. target:\"a:b\")",
+			cmp.Or(p.current.Text, p.current.Value))
 	}
 }
 
@@ -456,7 +523,7 @@ func freeTextCondition(tok Token) (Condition, bool) {
 	cond := Condition{Operator: OpContains, IsFreeText: true, Term: tok.Value, Value: tok.Value}
 	if tok.Quoted {
 		cond.IsPhrase = strings.Contains(tok.Value, " ")
-		return cond, tok.Value != ""
+		return cond, true
 	}
 	if strings.Trim(tok.Value, "*") == "" {
 		return Condition{}, false
@@ -560,20 +627,26 @@ func (p *Parser) parseCondition() (Condition, error) {
 
 	// Parse operator. "field:>5" (Lucene style) is "field>5": an operator
 	// right after ":" or "=" replaces it.
+	written := ":" // the operator as written, for errors
 	if p.current.Type == TokenOperator {
 		cond.Operator = Operator(p.current.Value)
+		written = cmp.Or(p.current.Text, p.current.Value)
 		p.advance()
 		if cond.Operator == OpEquals && p.current.Type == TokenOperator {
 			cond.Operator = Operator(p.current.Value)
+			written += p.current.Value
 			p.advance()
 		}
 	}
 
-	// Parse value
-	if p.current.Type == TokenValue || p.current.Type == TokenField {
-		setConditionValue(&cond, p.current)
-		p.advance()
+	// Parse value. A condition without one ("action:") used to be kept with
+	// a nil value, which matched nothing and was echoed as action=<nil>.
+	if p.current.Type != TokenValue && p.current.Type != TokenField {
+		return cond, fmt.Errorf("field %q needs a value after %q (e.g. %s%svalue, or %s%s\"\" for an empty value)",
+			cond.Field, written, cond.Field, written, cond.Field, written)
 	}
+	setConditionValue(&cond, p.current)
+	p.advance()
 
 	return cond, nil
 }
@@ -641,6 +714,7 @@ func isStringValued(cond Condition) bool {
 }
 
 // parseDuration parses relative time expressions like "now-1h", "now-24h"
+// or "now+5m" and returns how far before now they are (negative for "+").
 func parseDuration(s string) (time.Duration, bool) {
 	s = strings.ToLower(s)
 	if !strings.HasPrefix(s, "now") {
@@ -652,10 +726,17 @@ func parseDuration(s string) (time.Duration, bool) {
 		return 0, true
 	}
 
+	sign := time.Duration(1)
 	switch s[0] {
-	case '-', '+':
+	case '-':
+		s = s[1:]
+	case '+':
+		sign = -1 // after now (it used to mean before now, like '-')
 		s = s[1:]
 	default:
+		return 0, false
+	}
+	if s == "" || s[0] == '-' || s[0] == '+' {
 		return 0, false
 	}
 
@@ -666,13 +747,13 @@ func parseDuration(s string) (time.Duration, bool) {
 		if strings.HasSuffix(s, "d") {
 			days, err := strconv.Atoi(strings.TrimSuffix(s, "d"))
 			if err == nil {
-				return time.Duration(days) * 24 * time.Hour, true
+				return sign * time.Duration(days) * 24 * time.Hour, true
 			}
 		}
 		return 0, false
 	}
 
-	return dur, true
+	return sign * dur, true
 }
 
 // ParseQuery is a convenience function to parse a query string.

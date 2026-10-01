@@ -6,7 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -144,12 +146,14 @@ func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Apply request parameters
-	if req.Limit > 0 && req.Limit <= 10000 {
+	if err := checkPage(req.Limit, req.Offset); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_parameter", "invalid request parameter", err.Error())
+		return
+	}
+	if req.Limit > 0 {
 		query.Limit = req.Limit
 	}
-	if req.Offset >= 0 {
-		query.Offset = req.Offset
-	}
+	query.Offset = req.Offset
 	if req.OrderBy != "" {
 		query.OrderBy = req.OrderBy
 	}
@@ -195,22 +199,33 @@ func (h *Handler) HandleSearchGet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Apply query parameters
-	if limitStr := r.URL.Query().Get("limit"); limitStr != "" {
-		if limit, err := strconv.Atoi(limitStr); err == nil && limit > 0 && limit <= 10000 {
-			query.Limit = limit
+	// Apply query parameters. An invalid limit, offset or order is 400: it
+	// used to be replaced by the default without a word.
+	params := r.URL.Query()
+	limit, hasLimit, err := intParam(params, "limit", 1, maxSearchLimit)
+	if err == nil && hasLimit {
+		query.Limit = limit
+	}
+	if err == nil {
+		query.Offset, _, err = intParam(params, "offset", 0, math.MaxInt32)
+	}
+	if err == nil {
+		switch order := params.Get("order"); strings.ToLower(order) {
+		case "":
+		case "asc":
+			query.OrderDesc = false
+		case "desc":
+			query.OrderDesc = true
+		default:
+			err = fmt.Errorf("order: want asc or desc, got %q", truncateForLog(order, 50))
 		}
 	}
-	if offsetStr := r.URL.Query().Get("offset"); offsetStr != "" {
-		if offset, err := strconv.Atoi(offsetStr); err == nil && offset >= 0 {
-			query.Offset = offset
-		}
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_parameter", "invalid request parameter", err.Error())
+		return
 	}
-	if orderBy := r.URL.Query().Get("order_by"); orderBy != "" {
+	if orderBy := params.Get("order_by"); orderBy != "" {
 		query.OrderBy = orderBy
-	}
-	if orderDesc := r.URL.Query().Get("order"); orderDesc == "asc" {
-		query.OrderDesc = false
 	}
 
 	// Parse time range
@@ -362,11 +377,13 @@ func (h *Handler) HandleFieldValues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	n := 20
-	if nStr := r.URL.Query().Get("limit"); nStr != "" {
-		if parsed, err := strconv.Atoi(nStr); err == nil && parsed > 0 && parsed <= 100 {
-			n = parsed
-		}
+	n, hasLimit, err := intParam(r.URL.Query(), "limit", 1, 100)
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_parameter", "invalid request parameter", err.Error())
+		return
+	}
+	if !hasLimit {
+		n = 20
 	}
 
 	tenantID, ok := h.requireTenant(w, r)
@@ -469,9 +486,14 @@ func (h *Handler) HandleExplain(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Limit > 0 && req.Limit <= 10000 {
+	if err := checkPage(req.Limit, req.Offset); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_parameter", "invalid request parameter", err.Error())
+		return
+	}
+	if req.Limit > 0 {
 		query.Limit = req.Limit
 	}
+	query.Offset = req.Offset
 	if req.OrderBy != "" {
 		query.OrderBy = req.OrderBy
 	}
@@ -562,6 +584,14 @@ func unixTime(ts int64) time.Time {
 	return time.Unix(ts, 0)
 }
 
+// ParseTime parses a time parameter the way the search API does: RFC 3339
+// (with or without fractional seconds), a date (YYYY-MM-DD, UTC midnight),
+// "now" or a relative time ("now-1h", "now-7d"), or Unix seconds or
+// milliseconds. Anything else is an error that describes these formats.
+func ParseTime(s string) (time.Time, error) {
+	return parseTimeString(s)
+}
+
 // parseTimeString parses RFC 3339 (with or without fractional seconds), a
 // date (YYYY-MM-DD), "now" or a relative time ("now-1h", "now-7d"), or Unix
 // seconds or milliseconds. Anything else is an error: an unparseable start or
@@ -622,6 +652,35 @@ func parseTimeRange(startName, start, endName, end string) (*TimeRange, error) {
 		tr.End = t
 	}
 	return tr, nil
+}
+
+// maxSearchLimit is the largest page of search results.
+const maxSearchLimit = 10000
+
+// intParam parses the integer query parameter name, which must lie in
+// [lo, hi]. ok is false when the parameter is absent.
+func intParam(params url.Values, name string, lo, hi int) (n int, ok bool, err error) {
+	s := params.Get(name)
+	if s == "" {
+		return 0, false, nil
+	}
+	n, err = strconv.Atoi(s)
+	if err != nil || n < lo || n > hi {
+		return 0, false, fmt.Errorf("%s: want an integer from %d to %d, got %q", name, lo, hi, truncateForLog(s, 50))
+	}
+	return n, true, nil
+}
+
+// checkPage validates the limit (0 = the default) and offset of a JSON
+// search request. Out-of-range values used to be ignored.
+func checkPage(limit, offset int) error {
+	if limit < 0 || limit > maxSearchLimit {
+		return fmt.Errorf("limit: want an integer from 1 to %d (or 0 for the default), got %d", maxSearchLimit, limit)
+	}
+	if offset < 0 || offset > math.MaxInt32 {
+		return fmt.Errorf("offset: want a non-negative integer, got %d", offset)
+	}
+	return nil
 }
 
 // writeExecError answers an executor error: 400 with the reason for an

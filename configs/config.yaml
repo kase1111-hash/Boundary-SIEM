@@ -129,7 +129,14 @@ correlation:
   max_state_entries: 100000    # Maximum entries per rule state
   state_cleanup_freq: 30s      # How often to clean expired state
   worker_count: 4              # Number of correlation workers
-  dedup_window: 15m            # Alert deduplication window (0 = use per-rule window)
+  # A rule firing again for the same group within dedup_window of its last
+  # new alert is a recurrence of that alert, not a new one (0 = the rule's
+  # window). Recurrences go to the alert manager, which merges them into the
+  # open alert or, once the alert was resolved, raises a new one. Each event
+  # is reported once. A rule and group sends at most one recurrence per
+  # recurrence_interval; firings in between are batched into the next.
+  dedup_window: 15m
+  recurrence_interval: 10s
   event_channel_size: 10000    # Event channel buffer size (also the consumer -> engine buffer;
                                # events beyond it are counted in siem_correlation_events_dropped_total)
   alert_channel_size: 1000     # Alert channel buffer size

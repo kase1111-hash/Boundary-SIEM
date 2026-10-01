@@ -20,6 +20,10 @@ var (
 
 const defaultServerURL = "http://localhost:8080"
 
+// notTheServer explains arguments meant for the SIEM service.
+const notTheServer = "boundary-siem is the terminal dashboard and connects to a running server (-server); " +
+	"the SIEM service is siem-ingest (siem-ingest -config <file>, siem-ingest health)"
+
 // options holds the parsed command line configuration.
 type options struct {
 	showVersion  bool
@@ -44,9 +48,18 @@ func parseFlags(args []string, getenv func(string) string, stderr io.Writer) (*o
 		"API key for servers with auth enabled (default: $SIEM_API_KEY; prefer the environment variable, flags are visible in the process list)")
 	fs.StringVar(&o.apiKeyHeader, "api-key-header", "",
 		"Header carrying the API key, matching auth.api_key_header (default: $SIEM_API_KEY_HEADER or "+api.DefaultAuthHeader+")")
+	// Deployments that mistook this binary for the service passed it
+	// "--config <file>" (and "serve", "health"); it started the TUI, which
+	// failed with "could not open a new TTY".
+	fs.Func("config", "Not supported: "+notTheServer, func(string) error {
+		return errors.New(notTheServer)
+	})
 
 	if err := fs.Parse(args); err != nil {
 		return nil, err
+	}
+	if fs.NArg() > 0 {
+		return nil, fmt.Errorf("unexpected argument %q: %s", fs.Arg(0), notTheServer)
 	}
 
 	if o.apiKey == "" {

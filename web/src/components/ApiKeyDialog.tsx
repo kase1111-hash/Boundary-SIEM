@@ -3,7 +3,9 @@ import { useQueryClient } from "@tanstack/react-query";
 import {
   API_KEY_HEADER,
   clearApiKey,
+  getAnalystName,
   getApiKey,
+  setAnalystName,
   setApiKey,
   subscribeAuth,
 } from "../services/auth";
@@ -17,6 +19,7 @@ export const ApiKeyControl: React.FC = () => {
   const [open, setOpen] = useState(false);
   const [reason, setReason] = useState<string | null>(null);
   const [value, setValue] = useState("");
+  const [analyst, setAnalyst] = useState(getAnalystName);
   const [remember, setRemember] = useState(false);
   const [hasKey, setHasKey] = useState(() => getApiKey() !== null);
 
@@ -37,9 +40,23 @@ export const ApiKeyControl: React.FC = () => {
     setValue("");
   };
 
+  // Escape closes the dialog, like the other modals.
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setOpen(false);
+        setValue("");
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
   const save = (e: React.FormEvent) => {
     e.preventDefault();
     if (!value.trim()) return;
+    setAnalystName(analyst, remember);
     setApiKey(value, remember);
     close();
     setReason(null);
@@ -49,6 +66,7 @@ export const ApiKeyControl: React.FC = () => {
 
   const signOut = () => {
     clearApiKey();
+    setAnalyst("");
     setReason(null);
     // Drop cached data; active queries refetch and prompt on 401
     queryClient.resetQueries();
@@ -106,6 +124,19 @@ export const ApiKeyControl: React.FC = () => {
               aria-label="API key"
               className="w-full bg-gray-900 text-white text-sm px-3 py-2 rounded border border-gray-700 focus:border-blue-500 focus:outline-none font-mono"
             />
+            <input
+              type="text"
+              autoComplete="name"
+              value={analyst}
+              onChange={(e) => setAnalyst(e.target.value)}
+              placeholder="Your name (optional)"
+              aria-label="Your name"
+              className="w-full bg-gray-900 text-white text-sm px-3 py-2 rounded border border-gray-700 focus:border-blue-500 focus:outline-none"
+            />
+            <p className="text-gray-500 text-xs">
+              Alerts you acknowledge, resolve or annotate record this name
+              with the API key you used.
+            </p>
             <label className="flex items-center gap-2 text-gray-400 text-sm">
               <input
                 type="checkbox"

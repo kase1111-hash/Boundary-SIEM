@@ -10,6 +10,7 @@ import {
 } from "../services/api";
 import type { Rule, RuleListResponse, RuleType, Severity } from "../types/api";
 import { severityClass } from "../services/severity";
+import { useEscape } from "../hooks/useEscape";
 
 // --- Severity number to label (the class the rule's alerts get) ---
 const severityTextColors: Record<Severity, string> = {
@@ -86,6 +87,15 @@ export const RulesPage: React.FC = () => {
   const [testResults, setTestResults] = useState<Record<string, unknown> | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
   const [detailRule, setDetailRule] = useState<Rule | null>(null);
+
+  // Escape closes the test result dialog (the other dialogs handle it).
+  useEscape(
+    () => {
+      setTestResults(null);
+      setTestingId(null);
+    },
+    !!testResults && !!testingId,
+  );
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["rules", typeFilter],
@@ -355,8 +365,15 @@ export const RulesPage: React.FC = () => {
       {/* Test result modal */}
       {testResults && testingId && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-lg p-6 w-96 max-h-[80vh] overflow-y-auto">
-            <h3 className="text-white font-semibold mb-3">Rule Test Result</h3>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rule-test-title"
+            className="bg-gray-800 rounded-lg p-6 w-96 max-h-[80vh] overflow-y-auto"
+          >
+            <h3 id="rule-test-title" className="text-white font-semibold mb-3">
+              Rule Test Result
+            </h3>
             <pre className="text-gray-300 text-xs bg-gray-900 rounded p-3 overflow-x-auto">
               {JSON.stringify(testResults, null, 2)}
             </pre>
@@ -414,16 +431,22 @@ export const RuleDetail: React.FC<{ rule: Rule; onClose: () => void }> = ({
     ["Source", rule.source || "builtin"],
     ["Enabled", rule.enabled ? "yes" : "no"],
   ];
+  useEscape(onClose);
   return (
     <div
       className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rule-detail-title"
         className="bg-gray-800 rounded-lg p-6 w-[40rem] max-h-[85vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
-        <h3 className="text-white font-semibold">{ruleName(rule)}</h3>
+        <h3 id="rule-detail-title" className="text-white font-semibold">
+          {ruleName(rule)}
+        </h3>
         {rule.description && (
           <p className="text-gray-400 text-sm mt-1">{rule.description}</p>
         )}
@@ -440,6 +463,7 @@ export const RuleDetail: React.FC<{ rule: Rule; onClose: () => void }> = ({
         </pre>
         <button
           onClick={onClose}
+          autoFocus
           className="mt-4 w-full px-4 py-2 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 text-sm"
         >
           Close
@@ -492,10 +516,17 @@ const RuleEditor: React.FC<{
     onError: (err: Error) => setError(err.message),
   });
 
+  useEscape(onClose, !saveMutation.isPending);
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 w-[640px] max-h-[85vh] flex flex-col">
-        <h3 className="text-white font-semibold mb-3">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rule-editor-title"
+        className="bg-gray-800 rounded-lg p-6 w-[640px] max-h-[85vh] flex flex-col"
+      >
+        <h3 id="rule-editor-title" className="text-white font-semibold mb-3">
           {isNew ? "Create Rule" : "Edit Rule"}
         </h3>
         {error && (

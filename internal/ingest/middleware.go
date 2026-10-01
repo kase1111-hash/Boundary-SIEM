@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"boundary-siem/internal/config"
+	"boundary-siem/internal/identity"
 	"boundary-siem/internal/middleware"
 )
 
@@ -102,11 +103,18 @@ func loggingMiddleware(next http.Handler) http.Handler {
 // validAPIKey reports whether key is one of keys. Every key is compared in
 // constant time so the comparison does not leak how much of a key matched.
 func validAPIKey(key string, keys []string) bool {
-	valid := 0
-	for _, k := range keys {
-		valid |= subtle.ConstantTimeCompare([]byte(key), []byte(k))
+	return apiKeyIndex(key, keys) >= 0
+}
+
+// apiKeyIndex returns the index of key in keys, or -1. Every key is compared
+// in constant time, as in validAPIKey.
+func apiKeyIndex(key string, keys []string) int {
+	index := -1
+	for i, k := range keys {
+		match := subtle.ConstantTimeCompare([]byte(key), []byte(k))
+		index = subtle.ConstantTimeSelect(match, i, index)
 	}
-	return valid == 1
+	return index
 }
 
 // ValidAPIKey reports whether key is a configured API key, using the same
@@ -140,12 +148,15 @@ func authMiddleware(next http.Handler, authCfg config.AuthConfig, webUI bool) ht
 			return
 		}
 
-		if !validAPIKey(apiKey, keys) {
+		index := apiKeyIndex(apiKey, keys)
+		if index < 0 {
 			writeAuthError(w, "invalid API key")
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		// Handlers record which key acted (identity.Caller), e.g. on alert
+		// actions, whatever user name the request claims.
+		next.ServeHTTP(w, r.WithContext(identity.WithCaller(r.Context(), identity.APIKeyCaller(index))))
 	})
 }
 

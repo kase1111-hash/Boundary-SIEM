@@ -255,12 +255,13 @@ func (a *App) closeStorage() {
 func (a *App) initCorrelation() error {
 	cfg := a.cfg
 	a.engine = correlation.NewEngine(correlation.EngineConfig{
-		MaxStateEntries:  cfg.Correlation.MaxStateEntries,
-		StateCleanupFreq: cfg.Correlation.StateCleanupFreq,
-		WorkerCount:      cfg.Correlation.WorkerCount,
-		DedupWindow:      cfg.Correlation.DedupWindow,
-		EventChannelSize: cfg.Correlation.EventChannelSize,
-		AlertChannelSize: cfg.Correlation.AlertChannelSize,
+		MaxStateEntries:    cfg.Correlation.MaxStateEntries,
+		StateCleanupFreq:   cfg.Correlation.StateCleanupFreq,
+		WorkerCount:        cfg.Correlation.WorkerCount,
+		DedupWindow:        cfg.Correlation.DedupWindow,
+		RecurrenceInterval: cfg.Correlation.RecurrenceInterval,
+		EventChannelSize:   cfg.Correlation.EventChannelSize,
+		AlertChannelSize:   cfg.Correlation.AlertChannelSize,
 	})
 
 	detection := detectionrules.GetAllRules()
@@ -440,7 +441,8 @@ func (a *App) initHTTP() error {
 		WithDefaultTenant(cfg.Ingest.CEF.Normalizer.DefaultTenantID).
 		WithComponents(a.components).
 		WithSources(a.sources).
-		WithMetrics(a.metrics)
+		WithMetrics(a.metrics).
+		WithAuthRequired(cfg.Auth.Enabled)
 	if a.quarantine != nil {
 		a.handler.WithQuarantine(a.quarantine)
 	}

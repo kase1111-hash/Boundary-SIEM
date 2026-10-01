@@ -176,9 +176,15 @@ func (m *Manager) AddChannel(channel NotificationChannel) {
 // resolved, a recurrence raises a new alert: the attack resumed. (Every
 // recurrence within a fixed window from the first alert used to be dropped,
 // logged at debug only, even after the alert was resolved.)
+//
+// The correlation engine sends the firings of a rule and group within its
+// own dedup window as recurrences (correlation.Alert.Recurrence) instead of
+// dropping them, each listing only events no earlier alert reported; they
+// are handled here like any other alert.
 func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correlation.Alert) error {
 	dedupKey := dedupKeyOf(corrAlert.RuleID, corrAlert.GroupKey)
 	now := time.Now()
+	alert := newManagedAlert(corrAlert)
 
 	m.mu.Lock()
 	if entry, ok := m.dedup[dedupKey]; ok && now.Sub(entry.last) < m.config.DeduplicationWindow {
@@ -200,10 +206,27 @@ func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correla
 			return nil
 		}
 	}
-	m.dedup[dedupKey] = dedupEntry{alertID: corrAlert.ID, last: now}
+	// The alert is stored under the same lock as its dedup entry: a
+	// concurrent recurrence that found the entry but not yet the alert used
+	// to raise (and notify) a second alert.
+	m.dedup[dedupKey] = dedupEntry{alertID: alert.ID, last: now}
+	m.alerts[alert.ID] = alert
+	snapshot := alert.clone()
 	m.mu.Unlock()
 
-	// Convert to managed alert
+	if m.db != nil {
+		if err := m.persistAlert(ctx, snapshot); err != nil {
+			slog.Error("failed to store alert", "error", err)
+		}
+	}
+
+	m.sendNotifications(ctx, snapshot)
+	return nil
+}
+
+// newManagedAlert converts an alert of the correlation engine into a new
+// managed alert.
+func newManagedAlert(corrAlert *correlation.Alert) *Alert {
 	eventIDs := make([]uuid.UUID, len(corrAlert.Events))
 	for i, e := range corrAlert.Events {
 		eventIDs[i] = e.EventID
@@ -221,7 +244,7 @@ func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correla
 		mitre = &mitreCopy
 	}
 
-	alert := &Alert{
+	return &Alert{
 		ID:          corrAlert.ID,
 		RuleID:      corrAlert.RuleID,
 		RuleName:    corrAlert.RuleName,
@@ -238,17 +261,6 @@ func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correla
 		MITRE:       mitre,
 		Metadata:    make(map[string]interface{}),
 	}
-
-	// Store alert
-	snapshot, err := m.storeAlert(ctx, alert)
-	if err != nil {
-		slog.Error("failed to store alert", "error", err)
-	}
-
-	// Send notifications
-	m.sendNotifications(ctx, snapshot)
-
-	return nil
 }
 
 // Metadata keys maintained on alerts that recurrences were merged into.
@@ -264,13 +276,25 @@ func dedupKeyOf(ruleID, groupKey string) string {
 
 // mergeRecurrence folds a recurrence of alert's rule and group into alert.
 // The caller holds the manager lock.
+//
+// Events the alert already lists are not counted again. The correlation
+// engine reports every event once (see correlation.EngineConfig); this
+// guards against a recurrence that repeats events anyway, as far as the
+// alert's (bounded) event ID list can tell.
 func mergeRecurrence(alert *Alert, recurrence *correlation.Alert, now time.Time) {
-	alert.EventCount += len(recurrence.Events)
+	known := make(map[uuid.UUID]struct{}, len(alert.EventIDs))
+	for _, id := range alert.EventIDs {
+		known[id] = struct{}{}
+	}
 	for _, e := range recurrence.Events {
-		if len(alert.EventIDs) >= maxAlertEventIDs {
-			break
+		if _, dup := known[e.EventID]; dup {
+			continue
 		}
-		alert.EventIDs = append(alert.EventIDs, e.EventID)
+		known[e.EventID] = struct{}{}
+		alert.EventCount++
+		if len(alert.EventIDs) < maxAlertEventIDs {
+			alert.EventIDs = append(alert.EventIDs, e.EventID)
+		}
 	}
 	if alert.Metadata == nil {
 		alert.Metadata = make(map[string]interface{})
@@ -289,21 +313,6 @@ func mergeRecurrence(alert *Alert, recurrence *correlation.Alert, now time.Time)
 	}
 	alert.Metadata[metaLastOccurrence] = seen.UTC().Format(time.RFC3339Nano)
 	alert.UpdatedAt = now
-}
-
-// storeAlert stores an alert in memory and database. It returns a snapshot
-// of the stored alert taken before any other goroutine could modify it.
-func (m *Manager) storeAlert(ctx context.Context, alert *Alert) (*Alert, error) {
-	m.mu.Lock()
-	m.alerts[alert.ID] = alert
-	snapshot := alert.clone()
-	m.mu.Unlock()
-
-	// Store to database if available
-	if m.db != nil {
-		return snapshot, m.persistAlert(ctx, snapshot)
-	}
-	return snapshot, nil
 }
 
 // sendNotifications sends an alert snapshot to all channels. Channels only

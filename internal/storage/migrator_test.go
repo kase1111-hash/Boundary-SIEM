@@ -163,6 +163,11 @@ type migrationConn struct {
 	applied  []uint32
 	tables   []string
 	failExec func(query string) error
+
+	// Answers of the schema fixups' queries: the inner tables without a
+	// deduplication window, and the sorting key of alerts ("" = none).
+	innerNoWindow    []string
+	alertsSortingKey string
 }
 
 func (c *migrationConn) Exec(_ context.Context, query string, args ...any) error {
@@ -207,6 +212,17 @@ func (c *migrationConn) Query(_ context.Context, query string, _ ...any) (driver
 			values[i] = v
 		}
 		return &fakeRows{values: values}, nil
+	case strings.Contains(query, "startsWith(name, '.inner')"):
+		values := make([]any, len(c.innerNoWindow))
+		for i, v := range c.innerNoWindow {
+			values[i] = v
+		}
+		return &fakeRows{values: values}, nil
+	case strings.Contains(query, "SELECT sorting_key FROM system.tables"):
+		if c.alertsSortingKey == "" {
+			return &fakeRows{}, nil
+		}
+		return &fakeRows{values: []any{c.alertsSortingKey}}, nil
 	case strings.Contains(query, "FROM system.tables"):
 		values := make([]any, len(c.tables))
 		for i, v := range c.tables {

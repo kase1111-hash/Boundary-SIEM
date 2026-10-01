@@ -513,9 +513,9 @@ func (bw *BatchWriter) insertBatch(events []*schema.Event, token string) error {
 
 // insertContext returns the base context of an INSERT into events. It sets
 // insert_deduplication_token, so the server drops a repeat of an INSERT it
-// has already stored, and extends that to the blocks events_critical_mv
-// writes to events_critical (see migration 007). The SummingMergeTree inside
-// events_hourly_mv has no deduplication window and still counts a repeat.
+// has already stored, and extends that to the blocks the materialized views
+// write: events_critical (see migration 007) and the SummingMergeTree inside
+// events_hourly_mv (see fixInnerTableDedupWindows).
 func insertContext(token string) context.Context {
 	return clickhouse.Context(context.Background(), clickhouse.WithSettings(clickhouse.Settings{
 		"insert_deduplication_token":                         token,

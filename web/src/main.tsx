@@ -5,15 +5,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { ToastProvider } from "./components/Toast";
-import { isAuthError } from "./services/api";
+import { shouldRetry } from "./services/api";
 import "./index.css";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
       refetchOnWindowFocus: false,
-      // Retrying with the same (missing or wrong) API key cannot succeed
-      retry: (failureCount, error) => !isAuthError(error) && failureCount < 1,
+      // Retrying a request the server refused (an invalid query, a missing
+      // or wrong API key) cannot succeed: it only sent every invalid search
+      // twice. Network and server errors are retried once.
+      retry: shouldRetry,
       staleTime: 10_000,
     },
   },

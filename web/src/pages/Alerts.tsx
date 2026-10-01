@@ -41,7 +41,7 @@ export const AlertListPage: React.FC = () => {
   const bulkAck = useMutation({
     mutationFn: async () => {
       await Promise.all(
-        Array.from(selected).map((id) => acknowledgeAlert(id, "operator")),
+        Array.from(selected).map((id) => acknowledgeAlert(id)),
       );
     },
     onSuccess: () => {
@@ -55,7 +55,7 @@ export const AlertListPage: React.FC = () => {
   const bulkResolve = useMutation({
     mutationFn: async () => {
       await Promise.all(
-        Array.from(selected).map((id) => resolveAlert(id, "operator")),
+        Array.from(selected).map((id) => resolveAlert(id)),
       );
     },
     onSuccess: () => {
@@ -292,7 +292,7 @@ export const AlertDetailPage: React.FC = () => {
   });
 
   const ackMutation = useMutation({
-    mutationFn: () => acknowledgeAlert(id!, "operator"),
+    mutationFn: () => acknowledgeAlert(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["alert", id] });
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
@@ -302,7 +302,7 @@ export const AlertDetailPage: React.FC = () => {
   });
 
   const resolveMutation = useMutation({
-    mutationFn: () => resolveAlert(id!, "operator"),
+    mutationFn: () => resolveAlert(id!),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["alert", id] });
       queryClient.invalidateQueries({ queryKey: ["alerts"] });
@@ -312,7 +312,7 @@ export const AlertDetailPage: React.FC = () => {
   });
 
   const noteMutation = useMutation({
-    mutationFn: () => addAlertNote(id!, "operator", noteContent),
+    mutationFn: () => addAlertNote(id!, noteContent),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["alert", id] });
       setNoteContent("");

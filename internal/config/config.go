@@ -48,7 +48,9 @@ type AlertingConfig struct {
 	// email.password) may reference environment variables as ${NAME}.
 	Notifications alerting.NotificationsConfig `yaml:"notifications"`
 
-	// DedupWindow suppresses repeated alerts for the same rule and group.
+	// DedupWindow is how long after the last occurrence of an alert a
+	// recurrence of its rule and group is merged into it, while the alert is
+	// not resolved.
 	DedupWindow time.Duration `yaml:"dedup_window"`
 	// RetentionPeriod is how long resolved alerts stay in memory.
 	RetentionPeriod time.Duration `yaml:"retention_period"`
@@ -155,6 +157,10 @@ type CorrelationEngineConfig struct {
 	DedupWindow      time.Duration `yaml:"dedup_window"`       // Alert deduplication window
 	EventChannelSize int           `yaml:"event_channel_size"` // Event channel buffer size (also the consumer -> engine buffer)
 	AlertChannelSize int           `yaml:"alert_channel_size"` // Alert channel buffer size
+	// RecurrenceInterval is the minimum time between two recurrences of a
+	// rule and group that the engine sends to the alert manager; firings
+	// within DedupWindow of the group's last new alert are recurrences.
+	RecurrenceInterval time.Duration `yaml:"recurrence_interval"`
 
 	// RulesDir holds custom rules and the enabled/disabled overrides of the
 	// built-in rules. The rules API writes to it.
@@ -526,14 +532,15 @@ func DefaultConfig() *Config {
 			ShutdownWait: 30 * time.Second,
 		},
 		Correlation: CorrelationEngineConfig{
-			MaxStateEntries:  100000,
-			StateCleanupFreq: 30 * time.Second,
-			WorkerCount:      4,
-			DedupWindow:      15 * time.Minute,
-			EventChannelSize: 10000,
-			AlertChannelSize: 1000,
-			RulesDir:         "data/rules",
-			SeedRulesDir:     "rules",
+			MaxStateEntries:    100000,
+			StateCleanupFreq:   30 * time.Second,
+			WorkerCount:        4,
+			DedupWindow:        15 * time.Minute,
+			EventChannelSize:   10000,
+			AlertChannelSize:   1000,
+			RecurrenceInterval: 10 * time.Second,
+			RulesDir:           "data/rules",
+			SeedRulesDir:       "rules",
 		},
 		Secrets: SecretsConfig{
 			EnableVault:    false,                  // Vault disabled by default
@@ -605,21 +612,33 @@ func DefaultConfig() *Config {
 
 // Load loads configuration from a file or returns defaults.
 func Load() (*Config, error) {
+	return LoadFrom("")
+}
+
+// LoadFrom loads configuration like Load, from the file at configPath; ""
+// means $SIEM_CONFIG_PATH, or configs/config.yaml when that is unset. A file
+// named by configPath must exist; the others are optional (the defaults and
+// environment overrides apply without them).
+func LoadFrom(configPath string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Check for config file path in environment
-	configPath := os.Getenv("SIEM_CONFIG_PATH")
+	required := configPath != ""
+	if configPath == "" {
+		configPath = os.Getenv("SIEM_CONFIG_PATH")
+	}
 	if configPath == "" {
 		configPath = "configs/config.yaml"
 	}
 
 	// Try to load from file
-	data, err := os.ReadFile(filepath.Clean(configPath)) // #nosec G703 -- SIEM_CONFIG_PATH is set by the operator launching the process and may legitimately point anywhere (e.g. /etc/boundary-siem); it is not request-derived
+	data, err := os.ReadFile(filepath.Clean(configPath)) // #nosec G703 -- the path comes from the operator launching the process (-config or SIEM_CONFIG_PATH) and may legitimately point anywhere (e.g. /etc/boundary-siem); it is not request-derived
 	switch {
 	case err == nil:
 		if err := yaml.Unmarshal(data, cfg); err != nil {
 			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
+	case os.IsNotExist(err) && required:
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	case os.IsNotExist(err):
 		// No config file: run on the defaults. Environment overrides still
 		// apply, so env-only deployments (containers) can be configured.
@@ -646,10 +665,10 @@ func (c *Config) applyEnvOverrides() {
 		c.Auth.Enabled = true
 	}
 
-	// Storage settings
-	if enabled := os.Getenv("SIEM_STORAGE_ENABLED"); enabled == "true" {
-		c.Storage.Enabled = true
-	}
+	// Storage settings. Every SIEM_*_ENABLED override takes true or false
+	// (1/0, ...): several used to honour only one value, so for example
+	// SIEM_STORAGE_ENABLED=false left storage on.
+	envBool("SIEM_STORAGE_ENABLED", &c.Storage.Enabled)
 
 	if host := os.Getenv("CLICKHOUSE_HOST"); host != "" {
 		c.Storage.ClickHouse.Hosts = []string{host}
@@ -668,26 +687,20 @@ func (c *Config) applyEnvOverrides() {
 	}
 
 	// CORS settings
-	if enabled := os.Getenv("SIEM_CORS_ENABLED"); enabled == "false" {
-		c.CORS.Enabled = false
-	}
+	envBool("SIEM_CORS_ENABLED", &c.CORS.Enabled)
 
 	if origins := os.Getenv("SIEM_CORS_ORIGINS"); origins != "" {
 		c.CORS.AllowedOrigins = splitAndTrim(origins, ",")
 	}
 
 	// Rate limit settings
-	if enabled := os.Getenv("SIEM_RATELIMIT_ENABLED"); enabled == "false" {
-		c.RateLimit.Enabled = false
-	}
+	envBool("SIEM_RATELIMIT_ENABLED", &c.RateLimit.Enabled)
 
 	envInt("SIEM_RATELIMIT_RPS", &c.RateLimit.RequestsPerIP)
 	envInt("SIEM_RATELIMIT_BURST", &c.RateLimit.BurstSize)
 
 	// Secrets management settings
-	if enabled := os.Getenv("SIEM_SECRETS_VAULT_ENABLED"); enabled == "true" {
-		c.Secrets.EnableVault = true
-	}
+	envBool("SIEM_SECRETS_VAULT_ENABLED", &c.Secrets.EnableVault)
 
 	if addr := os.Getenv("VAULT_ADDR"); addr != "" {
 		c.Secrets.VaultAddress = addr
@@ -701,18 +714,14 @@ func (c *Config) applyEnvOverrides() {
 		c.Secrets.VaultPath = path
 	}
 
-	if enabled := os.Getenv("SIEM_SECRETS_FILE_ENABLED"); enabled == "true" {
-		c.Secrets.EnableFile = true
-	}
+	envBool("SIEM_SECRETS_FILE_ENABLED", &c.Secrets.EnableFile)
 
 	if dir := os.Getenv("SIEM_SECRETS_DIR"); dir != "" {
 		c.Secrets.FileSecretsDir = dir
 	}
 
 	// Encryption settings
-	if enabled := os.Getenv("SIEM_ENCRYPTION_ENABLED"); enabled == "true" {
-		c.Encryption.Enabled = true
-	}
+	envBool("SIEM_ENCRYPTION_ENABLED", &c.Encryption.Enabled)
 
 	if keySource := os.Getenv("SIEM_ENCRYPTION_KEY_SOURCE"); keySource != "" {
 		c.Encryption.KeySource = keySource
@@ -725,19 +734,10 @@ func (c *Config) applyEnvOverrides() {
 	envInt("SIEM_ENCRYPTION_KEY_VERSION", &c.Encryption.KeyVersion)
 
 	// Security headers settings
-	if enabled := os.Getenv("SIEM_SECURITY_HEADERS_ENABLED"); enabled == "false" {
-		c.SecurityHeaders.Enabled = false
-	}
-
-	if enabled := os.Getenv("SIEM_HSTS_ENABLED"); enabled == "false" {
-		c.SecurityHeaders.HSTSEnabled = false
-	}
-
+	envBool("SIEM_SECURITY_HEADERS_ENABLED", &c.SecurityHeaders.Enabled)
+	envBool("SIEM_HSTS_ENABLED", &c.SecurityHeaders.HSTSEnabled)
 	envInt("SIEM_HSTS_MAX_AGE", &c.SecurityHeaders.HSTSMaxAge)
-
-	if enabled := os.Getenv("SIEM_CSP_ENABLED"); enabled == "false" {
-		c.SecurityHeaders.CSPEnabled = false
-	}
+	envBool("SIEM_CSP_ENABLED", &c.SecurityHeaders.CSPEnabled)
 
 	if frameOptions := os.Getenv("SIEM_FRAME_OPTIONS"); frameOptions != "" {
 		c.SecurityHeaders.FrameOptionsValue = frameOptions
@@ -762,6 +762,16 @@ func (c *Config) applyEnvOverrides() {
 	envString("SIEM_CEF_TCP_ADDRESS", &c.Ingest.CEF.TCP.Address)
 	envBool("SIEM_CEF_DTLS_ENABLED", &c.Ingest.CEF.DTLS.Enabled)
 	envString("SIEM_CEF_DTLS_ADDRESS", &c.Ingest.CEF.DTLS.Address)
+	// The certificates, so TLS and DTLS can be enabled without a config
+	// file (SIEM_CEF_DTLS_ENABLED=true used to fail with "DTLS requires
+	// certificate and key").
+	envString("SIEM_CEF_DTLS_CERT_FILE", &c.Ingest.CEF.DTLS.CertFile)
+	envString("SIEM_CEF_DTLS_KEY_FILE", &c.Ingest.CEF.DTLS.KeyFile)
+	envString("SIEM_CEF_DTLS_CA_FILE", &c.Ingest.CEF.DTLS.CAFile)
+	envBool("SIEM_CEF_DTLS_REQUIRE_CLIENT_CERT", &c.Ingest.CEF.DTLS.RequireClientCert)
+	envBool("SIEM_CEF_TCP_TLS_ENABLED", &c.Ingest.CEF.TCP.TLSEnabled)
+	envString("SIEM_CEF_TCP_TLS_CERT_FILE", &c.Ingest.CEF.TCP.TLSCertFile)
+	envString("SIEM_CEF_TCP_TLS_KEY_FILE", &c.Ingest.CEF.TCP.TLSKeyFile)
 
 	c.expandAlertingSecrets()
 }

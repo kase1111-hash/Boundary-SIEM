@@ -72,8 +72,13 @@ func NewAlertReinjector(engine *Engine) *AlertReinjector {
 }
 
 // Reinject converts an alert to a synthetic event and feeds it back. Alerts
-// at MaxChainDepth are not re-injected.
+// at MaxChainDepth and recurrences (see Alert.Recurrence) are not
+// re-injected: a recurrence is the detection already chained continuing,
+// and chain rules keep seeing one alert.fired event per dedup window.
 func (r *AlertReinjector) Reinject(alert *Alert) {
+	if alert.Recurrence {
+		return
+	}
 	depth := chainDepth(alert.Metadata)
 	if depth >= MaxChainDepth {
 		slog.Debug("not re-injecting alert: maximum chain depth reached",

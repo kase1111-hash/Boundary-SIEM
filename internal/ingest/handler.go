@@ -74,6 +74,7 @@ type Handler struct {
 	components    func() map[string]ComponentStatus
 	sources       func() []SourceMetrics
 	extraMetrics  func() []Metric
+	authRequired  bool
 
 	httpAccepted uint64
 	shuttingDown atomic.Bool
@@ -129,6 +130,14 @@ func (h *Handler) WithComponents(fn func() map[string]ComponentStatus) *Handler 
 // ingest transports for /metrics and siem_events_total.
 func (h *Handler) WithSources(fn func() []SourceMetrics) *Handler {
 	h.sources = fn
+	return h
+}
+
+// WithAuthRequired reports on /health whether the API requires an API key,
+// so the dashboard asks for one before it requests any data (it used to find
+// out from the 401s of its first requests).
+func (h *Handler) WithAuthRequired(required bool) *Handler {
+	h.authRequired = required
 	return h
 }
 
@@ -388,6 +397,7 @@ func (h *Handler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 		"queue_depth":    metrics.Depth,
 		"queue_capacity": metrics.Capacity,
 		"uptime_seconds": int(time.Since(h.startTime).Seconds()),
+		"auth_required":  h.authRequired,
 	}
 	if components != nil {
 		resp["components"] = components

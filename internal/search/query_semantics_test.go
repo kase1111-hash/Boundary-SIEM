@@ -54,7 +54,8 @@ func TestParseQuery_NotNegatesConditionsAndGroups(t *testing.T) {
 		{"severity>1 AND NOT (action:a AND action:b)", "WHERE severity > ? AND (action != ? OR action != ?)"},
 		{"NOT (action:a AND (outcome:x OR outcome:y))", "WHERE action != ? OR outcome != ? AND outcome != ?"},
 		{"NOT (NOT (severity>5))", "WHERE severity > ?"},
-		{"NOT ()", ""},
+		// "NOT ()" matched every event; it is rejected now (see
+		// TestParseQuery_NotWithoutOperandIsRejected).
 	}
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
@@ -66,7 +67,10 @@ func TestParseQuery_NotNegatesConditionsAndGroups(t *testing.T) {
 }
 
 func TestParseQuery_NotWithoutOperandIsRejected(t *testing.T) {
-	for _, q := range []string{"NOT", "action:a AND NOT", "(NOT)", "NOT AND action:a", "action:a NOT OR action:b", "NOT NOT"} {
+	for _, q := range []string{
+		"NOT", "action:a AND NOT", "(NOT)", "NOT AND action:a", "action:a NOT OR action:b", "NOT NOT",
+		"NOT ()", "NOT *", "NOT (*)", // matched every event (E2E round 2)
+	} {
 		if _, err := ParseQuery(q); err == nil {
 			t.Errorf("ParseQuery(%q) succeeded, want error", q)
 		}
@@ -90,11 +94,13 @@ func TestParseQuery_ImplicitAndKeepsLogicAligned(t *testing.T) {
 		{"action=a NOT outcome=x severity>3", "WHERE action = ? AND outcome != ? AND severity > ?", []string{"AND", "AND"}},
 		{"(action:a OR action:b) AND (outcome:x OR outcome:y)", "WHERE (action = ? OR action = ?) AND (outcome = ? OR outcome = ?)", []string{"OR", "AND", "OR"}},
 		{"((action:a OR action:b)) severity>1", "WHERE (action = ? OR action = ?) AND severity > ?", []string{"OR", "AND"}},
-		// Dangling connectives are ignored rather than misaligning Logic.
-		{"AND action:a", "WHERE action = ?", nil},
-		{"action:a OR", "WHERE action = ?", nil},
-		{"action:a AND OR action:b", "WHERE action = ? OR action = ?", []string{"OR"}},
-		{"() action:login", "WHERE action = ?", nil},
+		{"* AND action:a", "WHERE action = ?", nil},
+		{"action:a OR (*)", "", nil}, // OR with a term matching every event matches every event
+		{"(action:a OR *) severity>3", "WHERE severity > ?", nil},
+		// Dangling connectives ("AND action:a", "action:a OR",
+		// "action:a AND OR action:b") and "() action:login" were ignored
+		// rather than misaligning Logic; they are rejected now (see
+		// TestParseQuery_RejectsMalformedQueries).
 	}
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {
@@ -186,7 +192,10 @@ func TestLexer_DecodesUTF8(t *testing.T) {
 		{"user=名前 AND action:x", []string{"名前", "x"}},
 		{`actor.name:"café au lait"`, []string{"café au lait"}},
 		{"action:a outcome:b", []string{"a", "b"}}, // a real NBSP still separates terms
-		{"target:naïve~", []string{"naïve"}},
+		// The value ends at the delimiter right after a multi-byte rune. (This
+		// was "target:naïve~", whose dangling "~" is rejected now.)
+		{"(target:naïve)", []string{"naïve"}},
+		{"target:naïve AND action:x", []string{"naïve", "x"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {

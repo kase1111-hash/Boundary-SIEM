@@ -49,6 +49,8 @@ const noRepair = math.MaxInt
 // databases where earlier releases recorded migrations as applied without
 // executing them (their statements were skipped because they started with a
 // comment). Re-applied migrations are not recorded a second time.
+//
+// The schema fixups (schemaFixups) run last, every time.
 func (m *Migrator) Run(ctx context.Context) error {
 	// Create migrations tracking table
 	if err := m.createMigrationsTable(ctx); err != nil {
@@ -114,7 +116,8 @@ func (m *Migrator) Run(ctx context.Context) error {
 		)
 	}
 
-	return nil
+	// Changes no SQL migration can express (see schemaFixups).
+	return m.runSchemaFixups(ctx)
 }
 
 // createMigrationsTable creates the schema_migrations table if it doesn't exist.

@@ -119,6 +119,30 @@ func TestParseFlagsHelpDoesNotLeakKey(t *testing.T) {
 	}
 }
 
+// E2E round 2: the deploy artifacts ran this binary as the service
+// ("boundary-siem serve --config ...", "boundary-siem health"); it ignored
+// the arguments and started the TUI, which failed with "could not open a
+// new TTY". Service arguments are refused with a pointer to siem-ingest.
+func TestParseFlagsRejectsServiceArguments(t *testing.T) {
+	for _, args := range [][]string{
+		{"serve", "--config", "/etc/boundary-siem/config.yaml"},
+		{"preflight", "--config", "/etc/boundary-siem/config.yaml"},
+		{"health"},
+		{"--config", "/etc/boundary-siem/config.yaml"},
+		{"-server", "http://localhost:8080", "extra"},
+	} {
+		var stderr bytes.Buffer
+		_, err := parseFlags(args, envFrom(nil), &stderr)
+		if err == nil {
+			t.Errorf("parseFlags(%q) accepted service arguments", args)
+			continue
+		}
+		if !strings.Contains(err.Error(), "siem-ingest") {
+			t.Errorf("parseFlags(%q) error = %v, want a pointer to siem-ingest", args, err)
+		}
+	}
+}
+
 func TestInsecureKeyWarning(t *testing.T) {
 	tests := []struct {
 		server string

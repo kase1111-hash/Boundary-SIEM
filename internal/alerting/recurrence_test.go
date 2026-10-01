@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"boundary-siem/internal/correlation"
+
 	"github.com/google/uuid"
 )
 
@@ -156,5 +158,35 @@ func TestRecurrenceAfterResolveAcrossRestartClickHouse(t *testing.T) {
 	}
 	if got.EventCount != 2 {
 		t.Errorf("persisted event_count after a merged recurrence = %d, want 2", got.EventCount)
+	}
+}
+
+// E2E round 2: merging a recurrence added all of its events, including ones
+// the alert already listed (event_count 3 with 2 distinct event IDs).
+func TestMergedRecurrenceDoesNotCountKnownEvents(t *testing.T) {
+	mgr := NewManager(ManagerConfig{DeduplicationWindow: time.Hour, RetentionPeriod: time.Hour, MaxAlerts: 100}, nil)
+	ctx := context.Background()
+
+	first := makeCorrelationAlert("sec-001", "[actor.ip=10.78.0.3]", "Blocked RPC", 9)
+	if err := mgr.HandleCorrelationAlert(ctx, first); err != nil {
+		t.Fatal(err)
+	}
+	again := makeCorrelationAlert("sec-001", "[actor.ip=10.78.0.3]", "Blocked RPC", 9)
+	again.Recurrence = true
+	newEvent := again.Events[0]
+	again.Events = []correlation.EventRef{first.Events[0], newEvent}
+	if err := mgr.HandleCorrelationAlert(ctx, again); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := mgr.GetAlert(ctx, first.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.EventCount != 2 || len(got.EventIDs) != 2 || got.EventIDs[1] != newEvent.EventID {
+		t.Errorf("merged alert event_count=%d event_ids=%v, want 2 distinct events", got.EventCount, got.EventIDs)
+	}
+	if got.Metadata[metaOccurrences] != 2 {
+		t.Errorf("occurrences = %v, want 2", got.Metadata[metaOccurrences])
 	}
 }

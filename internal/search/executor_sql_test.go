@@ -221,7 +221,9 @@ func TestParseQuery_RejectsUnbalancedParentheses(t *testing.T) {
 		"(action:login)",
 		"(action:login OR action:logout) AND severity>5",
 		"((action:login) OR (action:logout AND severity>1))",
-		"() action:login",
+		"(*) action:login",
+		// "() action:login" is balanced but empty: rejected since E2E round 2
+		// (TestParseQuery_RejectsMalformedQueries).
 	} {
 		if _, err := ParseQuery(s); err != nil {
 			t.Errorf("ParseQuery(%q) error = %v, want balanced query accepted", s, err)

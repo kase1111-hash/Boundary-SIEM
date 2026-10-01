@@ -12,7 +12,12 @@ import type {
   EventStats,
 } from "../types/api";
 
-import { API_KEY_HEADER, getApiKey, handleUnauthorized } from "./auth";
+import {
+  API_KEY_HEADER,
+  getAnalystName,
+  getApiKey,
+  handleUnauthorized,
+} from "./auth";
 
 const BASE = "";
 
@@ -62,7 +67,10 @@ async function request<T>(
       // Drop the rejected key and let the UI prompt for a new one
       handleUnauthorized(apiKey, message);
     }
-    throw new ApiError(res.status, message, body.code);
+    // details says what exactly is wrong (e.g. unknown field "foo"); it
+    // used to be dropped, so banners showed only "invalid query".
+    const details = typeof body.details === "string" ? body.details : undefined;
+    throw new ApiError(res.status, message, body.code, details);
   }
   const text = await res.text();
   return (text ? JSON.parse(text) : undefined) as T;
@@ -73,6 +81,8 @@ export class ApiError extends Error {
     public status: number,
     message: string,
     public code?: string,
+    /** The server's explanation (the "details" of its error response). */
+    public details?: string,
   ) {
     super(message);
     this.name = "ApiError";
@@ -87,6 +97,9 @@ export function describeError(err: unknown): string {
   if (err instanceof ApiError && err.status === 403) {
     return `Access denied: ${err.message}`;
   }
+  if (err instanceof ApiError && err.details) {
+    return `${err.message}: ${err.details}`;
+  }
   if (err instanceof Error && err.message) {
     return err.message;
   }
@@ -96,6 +109,27 @@ export function describeError(err: unknown): string {
 /** True for errors that retrying without a new API key cannot fix. */
 export function isAuthError(err: unknown): boolean {
   return err instanceof ApiError && (err.status === 401 || err.status === 403);
+}
+
+/**
+ * True for errors that retrying the same request cannot fix: the server
+ * refused the request itself (4xx: an invalid query, a missing key, an
+ * unknown alert), as opposed to a network failure or a server error. Request
+ * timeouts (408) and rate limiting (429) are worth retrying.
+ */
+export function isClientError(err: unknown): boolean {
+  return (
+    err instanceof ApiError &&
+    err.status >= 400 &&
+    err.status < 500 &&
+    err.status !== 408 &&
+    err.status !== 429
+  );
+}
+
+/** Whether a failed query should be retried (once); see isClientError. */
+export function shouldRetry(failureCount: number, err: unknown): boolean {
+  return !isClientError(err) && failureCount < 1;
 }
 
 // --- Alerts ---
@@ -119,31 +153,39 @@ export async function getAlert(id: string): Promise<Alert> {
   return request<Alert>(`/v1/alerts/${id}`);
 }
 
+// Alert actions name the analyst entered with the API key (getAnalystName),
+// if any. The server records the name together with the API key that made
+// the request ("alice (api-key-2)"), or the key alone without a name. (The
+// dashboard used to send the fixed user "operator".)
+
 export async function acknowledgeAlert(
   id: string,
-  user: string,
+  user: string = getAnalystName(),
 ): Promise<void> {
   await request(`/v1/alerts/${id}/acknowledge`, {
     method: "POST",
-    body: JSON.stringify({ user }),
+    body: JSON.stringify(user ? { user } : {}),
   });
 }
 
-export async function resolveAlert(id: string, user: string): Promise<void> {
+export async function resolveAlert(
+  id: string,
+  user: string = getAnalystName(),
+): Promise<void> {
   await request(`/v1/alerts/${id}/resolve`, {
     method: "POST",
-    body: JSON.stringify({ user }),
+    body: JSON.stringify(user ? { user } : {}),
   });
 }
 
 export async function addAlertNote(
   id: string,
-  author: string,
   content: string,
+  author: string = getAnalystName(),
 ): Promise<void> {
   await request(`/v1/alerts/${id}/notes`, {
     method: "POST",
-    body: JSON.stringify({ author, content }),
+    body: JSON.stringify(author ? { author, content } : { content }),
   });
 }
 
@@ -259,4 +301,20 @@ export async function testRule(
 
 export async function healthCheck(): Promise<Record<string, unknown>> {
   return request("/health");
+}
+
+/**
+ * Whether the server requires an API key, from the public /health
+ * (auth_required). Unknown (null) when /health cannot be read or is from a
+ * server that does not report it.
+ */
+export async function authRequired(): Promise<boolean | null> {
+  try {
+    const res = await fetch(`${BASE}/health`, { credentials: "include" });
+    if (!res.ok) return null;
+    const body = await res.json();
+    return typeof body?.auth_required === "boolean" ? body.auth_required : null;
+  } catch {
+    return null;
+  }
 }

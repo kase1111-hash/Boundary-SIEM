@@ -579,12 +579,15 @@ func GetConsensusRules() []*correlation.Rule {
 func GetTransactionRules() []*correlation.Rule {
 	return []*correlation.Rule{
 		{
+			// The shipped rule community-evm-high-value-transfer covers
+			// 500-1000 ETH (high); both used to fire on every transfer of
+			// 1000 ETH and more, this one as medium.
 			ID:          "tx-001",
 			Name:        "Large ETH Transfer",
-			Description: "Unusually large ETH transfer detected",
+			Description: "ETH transfer of 1000 ETH or more",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"transaction", "transfer", "whale"},
 			EventConditions: []correlation.Condition{
 				// evm.transaction is what the EVM poller emits (with value_eth and from).
