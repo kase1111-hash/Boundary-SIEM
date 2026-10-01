@@ -330,6 +330,11 @@ All endpoints except `POST /v1/events` need storage; without it they are not reg
 | POST | `/v1/alerts/{id}/assign` | Assign alert (`{"assignee":"..."}`) |
 | GET | `/v1/alerts/stats` | Alert counts by status and severity |
 
+Alert lifecycle changes return 409 when the transition is not allowed (for
+example acknowledging a resolved alert). If ClickHouse is unavailable, new
+alerts and lifecycle changes are still applied (200) and their writes are
+queued; a background writer stores them with backoff once storage answers.
+
 ### Rules
 | Method | Endpoint | Description |
 |--------|----------|-------------|
@@ -359,7 +364,9 @@ example storage) is down. Storage is probed every 5 seconds.
 Metrics include `siem_events_total`, `siem_events_ingested_total{transport}`,
 `siem_cef_*{transport}`, `siem_queue_*`, `siem_quarantine_written_total`,
 `siem_correlation_events_total`, `siem_correlation_events_dropped_total`,
-`siem_correlation_rules`, `siem_alerts`, `siem_storage_*` (including
+`siem_correlation_rules`, `siem_alerts`, `siem_alerts_pending_writes`,
+`siem_alerts_write_failures_total`, `siem_alerts_writes_retried_total`,
+`siem_alerts_writes_dropped_total`, `siem_storage_*` (including
 `siem_storage_up`), `siem_websocket_*`, `siem_component_up{component}` and
 `siem_uptime_seconds`.
 
@@ -367,7 +374,7 @@ Metrics include `siem_events_total`, `siem_events_ingested_total{transport}`,
 
 1. Connect to `/ws/events` and send `{"type":"auth","api_key":"<key>"}` within 10 seconds.
 2. The server answers `{"type":"auth_ok"}`, or closes with code 4401 and reason `missing API key`, `invalid API key` or `authentication required`. With auth disabled any auth message is accepted.
-3. The server then pushes `{"type":"alert","data":<alert as in GET /v1/alerts/{id}>}` for new alerts and for acknowledge/resolve/notes/assign changes, and `{"type":"stats","data":<GET /v1/stats body>}` every `websocket.stats_interval` (storage only). `{"type":"ping"}` gets `{"type":"pong"}`.
+3. The server then pushes `{"type":"alert","data":<alert as in GET /v1/alerts/{id}>}` for new alerts, for recurrences merged into an open alert, and for acknowledge/resolve/notes/assign changes, and `{"type":"stats","data":<GET /v1/stats body>}` every `websocket.stats_interval` (storage only). `{"type":"ping"}` gets `{"type":"pong"}`.
 
 Browser origins are accepted when same-origin or allowed by the CORS config.
 Slow clients are disconnected (close code 1013), shutdown closes with 1001,
@@ -379,7 +386,9 @@ On SIGTERM or SIGINT, `siem-ingest` stops its listeners, drains every accepted
 event into storage and correlation, flushes, and exits within
 `server.shutdown_timeout` (default 8s). The last log line is `shutdown complete`
 with `events_accepted` and `events_lost`, or `shutdown complete with lost
-events` (ERROR) if storage could not take them in time.
+events` (ERROR) if storage could not take them in time. Queued alert writes
+get one final flush; any that still fail are logged at ERROR (`shutdown
+complete with alert changes not persisted`, with `alerts_unpersisted`).
 
 ## Community Rules
 
