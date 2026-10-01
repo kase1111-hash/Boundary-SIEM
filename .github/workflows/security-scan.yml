@@ -67,6 +67,10 @@ jobs:
         with:
           fail-on-severity: moderate
           deny-licenses: GPL-3.0, AGPL-3.0
+          # The deny list is for code that ships with Boundary-SIEM. TruffleHog
+          # (AGPL-3.0) only runs as a CI action in security.yml and is never
+          # linked into or distributed with the product.
+          allow-dependencies-licenses: pkg:githubactions/trufflesecurity/trufflehog
 
   gosec:
     name: Security Scan with gosec
