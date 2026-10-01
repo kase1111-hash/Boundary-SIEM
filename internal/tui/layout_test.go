@@ -82,3 +82,46 @@ func TestClipLines(t *testing.T) {
 		t.Errorf("clamped clip = %q, %d, want the last 3 lines with offset 2", got, off)
 	}
 }
+
+// E2E round 3: the Events scene sized its table from the whole window minus a
+// guessed 12 lines, so at 30 and 45 rows its own status line ("1-n of 100
+// ...") was always clipped and replaced by a "↓ 1 more line(s)" hint that j
+// could not act on (j moves the event cursor on this tab).
+func TestEventsTableFitsWindow(t *testing.T) {
+	results := make([]api.SearchResult, 100)
+	for i := range results {
+		results[i] = api.SearchResult{EventID: "evt", Action: "login", Outcome: "success"}
+	}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/search" {
+			encodeJSON(t, w, api.SearchResponse{Results: results, TotalCount: 100})
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer ts.Close()
+
+	for _, height := range []int{20, 30, 45} {
+		m := New(ts.URL)
+		m.Update(tea.WindowSizeMsg{Width: 140, Height: height})
+		m.Update(keyMsg("2"))
+		m.Update(m.events.Init()())
+
+		for _, presses := range []int{0, 120} {
+			for range presses {
+				m.Update(keyMsg("j"))
+			}
+			view := m.View()
+			lines := strings.Split(view, "\n")
+			if len(lines) > height {
+				t.Errorf("height %d, %d presses: view has %d lines", height, presses, len(lines))
+			}
+			if strings.Contains(view, "more line(s)") {
+				t.Errorf("height %d, %d presses: events table overflows the window:\n%s", height, presses, view)
+			}
+			if !strings.Contains(view, "of 100 (↑↓ to scroll") {
+				t.Errorf("height %d, %d presses: status line is not visible:\n%s", height, presses, view)
+			}
+		}
+	}
+}

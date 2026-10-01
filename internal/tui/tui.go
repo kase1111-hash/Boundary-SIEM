@@ -156,9 +156,12 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Pass to all scenes so they can adjust
+		// Pass to all scenes so they can adjust. The events table sizes itself
+		// to the content area (the window minus the tab bar and footer, as in
+		// View), so it is not clipped; the other scenes scroll.
 		m.dashboard, _ = m.dashboard.Update(msg)
-		m.events, _ = m.events.Update(msg)
+		content := max(1, msg.Height-lipgloss.Height(m.renderHeader())-lipgloss.Height(m.renderFooter()))
+		m.events, _ = m.events.Update(tea.WindowSizeMsg{Width: msg.Width, Height: content})
 		m.system, _ = m.system.Update(msg)
 		return m, nil
 

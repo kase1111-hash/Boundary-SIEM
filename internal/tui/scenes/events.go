@@ -81,7 +81,7 @@ func (e *EventsScene) Update(msg tea.Msg) (*EventsScene, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		e.width = msg.Width
 		e.height = msg.Height
-		e.maxRows = max(5, e.height-12)
+		e.maxRows = max(1, e.height-tableChrome())
 		return e, nil
 
 	case tea.KeyMsg:
@@ -135,6 +135,17 @@ func (e *EventsScene) Update(msg tea.Msg) (*EventsScene, tea.Cmd) {
 	}
 
 	return e, nil
+}
+
+// tableChrome is the number of lines View draws around the table rows: the
+// title, the count line, the column header and the status line, rendered with
+// the same styles and separators as View.
+func tableChrome() int {
+	chrome := styles.Title.Render("x") + "\n\n" +
+		styles.Subtitle.Render("x") + "\n\n" +
+		styles.TableHeader.Render("x") + "\n" +
+		styles.Muted.Render("\n  x")
+	return strings.Count(chrome, "\n") + 1
 }
 
 // View renders the events list
