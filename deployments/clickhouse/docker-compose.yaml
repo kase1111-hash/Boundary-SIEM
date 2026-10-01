@@ -1,29 +1,33 @@
-version: '3.8'
+# ClickHouse for local development.
+#
+#   cp deployments/clickhouse/.env.example deployments/clickhouse/.env   # set CLICKHOUSE_PASSWORD
+#   docker compose -f deployments/clickhouse/docker-compose.yaml up -d
+#
+# Then run siem-ingest with:
+#   CLICKHOUSE_HOST=localhost:9000 CLICKHOUSE_USER=siem CLICKHOUSE_PASSWORD=<password>
+# siem-ingest creates the database (default "siem") and runs the migrations.
 
 services:
   clickhouse:
     image: clickhouse/clickhouse-server:23.8
     container_name: siem-clickhouse
     ports:
-      - "8123:8123"   # HTTP interface
-      - "9000:9000"   # Native interface
-      - "9009:9009"   # Interserver (for clusters)
+      - "127.0.0.1:8123:8123"   # HTTP interface
+      - "127.0.0.1:9000:9000"   # Native interface (used by siem-ingest)
     volumes:
       - clickhouse_data:/var/lib/clickhouse
       - clickhouse_logs:/var/log/clickhouse-server
       - ./config.xml:/etc/clickhouse-server/config.d/custom.xml:ro
       - ./users.xml:/etc/clickhouse-server/users.d/custom.xml:ro
     environment:
-      - CLICKHOUSE_DB=siem
       - CLICKHOUSE_USER=siem
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:?Set CLICKHOUSE_PASSWORD in .env or environment}
-      - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
     ulimits:
       nofile:
         soft: 262144
         hard: 262144
     healthcheck:
-      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      test: ["CMD-SHELL", "clickhouse-client --user \"$$CLICKHOUSE_USER\" --password \"$$CLICKHOUSE_PASSWORD\" --query 'SELECT 1'"]
       interval: 10s
       timeout: 5s
       retries: 5

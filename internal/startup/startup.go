@@ -262,67 +262,89 @@ func (d *Diagnostics) checkConfiguration() {
 	}
 }
 
+// portCheck is one listener whose address is probed before startup.
+type portCheck struct {
+	name    string
+	network string // "tcp" or "udp", the protocol the listener uses
+	address string // the address the listener binds, e.g. ":5515" or "10.0.0.1:5515"
+	port    int
+}
+
 func (d *Diagnostics) checkPorts() {
 	d.logger.Info("checking network ports")
 
-	ports := []struct {
+	// The HTTP server binds ":<http_port>" (see internal/app).
+	checks := []portCheck{{
+		name:    "HTTP API",
+		network: "tcp",
+		address: fmt.Sprintf(":%d", d.cfg.Server.HTTPPort),
+		port:    d.cfg.Server.HTTPPort,
+	}}
+
+	// CEF listeners bind their configured address with their own protocol:
+	// plain UDP and DTLS are UDP, CEF TCP is TCP. Probing a UDP port with a
+	// TCP bind would miss a UDP port that is taken and fail on an unrelated
+	// TCP listener with the same number.
+	cef := d.cfg.Ingest.CEF
+	listeners := []struct {
 		name    string
-		port    int
+		network string
 		enabled bool
+		address string
 	}{
-		{"HTTP API", d.cfg.Server.HTTPPort, true},
+		{"CEF UDP", "udp", cef.UDP.Enabled, cef.UDP.Address},
+		{"CEF TCP", "tcp", cef.TCP.Enabled, cef.TCP.Address},
+		{"CEF DTLS", "udp", cef.DTLS.Enabled, cef.DTLS.Address},
 	}
-
-	// Add CEF ports if enabled
-	if d.cfg.Ingest.CEF.UDP.Enabled {
-		// Parse port from address
-		if port, ok := d.parseListenPort("CEF UDP", d.cfg.Ingest.CEF.UDP.Address); ok {
-			ports = append(ports, struct {
-				name    string
-				port    int
-				enabled bool
-			}{"CEF UDP", port, true})
-		}
-	}
-
-	if d.cfg.Ingest.CEF.TCP.Enabled {
-		if port, ok := d.parseListenPort("CEF TCP", d.cfg.Ingest.CEF.TCP.Address); ok {
-			ports = append(ports, struct {
-				name    string
-				port    int
-				enabled bool
-			}{"CEF TCP", port, true})
-		}
-	}
-
-	for _, p := range ports {
-		if !p.enabled {
-			d.addResult(DiagnosticResult{
-				Name:    fmt.Sprintf("port_%s", p.name),
-				Status:  StatusSkipped,
-				Message: "Service disabled",
-			})
+	for _, l := range listeners {
+		if !l.enabled {
 			continue
 		}
-
-		// Try to bind to the port briefly
-		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", p.port))
-		if err != nil {
-			d.addResult(DiagnosticResult{
-				Name:    fmt.Sprintf("port_%s", p.name),
-				Status:  StatusError,
-				Message: fmt.Sprintf("Port %d is not available: %s", p.port, err),
-				Details: map[string]string{"port": fmt.Sprintf("%d", p.port)},
-			})
-		} else {
-			listener.Close()
-			d.addResult(DiagnosticResult{
-				Name:    fmt.Sprintf("port_%s", p.name),
-				Status:  StatusOK,
-				Message: fmt.Sprintf("Port %d is available", p.port),
-				Details: map[string]string{"port": fmt.Sprintf("%d", p.port)},
-			})
+		if port, ok := d.parseListenPort(l.name, l.address); ok {
+			checks = append(checks, portCheck{name: l.name, network: l.network, address: l.address, port: port})
 		}
+	}
+
+	for _, c := range checks {
+		d.addResult(probePort(c))
+	}
+}
+
+// probePort binds c.address with c.network briefly and reports whether the
+// listener will be able to bind it.
+func probePort(c portCheck) DiagnosticResult {
+	details := map[string]string{
+		"port":     strconv.Itoa(c.port),
+		"protocol": c.network,
+		"address":  c.address,
+	}
+
+	var err error
+	if c.network == "udp" {
+		var pc net.PacketConn
+		if pc, err = net.ListenPacket("udp", c.address); err == nil {
+			_ = pc.Close()
+		}
+	} else {
+		var ln net.Listener
+		if ln, err = net.Listen("tcp", c.address); err == nil {
+			_ = ln.Close()
+		}
+	}
+
+	if err != nil {
+		return DiagnosticResult{
+			Name:    fmt.Sprintf("port_%s", c.name),
+			Status:  StatusError,
+			Message: fmt.Sprintf("Port %d/%s is not available: %s", c.port, c.network, err),
+			Details: details,
+		}
+	}
+	return DiagnosticResult{
+		Name:    fmt.Sprintf("port_%s", c.name),
+		Status:  StatusOK,
+		Message: fmt.Sprintf("Port %d/%s is available", c.port, c.network),
+		Details: details,
 	}
 }
 
@@ -544,7 +566,7 @@ func (d *Diagnostics) checkStorage(ctx context.Context) {
 			Details: map[string]string{"host": host},
 		})
 	} else {
-		conn.Close()
+		_ = conn.Close()
 		d.addResult(DiagnosticResult{
 			Name:    "clickhouse_connectivity",
 			Status:  StatusOK,

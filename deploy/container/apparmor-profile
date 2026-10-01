@@ -25,8 +25,8 @@ profile boundary-siem flags=(attach_disconnected,mediate_deleted) {
   # File System Access
   # ==========================================================================
 
-  # Binary execution
-  /usr/local/bin/boundary-siem mr,
+  # Binary execution (image built from deploy/container/Dockerfile)
+  /usr/local/bin/siem-ingest mr,
 
   # Read-only access to system files
   /etc/passwd r,
@@ -39,7 +39,21 @@ profile boundary-siem flags=(attach_disconnected,mediate_deleted) {
   /usr/share/ca-certificates/** r,
   /usr/share/zoneinfo/** r,
 
-  # Configuration directory - read only
+  # Working directory /app: config, shipped rules and certificates read only,
+  # data/ (rules written by the rules API) and logs/ writable
+  /app/ r,
+  /app/configs/ r,
+  /app/configs/** r,
+  /app/rules/ r,
+  /app/rules/** r,
+  /app/certs/ r,
+  /app/certs/** r,
+  /app/data/ rw,
+  /app/data/** rwk,
+  /app/logs/ rw,
+  /app/logs/** rwk,
+
+  # Configuration directory - read only (SIEM_CONFIG_PATH=/etc/boundary-siem/...)
   /etc/boundary-siem/ r,
   /etc/boundary-siem/** r,
 

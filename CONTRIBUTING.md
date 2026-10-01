@@ -17,9 +17,10 @@ Thank you for your interest in contributing to Boundary-SIEM! This document prov
 
 ### Prerequisites
 
-- **Go 1.24+** - [Installation Guide](https://golang.org/doc/install)
+- **Go 1.26+** - [Installation Guide](https://go.dev/doc/install) (`go.mod` declares `go 1.26.0`)
 - **Docker & Docker Compose** - For local development dependencies
-- **ClickHouse 23.8+** (optional) - For persistent storage testing
+- **ClickHouse 23.8+** (optional) - For storage, search and alert persistence
+- **Node.js 22.12+** (optional) - For the web dashboard in `web/`
 - **Git** - Version control
 
 ### Fork and Clone
@@ -51,8 +52,14 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 ### Start Local Services
 
 ```bash
-# Start ClickHouse (optional, for storage testing)
-docker-compose -f deployments/clickhouse/docker-compose.yaml up -d
+# Start ClickHouse (optional, for storage testing); set CLICKHOUSE_PASSWORD
+# in deployments/clickhouse/.env first (copy .env.example)
+docker compose -f deployments/clickhouse/docker-compose.yaml up -d
+
+# ClickHouse integration tests run only when CLICKHOUSE_TEST_ADDR is set
+# (credentials: CLICKHOUSE_TEST_USER, CLICKHOUSE_TEST_PASSWORD)
+CLICKHOUSE_TEST_ADDR=localhost:9000 CLICKHOUSE_TEST_USER=siem CLICKHOUSE_TEST_PASSWORD=<password> \
+  go test ./internal/storage/ ./internal/search/
 ```
 
 ### Build
@@ -64,15 +71,19 @@ make build
 # Or build individually
 make build-ingest  # Build SIEM server
 make build-tui     # Build Terminal UI
+make build-rules   # Build rule validator
 ```
 
 ### Run
 
 ```bash
-# Run the SIEM server
+# Run the SIEM server from the repository root. The shipped config enables
+# API-key auth and ClickHouse storage: set a key and the ClickHouse
+# credentials, or set storage.enabled: false in configs/config.yaml.
+export SIEM_API_KEY=dev-key-change-me CLICKHOUSE_USER=siem CLICKHOUSE_PASSWORD=<password>
 make run
 
-# In another terminal, run the TUI
+# In another terminal, run the TUI (reads SIEM_API_KEY)
 make run-tui
 ```
 
@@ -104,15 +115,17 @@ boundary-siem/
 │   ├── siem-ingest/       # SIEM server
 │   └── siem-rules/        # Rule validation CLI
 ├── internal/              # Private application code
+│   ├── app/              # siem-ingest assembly: routes, health, shutdown
 │   ├── alerting/         # Alert manager, notification channels, escalation
-│   ├── api/              # REST API handlers (auth, dashboard, reports)
-│   ├── blockchain/       # Blockchain-specific modules
-│   ├── correlation/      # Event correlation engine
-│   ├── detection/        # Detection rules (143+ built-in)
-│   ├── ingest/           # Event ingestion (CEF, EVM, HTTP)
+│   ├── api/              # Auth, dashboard, reports (not used by siem-ingest yet)
+│   ├── blockchain/       # Blockchain-specific modules (not used by siem-ingest yet)
+│   ├── correlation/      # Event correlation engine, rules API
+│   ├── detection/        # Detection rules (130 built-in)
+│   ├── ingest/           # Event ingestion (CEF, EVM, HTTP), quarantine
 │   ├── schema/           # Canonical event schema
 │   ├── search/           # ClickHouse query executor
 │   ├── storage/          # ClickHouse storage, batch writer, migrations
+│   ├── ws/               # WebSocket hub
 │   └── tui/              # Terminal UI
 ├── web/                   # React dashboard (Vite + TypeScript + Tailwind)
 ├── rules/                 # Community YAML detection rules

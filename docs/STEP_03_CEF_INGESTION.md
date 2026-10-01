@@ -1,5 +1,7 @@
 # Step 3: CEF Ingestion
 
+> **Note:** historical implementation guide from the first build steps. For the current API, configuration and deployment, see the README.
+
 **Objective:** Implement Common Event Format (CEF) ingestion over UDP and TCP, with parsing and normalization to the canonical event schema.
 
 **Estimated Complexity:** Medium

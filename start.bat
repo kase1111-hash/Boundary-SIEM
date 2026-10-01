@@ -85,13 +85,22 @@ if exist "%CH_EXE%" (
 REM ----------------------------------------
 REM Start SIEM Service
 REM ----------------------------------------
+if "%SIEM_API_KEY%"=="" (
+    echo.
+    echo [WARNING] SIEM_API_KEY is not set. configs\config.yaml enables
+    echo           authentication, so every API call will get 401 until a key
+    echo           is configured. Set one before starting, for example:
+    echo             set SIEM_API_KEY=dev-key-change-me
+)
+
 echo.
 echo [INFO] Starting Boundary-SIEM Ingest Service...
 echo.
 echo ----------------------------------------
 echo  HTTP API:     http://localhost:8080
 echo  Health:       http://localhost:8080/health
-echo  Search API:   http://localhost:8080/v1/search
+echo  Ready:        http://localhost:8080/ready
+echo  Search API:   http://localhost:8080/v1/search  (header X-API-Key)
 echo  CEF TCP:      localhost:5515
 echo  ClickHouse:   %CH_RUNNING% (1=running, 0=not available)
 echo ----------------------------------------

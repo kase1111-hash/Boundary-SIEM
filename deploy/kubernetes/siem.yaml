@@ -1,5 +1,15 @@
 # Boundary SIEM Kubernetes Deployment
-# High-availability configuration with auto-scaling
+#
+# One siem-ingest replica (correlation state and alert deduplication live in
+# the process) backed by an existing ClickHouse service. The image is built
+# from deploy/container/Dockerfile.
+#
+#   kubectl apply -f deploy/kubernetes/siem.yaml
+#   kubectl -n boundary-siem create secret generic siem-secrets \
+#     --from-literal=api-key=<api key> --from-literal=clickhouse-password=<password> \
+#     --dry-run=client -o yaml | kubectl apply -f -
+#
+# Adjust CLICKHOUSE_HOST below to your ClickHouse service (native port 9000).
 
 ---
 apiVersion: v1
@@ -7,17 +17,28 @@ kind: Namespace
 metadata:
   name: boundary-siem
   labels:
-    app.kubernetes.io/name: boundary-siem
-    app.kubernetes.io/component: siem
+    name: boundary-siem
+    # Pod Security Standards - Restricted (same labels as
+    # deploy/container/pod-security-policy.yaml)
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/warn: restricted
+    pod-security.kubernetes.io/warn-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/audit-version: latest
 
 ---
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: siem-service-account
+  name: siem
   namespace: boundary-siem
+automountServiceAccountToken: false
 
 ---
+# Mounted over the image's /app/configs. Relative paths are resolved from
+# the working directory /app. Environment variables in the Deployment
+# override these values.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -26,52 +47,67 @@ metadata:
 data:
   config.yaml: |
     server:
-      bind_address: "0.0.0.0"
       http_port: 8080
-      grpc_port: 9090
+      shutdown_timeout: 8s      # below terminationGracePeriodSeconds
+    ingest:
+      cef:
+        tcp:
+          enabled: true
+          address: ":5515"
+          tls_enabled: false    # mount certificates into /app/certs and enable for production
+        udp:
+          enabled: false
+        dtls:
+          enabled: false
+    auth:
+      enabled: true             # keys come from SIEM_API_KEY
+    storage:
+      enabled: true
+      clickhouse:
+        database: siem
+        tls_enabled: false
+    correlation:
+      rules_dir: data/rules
+      seed_rules_dir: rules
+    websocket:
+      enabled: true
 
-    cluster:
-      node_name: "${POD_NAME}"
-      bind_port: 7946
-      join_addresses: ["siem-headless:7946"]
-      heartbeat_interval: 1s
-      election_timeout: 5s
+---
+# Replace the placeholder values (or create the secret as shown above).
+apiVersion: v1
+kind: Secret
+metadata:
+  name: siem-secrets
+  namespace: boundary-siem
+type: Opaque
+stringData:
+  api-key: ""
+  clickhouse-password: ""
 
-    kafka:
-      brokers: ["kafka-0.kafka:9092", "kafka-1.kafka:9092", "kafka-2.kafka:9092"]
-      topic: "siem-events"
-      consumer_group: "siem-consumers"
-      partitions: 12
-      replication_factor: 3
-
-    clickhouse:
-      hosts: ["clickhouse-0.clickhouse:9000", "clickhouse-1.clickhouse:9000"]
-      database: "siem"
-      cluster: "siem_cluster"
-      shards: 3
-      replicas: 2
-
-    retention:
-      hot_days: 7
-      warm_days: 30
-      cold_days: 365
-      archive_enabled: true
-      s3_bucket: "boundary-siem-archive"
-
-    logging:
-      level: info
-      format: json
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: siem-data
+  namespace: boundary-siem
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi              # custom rules and overrides only; events live in ClickHouse
 
 ---
 apiVersion: apps/v1
-kind: StatefulSet
+kind: Deployment
 metadata:
   name: siem
   namespace: boundary-siem
+  labels:
+    app: siem
 spec:
-  serviceName: siem-headless
-  replicas: 3
-  podManagementPolicy: Parallel
+  replicas: 1
+  strategy:
+    type: Recreate              # never run two instances against the same data
   selector:
     matchLabels:
       app: siem
@@ -80,93 +116,82 @@ spec:
       labels:
         app: siem
         app.kubernetes.io/name: boundary-siem
-        app.kubernetes.io/component: siem
       annotations:
         prometheus.io/scrape: "true"
-        prometheus.io/port: "9090"
+        prometheus.io/port: "8080"
         prometheus.io/path: "/metrics"
     spec:
-      serviceAccountName: siem-service-account
-      terminationGracePeriodSeconds: 60
-      affinity:
-        podAntiAffinity:
-          requiredDuringSchedulingIgnoredDuringExecution:
-          - labelSelector:
-              matchExpressions:
-              - key: app
-                operator: In
-                values:
-                - siem
-            topologyKey: kubernetes.io/hostname
-        nodeAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-          - weight: 100
-            preference:
-              matchExpressions:
-              - key: node-type
-                operator: In
-                values:
-                - siem
-      tolerations:
-      - key: "dedicated"
-        operator: "Equal"
-        value: "siem"
-        effect: "NoSchedule"
+      serviceAccountName: siem
+      terminationGracePeriodSeconds: 15
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
       containers:
       - name: siem
         image: boundary-siem:latest
-        imagePullPolicy: Always
+        imagePullPolicy: IfNotPresent
         ports:
         - name: http
           containerPort: 8080
-        - name: grpc
-          containerPort: 9090
-        - name: cluster
-          containerPort: 7946
+        - name: cef-tcp
+          containerPort: 5515
         env:
-        - name: POD_NAME
+        - name: SIEM_API_KEY
           valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
-        - name: POD_IP
+            secretKeyRef:
+              name: siem-secrets
+              key: api-key
+        - name: CLICKHOUSE_HOST
+          value: "clickhouse.clickhouse.svc.cluster.local:9000"
+        - name: CLICKHOUSE_USER
+          value: "siem"
+        - name: CLICKHOUSE_PASSWORD
           valueFrom:
-            fieldRef:
-              fieldPath: status.podIP
-        - name: POD_NAMESPACE
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.namespace
+            secretKeyRef:
+              name: siem-secrets
+              key: clickhouse-password
         resources:
           requests:
             cpu: "500m"
-            memory: "1Gi"
+            memory: "512Mi"
           limits:
             cpu: "2"
-            memory: "4Gi"
-        livenessProbe:
+            memory: "2Gi"
+        startupProbe:
           httpGet:
             path: /health
             port: http
-          initialDelaySeconds: 30
+          periodSeconds: 5
+          failureThreshold: 24
+        livenessProbe:
+          httpGet:
+            path: /health        # 200 while the process serves requests
+            port: http
           periodSeconds: 10
           timeoutSeconds: 5
           failureThreshold: 3
         readinessProbe:
           httpGet:
-            path: /ready
+            path: /ready         # 503 while shutting down, backlogged, or storage is down
             port: http
-          initialDelaySeconds: 10
           periodSeconds: 5
           timeoutSeconds: 3
           failureThreshold: 3
         volumeMounts:
         - name: config
-          mountPath: /etc/siem
+          mountPath: /app/configs
+          readOnly: true
         - name: data
-          mountPath: /var/lib/siem
+          mountPath: /app/data
+        - name: logs
+          mountPath: /app/logs
+        - name: tmp
+          mountPath: /tmp
         securityContext:
-          runAsNonRoot: true
-          runAsUser: 1000
           readOnlyRootFilesystem: true
           allowPrivilegeEscalation: false
           capabilities:
@@ -176,15 +201,14 @@ spec:
       - name: config
         configMap:
           name: siem-config
-  volumeClaimTemplates:
-  - metadata:
-      name: data
-    spec:
-      accessModes: ["ReadWriteOnce"]
-      storageClassName: fast-ssd
-      resources:
-        requests:
-          storage: 100Gi
+      - name: data
+        persistentVolumeClaim:
+          claimName: siem-data
+      - name: logs
+        emptyDir: {}
+      - name: tmp
+        emptyDir:
+          sizeLimit: 64Mi
 
 ---
 apiVersion: v1
@@ -196,36 +220,17 @@ spec:
   type: ClusterIP
   ports:
   - name: http
-    port: 80
-    targetPort: http
-  - name: grpc
-    port: 9090
-    targetPort: grpc
-  selector:
-    app: siem
-
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: siem-headless
-  namespace: boundary-siem
-spec:
-  clusterIP: None
-  ports:
-  - name: http
     port: 8080
     targetPort: http
-  - name: grpc
-    port: 9090
-    targetPort: grpc
-  - name: cluster
-    port: 7946
-    targetPort: cluster
+  - name: cef-tcp
+    port: 5515
+    targetPort: cef-tcp
   selector:
     app: siem
 
 ---
+# HTTP API and dashboard behind an ingress controller. The WebSocket stream
+# (/ws/events) needs an ingress that passes Upgrade headers (ingress-nginx does).
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -233,7 +238,8 @@ metadata:
   namespace: boundary-siem
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
-    nginx.ingress.kubernetes.io/proxy-body-size: "100m"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"   # ingest.max_payload_size
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   ingressClassName: nginx
@@ -254,83 +260,7 @@ spec:
               name: http
 
 ---
-apiVersion: policy/v1
-kind: PodDisruptionBudget
-metadata:
-  name: siem
-  namespace: boundary-siem
-spec:
-  minAvailable: 2
-  selector:
-    matchLabels:
-      app: siem
-
----
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: siem
-  namespace: boundary-siem
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: StatefulSet
-    name: siem
-  minReplicas: 3
-  maxReplicas: 10
-  metrics:
-  - type: Resource
-    resource:
-      name: cpu
-      target:
-        type: Utilization
-        averageUtilization: 70
-  - type: Resource
-    resource:
-      name: memory
-      target:
-        type: Utilization
-        averageUtilization: 80
-  - type: Pods
-    pods:
-      metric:
-        name: events_per_second
-      target:
-        type: AverageValue
-        averageValue: "5000"
-  behavior:
-    scaleUp:
-      stabilizationWindowSeconds: 180
-      policies:
-      - type: Pods
-        value: 2
-        periodSeconds: 60
-    scaleDown:
-      stabilizationWindowSeconds: 300
-      policies:
-      - type: Pods
-        value: 1
-        periodSeconds: 120
-
----
-apiVersion: monitoring.coreos.com/v1
-kind: ServiceMonitor
-metadata:
-  name: siem
-  namespace: boundary-siem
-spec:
-  selector:
-    matchLabels:
-      app: siem
-  endpoints:
-  - port: grpc
-    path: /metrics
-    interval: 15s
-
----
-# NetworkPolicy: restrict SIEM pod network access to least-privilege
-# Allows intra-namespace traffic (Kafka, ClickHouse), DNS, and HTTPS egress
-# for alert channels (Slack, PagerDuty, Telegram) and threat intel feeds.
+# NetworkPolicy: least-privilege network access for the SIEM pod.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -341,31 +271,22 @@ spec:
     matchLabels:
       app: siem
   policyTypes:
-    - Egress
     - Ingress
+    - Egress
   ingress:
-    # Allow intra-namespace traffic (between SIEM pods, from Kafka/ClickHouse)
-    - from:
-        - podSelector: {}
-      ports:
+    # HTTP API (events, search, alerts, rules, /ws/events, probes, /metrics)
+    # and CEF over TCP
+    - ports:
         - port: 8080
           protocol: TCP
-        - port: 9090
-          protocol: TCP
-        - port: 7946
-          protocol: TCP
-        - port: 7946
-          protocol: UDP
-    # Allow external event ingestion on HTTP port
-    - from: []
-      ports:
-        - port: 8080
+        - port: 5515
           protocol: TCP
   egress:
-    # Allow intra-namespace traffic (to Kafka, ClickHouse, peer SIEM pods)
-    - to:
-        - podSelector: {}
-    # Allow DNS resolution
+    # ClickHouse native protocol
+    - ports:
+        - port: 9000
+          protocol: TCP
+    # DNS
     - to:
         - namespaceSelector: {}
           podSelector:
@@ -376,29 +297,17 @@ spec:
           protocol: UDP
         - port: 53
           protocol: TCP
-    # Allow HTTPS egress for alert channels and threat intelligence feeds
+    # Notification channels (webhook, Slack, Discord, PagerDuty, Telegram, SMTP)
+    # and EVM RPC endpoints
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0
             except:
-              - 10.0.0.0/8
-              - 172.16.0.0/12
-              - 192.168.0.0/16
               - 169.254.0.0/16
       ports:
         - port: 443
           protocol: TCP
-
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: siem-secrets
-  namespace: boundary-siem
-type: Opaque
-stringData:
-  kafka-password: ""
-  clickhouse-password: ""
-  s3-access-key: ""
-  s3-secret-key: ""
-  jwt-secret: ""
+        - port: 587
+          protocol: TCP
+        - port: 465
+          protocol: TCP

@@ -143,26 +143,20 @@ table inet boundary_siem {
 
     # SIEM service ports - accessible from anywhere
     chain siem_services {
-        # Event ingestion API (HTTPS)
-        tcp dport 8443 accept comment "SIEM Event Ingestion API"
+        # HTTP API: event ingestion, search, alerts, rules, /ws/events,
+        # /health, /ready, /metrics (server.http_port)
+        tcp dport 8080 accept comment "SIEM HTTP API"
 
-        # Syslog receivers
-        udp dport 5514 accept comment "Syslog UDP receiver"
-        tcp dport 5514 accept comment "Syslog TCP receiver"
-        tcp dport 6514 accept comment "Syslog TLS receiver"
-
-        # Health check endpoint
-        tcp dport 8080 limit rate 100/second accept comment "Health check endpoint"
+        # CEF receivers (ingest.cef.*.address)
+        tcp dport 5515 accept comment "CEF TCP receiver"
+        udp dport 5516 accept comment "CEF DTLS receiver"
+        udp dport 5514 accept comment "CEF plain UDP receiver (disabled by default)"
 
         return
     }
 
     # Management services - restricted to trusted IPs
     chain mgmt_services {
-        # GraphQL API - management only
-        ip saddr @trusted_mgmt tcp dport 9090 accept comment "GraphQL Management API"
-        ip6 saddr @trusted_mgmt_v6 tcp dport 9090 accept comment "GraphQL Management API IPv6"
-
         # SSH - strict rate limiting
         ip saddr @trusted_mgmt tcp dport 22 ct state new limit rate 5/minute burst 3 accept comment "SSH access"
         ip6 saddr @trusted_mgmt_v6 tcp dport 22 ct state new limit rate 5/minute burst 3 accept comment "SSH access IPv6"

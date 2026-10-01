@@ -1,5 +1,7 @@
 # Step 2: Storage Engine
 
+> **Note:** historical implementation guide from the first build steps. For the current API, configuration and deployment, see the README.
+
 **Objective:** Implement ClickHouse storage with batch inserts, retention policies, and a queue consumer that persists events.
 
 **Estimated Complexity:** Medium-High

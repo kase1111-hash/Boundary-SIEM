@@ -1,0 +1,17 @@
+# Build context exclusions for deploy/container/Dockerfile (BuildKit reads
+# <Dockerfile>.dockerignore next to the Dockerfile).
+.git
+.github
+.claude
+bin
+data
+logs
+certs
+reports
+web/node_modules
+web/dist
+clickhouse
+deployments/clickhouse/.env
+*.test
+*.out
+coverage.html

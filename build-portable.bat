@@ -33,8 +33,8 @@ where go >nul 2>nul
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Go is not installed or not in PATH
     echo.
-    echo To build from source, you need Go 1.21 or later:
-    echo   https://golang.org/dl/
+    echo To build from source, you need Go 1.26 or later:
+    echo   https://go.dev/dl/
     echo.
     pause
     exit /b 1
@@ -162,7 +162,6 @@ if exist "configs\config.yaml" (
         echo.
         echo queue:
         echo   size: 100000
-        echo   overflow_policy: reject
         echo.
         echo validation:
         echo   max_event_age: 168h
@@ -201,6 +200,12 @@ if exist "configs\config.yaml" (
         echo   shutdown_wait: 30s
     ) > "%OUTPUT_DIR%\configs\config.yaml"
     echo [OK] Default configuration created
+)
+
+REM Copy the shipped rules (seeded into data\rules on first start)
+if exist "rules" (
+    xcopy /E /I /Q /Y "rules" "%OUTPUT_DIR%\rules" >nul
+    echo [OK] Community rules copied
 )
 
 REM Copy ClickHouse config
@@ -291,8 +296,11 @@ REM Main launcher - Start Service with ClickHouse
     echo echo Press Ctrl+C to stop the service
     echo echo.
     echo.
-    echo REM Start SIEM service
-    echo "%%PORTABLE_DIR%%bin\siem-ingest.exe" -config "%%PORTABLE_DIR%%configs\config.yaml"
+    echo if "%%SIEM_API_KEY%%"=="" echo [WARNING] SIEM_API_KEY is not set: API calls will get 401 until a key is configured
+    echo.
+    echo REM Start SIEM service ^(siem-ingest takes no flags; paths are relative to this folder^)
+    echo set "SIEM_CONFIG_PATH=%%PORTABLE_DIR%%configs\config.yaml"
+    echo "%%PORTABLE_DIR%%bin\siem-ingest.exe"
     echo.
     echo echo.
     echo echo [INFO] SIEM service stopped
@@ -378,7 +386,7 @@ REM Quick info script
     echo echo QUICK START:
     echo echo   1. Run Start-SIEM.bat ^(auto-starts ClickHouse^)
     echo echo   2. Run Start-TUI.bat in another window
-    echo echo   3. Access http://localhost:8080 in browser
+    echo echo   Set SIEM_API_KEY first if configs\config.yaml enables auth
     echo echo.
     echo echo ========================================
     echo echo.
@@ -445,7 +453,7 @@ echo.
 echo RUNNING THE SIEM:
 echo   1. Run 'Start-SIEM.bat' (auto-starts ClickHouse)
 echo   2. Run 'Start-TUI.bat' in another window
-echo   3. Access http://localhost:8080 in browser
+echo   Set SIEM_API_KEY first if configs\config.yaml enables auth
 echo.
 echo No installation required - runs directly from USB!
 echo All data stays within the portable folder.

@@ -3,9 +3,9 @@
 #               restorecon -Rv <path>
 
 # Executables
-/usr/local/bin/boundary-siem              --  gen_context(system_u:object_r:boundary_siem_exec_t,s0)
-/usr/bin/boundary-siem                    --  gen_context(system_u:object_r:boundary_siem_exec_t,s0)
-/opt/boundary-siem/bin/boundary-siem      --  gen_context(system_u:object_r:boundary_siem_exec_t,s0)
+/usr/local/bin/siem-ingest                --  gen_context(system_u:object_r:boundary_siem_exec_t,s0)
+/usr/bin/siem-ingest                      --  gen_context(system_u:object_r:boundary_siem_exec_t,s0)
+/opt/boundary-siem/bin/siem-ingest        --  gen_context(system_u:object_r:boundary_siem_exec_t,s0)
 
 # Configuration files
 /etc/boundary-siem(/.*)?                      gen_context(system_u:object_r:boundary_siem_conf_t,s0)

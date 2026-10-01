@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `siem-ingest` now runs the whole pipeline in one process (`internal/app`):
+  HTTP/CEF/EVM ingestion -> queue -> consumer -> correlation engine and
+  ClickHouse, alerting with escalation, the rules API and the WebSocket stream
+- 138 rules loaded at startup: 130 built-in detection rules, 3 kill chains and
+  the 5 community rules in `rules/` (seeded into `correlation.rules_dir`)
+- `GET /ready` readiness endpoint (503 while shutting down, backlogged, or
+  when an enabled component such as storage is down); `/health` reports
+  per-component status
+- Alert API (`/v1/alerts`, acknowledge/resolve/notes/assign, stats) and rules
+  API (`/v1/rules`); custom rules and built-in toggles persist under
+  `correlation.rules_dir`
+- Alerts persisted in ClickHouse (`siem.alerts`) and restored on restart
+- Notification channels configured under `alerting.notifications.channels`
+  (log, webhook, slack, discord, pagerduty, email, telegram) with `${ENV}`
+  secret references
+- WebSocket stream at `/ws/events` (alias `/ws`) with in-band API-key auth
+  (first message `{"type":"auth","api_key":"..."}`, close code 4401 on failure)
+- Rejected JSON and CEF events are stored in `events_quarantine`; failed
+  storage batches are re-queued, then dead-lettered there
+- Web dashboard can be served by `siem-ingest` (`server.web_dir` /
+  `SIEM_WEB_DIR`) and asks for the API key; the TUI takes `-api-key` or
+  `SIEM_API_KEY`
+- Prometheus metrics for every transport, the queue, correlation, storage,
+  quarantine and WebSocket clients
+- New settings: `server.shutdown_timeout` (`SIEM_SHUTDOWN_TIMEOUT`),
+  `server.web_dir`, `correlation.rules_dir` (`SIEM_RULES_DIR`),
+  `correlation.seed_rules_dir`, `alerting.*`, `websocket.*`,
+  `storage.batch_writer.max_pending` and `max_requeues`,
+  `ingest.cef.dtls.max_connections`
+- `make build` also builds `siem-rules`; `make build-rules`
+
+### Changed
+- Go 1.26 is required (`go.mod`: `go 1.26.0`, toolchain `go1.26.8`)
+- The shipped `configs/config.yaml` enables API-key auth with no keys: set
+  `SIEM_API_KEY` or `auth.api_keys`, or every API call returns 401
+- Environment overrides apply even when the config file is missing
+- Graceful shutdown drains every accepted event into storage and correlation
+  within `server.shutdown_timeout` (default 8s) and logs `shutdown complete`
+  with `events_accepted` and `events_lost`
+- `rate_limit.exempt_paths` defaults to `/health`, `/ready`, `/metrics`
+- Deployment files match the binary: the Dockerfile builds `./cmd/siem-ingest`
+  with Go 1.26 and checks `/health`; the compose file runs siem-ingest with
+  ClickHouse; the Kubernetes manifest is a single-replica Deployment with
+  `/health` and `/ready` probes; the systemd unit runs `siem-ingest`
+
+### Fixed
+- Startup diagnostics probe CEF UDP and DTLS ports with a UDP bind on the
+  configured address (a taken UDP port was reported as free, and an unrelated
+  TCP listener on the same number made startup fail)
+- Documentation: rule counts, curl examples (`X-API-Key`, required event
+  fields), `GET /v1/search?q=`, and features that `siem-ingest` does not run
+  (Kafka, Redis, GraphQL, S3, OAuth/SAML) are no longer described as running
+
 ### Planned
 - ML/UEBA anomaly detection
 - Advanced visualizations
@@ -103,6 +157,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - OWASP Top 10, CIS Benchmarks, NIST CSF compliant
 
 ## [0.1.0-alpha] - 2026-01-01
+
+> Correction: several items below (Kafka streaming, S3 archival and tiered
+> retention, RBAC, multi-tenancy, compliance reporting, SOAR playbooks,
+> platform security, StatefulSet/HPA manifests) are library code or manifests
+> that the ingest service never ran, and the NatLangChain client and
+> NLC-001 to NLC-020 rules are not in the repository. See the README for what
+> `siem-ingest` runs today.
 
 ### Added
 

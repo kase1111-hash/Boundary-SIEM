@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -1258,6 +1259,116 @@ func TestCheckPorts_InvalidCEFAddressSkipped(t *testing.T) {
 	}
 	if !strings.Contains(logOutput, "cannot parse listen port") {
 		t.Error("expected a warning about the unparseable TCP listen port")
+	}
+}
+
+// freeUDPPort returns a UDP port on 127.0.0.1 that was free a moment ago.
+func freeUDPPort(t *testing.T) int {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket: %v", err)
+	}
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+	_ = pc.Close()
+	return port
+}
+
+func TestCheckPorts_UDPPortInUseIsReported(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket: %v", err)
+	}
+	defer pc.Close()
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+
+	d, cfg, _ := newTestDiagnostics()
+	cfg.Server.HTTPPort = 0
+	cfg.Ingest.CEF.TCP.Enabled = false
+	cfg.Ingest.CEF.UDP.Enabled = true
+	cfg.Ingest.CEF.UDP.Address = fmt.Sprintf("127.0.0.1:%d", port)
+
+	d.checkPorts()
+
+	r := findResult(d.results, "port_CEF UDP")
+	if r == nil {
+		t.Fatal("missing 'port_CEF UDP' result")
+	}
+	if r.Status != StatusError {
+		t.Errorf("UDP port %d is bound but status = %v (%s), want StatusError", port, r.Status, r.Message)
+	}
+	if r.Details["protocol"] != "udp" {
+		t.Errorf("protocol detail = %q, want udp", r.Details["protocol"])
+	}
+}
+
+func TestCheckPorts_TCPListenerDoesNotBlockUDPPort(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	d, cfg, _ := newTestDiagnostics()
+	cfg.Server.HTTPPort = 0
+	cfg.Ingest.CEF.TCP.Enabled = false
+	cfg.Ingest.CEF.UDP.Enabled = true
+	cfg.Ingest.CEF.UDP.Address = fmt.Sprintf("127.0.0.1:%d", port)
+
+	d.checkPorts()
+
+	r := findResult(d.results, "port_CEF UDP")
+	if r == nil {
+		t.Fatal("missing 'port_CEF UDP' result")
+	}
+	if r.Status != StatusOK {
+		t.Errorf("only TCP %d is bound, UDP status = %v (%s), want StatusOK", port, r.Status, r.Message)
+	}
+}
+
+func TestCheckPorts_TCPPortInUseIsReported(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	d, cfg, _ := newTestDiagnostics()
+	cfg.Server.HTTPPort = 0
+	cfg.Ingest.CEF.TCP.Enabled = true
+	cfg.Ingest.CEF.TCP.Address = fmt.Sprintf("127.0.0.1:%d", port)
+
+	d.checkPorts()
+
+	r := findResult(d.results, "port_CEF TCP")
+	if r == nil {
+		t.Fatal("missing 'port_CEF TCP' result")
+	}
+	if r.Status != StatusError {
+		t.Errorf("TCP port %d is bound but status = %v (%s), want StatusError", port, r.Status, r.Message)
+	}
+	if r.Details["address"] != cfg.Ingest.CEF.TCP.Address {
+		t.Errorf("address detail = %q, want %q", r.Details["address"], cfg.Ingest.CEF.TCP.Address)
+	}
+}
+
+func TestCheckPorts_DTLSCheckedAsUDP(t *testing.T) {
+	d, cfg, _ := newTestDiagnostics()
+	cfg.Server.HTTPPort = 0
+	cfg.Ingest.CEF.TCP.Enabled = false
+	cfg.Ingest.CEF.DTLS.Enabled = true
+	cfg.Ingest.CEF.DTLS.Address = fmt.Sprintf("127.0.0.1:%d", freeUDPPort(t))
+
+	d.checkPorts()
+
+	r := findResult(d.results, "port_CEF DTLS")
+	if r == nil {
+		t.Fatal("missing 'port_CEF DTLS' result")
+	}
+	if r.Status != StatusOK || r.Details["protocol"] != "udp" {
+		t.Errorf("port_CEF DTLS = %v protocol %q (%s), want StatusOK over udp", r.Status, r.Details["protocol"], r.Message)
 	}
 }
 

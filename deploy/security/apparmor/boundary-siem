@@ -5,7 +5,8 @@
 
 #include <tunables/global>
 
-profile boundary-siem /usr/local/bin/boundary-siem flags=(enforce) {
+# Confines the server binary, siem-ingest (see deploy/systemd/boundary-siem.service).
+profile boundary-siem /usr/local/bin/siem-ingest flags=(enforce) {
   #include <abstractions/base>
   #include <abstractions/nameservice>
   #include <abstractions/ssl_certs>
@@ -55,9 +56,9 @@ profile boundary-siem /usr/local/bin/boundary-siem flags=(enforce) {
   # EXECUTABLE
   # =====================================================
 
-  /usr/local/bin/boundary-siem mr,
-  /usr/bin/boundary-siem mr,
-  /opt/boundary-siem/bin/boundary-siem mr,
+  /usr/local/bin/siem-ingest mr,
+  /usr/bin/siem-ingest mr,
+  /opt/boundary-siem/bin/siem-ingest mr,
 
   # =====================================================
   # CONFIGURATION FILES (read-only)

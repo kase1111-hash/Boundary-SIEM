@@ -4,6 +4,15 @@
 **Version:** 3.1 (Extended with full 13-repo integration support)
 **Branch:** `claude/test-repo-integration-LrmtS`
 
+> **Status (current code):** this report describes the integrations as
+> designed. In the repository today, only the boundary-daemon CEF mapping
+> (`internal/ingest/cef/`) and the 27 cross-system ecosystem rules
+> (`eco-001` and up, `internal/detection/rules/ecosystem_rules.go`) exist. The
+> per-system clients, normalizers and rule sets listed below (for example
+> `internal/natlangchain/`, NLC-*, VL-*, ILR-*) are not in the codebase.
+> Any of these systems can send events with `POST /v1/events` (header
+> `X-API-Key`) or CEF over TCP port 5515; see the README.
+
 ---
 
 ## Executive Summary
@@ -262,7 +271,7 @@ In addition to per-integration rules, Boundary-SIEM includes 26 cross-system cor
 
 ### 3.1 (Generic API Consumers)
 
-Any system that sends events to the standard `/api/v1/events` endpoint is compatible.
+Any system that sends events to the standard `POST /v1/events` endpoint (with an `X-API-Key` header) is compatible.
 
 ---
 
