@@ -1,0 +1,304 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"math"
+	"time"
+)
+
+// ShutdownReport summarises a shutdown, in particular whether every event
+// accepted into the queue reached storage.
+type ShutdownReport struct {
+	Duration time.Duration
+
+	// Accepted is every event accepted into the queue (HTTP, CEF, EVM).
+	Accepted uint64
+	// Undrained events were still in the queue when the drain gave up.
+	Undrained int
+	// StoreTimedOut is set when the final storage flush did not finish in
+	// time; StorePending events were still buffered then.
+	StoreTimedOut bool
+	StorePending  int
+	// StoreDropped events were given up on by the batch writer and not
+	// dead-lettered; ConsumerErrors events were refused by it.
+	StoreDropped   uint64
+	ConsumerErrors uint64
+	// CorrelationDropped events never reached the correlation engine.
+	CorrelationDropped uint64
+
+	// Lost is the number of accepted events that are not in storage (when
+	// storage is enabled).
+	Lost uint64
+}
+
+// Shutdown stops the service within timeout, in an order that loses no
+// accepted event while storage is healthy:
+//
+//  1. stop the listeners (HTTP, WebSocket, CEF, EVM), so nothing new arrives;
+//  2. close the queue and drain it through the consumer into storage and
+//     the correlation engine;
+//  3. flush and close the batch writer and the quarantine writer;
+//  4. let the correlation engine finish, then stop it and alerting (alerts
+//     raised meanwhile are still persisted);
+//  5. close the ClickHouse connection.
+//
+// Every phase is bounded by its share of timeout. Events that cannot be
+// stored in time are counted in the report and logged at ERROR. Shutdown is
+// safe to call more than once; later calls return the first report.
+func (a *App) Shutdown(timeout time.Duration) ShutdownReport {
+	a.shutdownOnce.Do(func() { a.report = a.shutdown(timeout) })
+	return a.report
+}
+
+func (a *App) shutdown(timeout time.Duration) ShutdownReport {
+	if timeout <= 0 {
+		timeout = 8 * time.Second
+	}
+	// Leave room for the bounded ClickHouse close after the last phase.
+	if a.chClient != nil && timeout > 2*storageCloseGrace {
+		timeout -= storageCloseGrace
+	}
+	start := time.Now()
+	deadline := start.Add(timeout)
+	until := func(t time.Time) (context.Context, context.CancelFunc) {
+		if t.After(deadline) {
+			t = deadline
+		}
+		return context.WithDeadline(context.Background(), t)
+	}
+	frac := func(f float64) time.Duration { return time.Duration(float64(timeout) * f) }
+	log := a.logger
+
+	a.handler.SetShuttingDown()
+
+	// 1. Stop intake. In-flight HTTP requests finish (their events are in
+	// the queue before Shutdown returns).
+	httpCtx, cancel := until(start.Add(frac(0.25)))
+	if err := a.server.Shutdown(httpCtx); err != nil {
+		log.Warn("HTTP server did not stop in time, closing connections", "error", err)
+		_ = a.server.Close()
+	}
+	cancel()
+	if a.hub != nil {
+		a.hub.Close()
+	}
+	if a.evm != nil {
+		a.evm.Stop()
+	}
+	if a.udp != nil {
+		a.udp.Stop()
+	}
+	if a.tcp != nil {
+		a.tcp.Stop()
+	}
+	if a.dtls != nil {
+		a.dtls.Stop()
+	}
+
+	// 2. Drain the queue. Leave 30% of the budget for flushing storage and
+	// finishing correlation.
+	a.queue.Close()
+	drainCtx, cancel := until(deadline.Add(-frac(0.30)))
+	drainErr := a.consumer.Drain(drainCtx)
+	cancel()
+
+	report := ShutdownReport{Undrained: a.queue.Len()}
+
+	// 3. Flush storage.
+	if a.store != nil {
+		storeCtx, cancel := until(deadline.Add(-frac(0.10)))
+		if err := runWithin(storeCtx, a.store.Close); err != nil {
+			if errors.Is(err, context.DeadlineExceeded) {
+				report.StoreTimedOut = true
+				log.Error("storage flush did not finish before the shutdown deadline",
+					"unwritten_events", a.unsettledEvents())
+			} else {
+				log.Error("batch writer close error", "error", err)
+			}
+		}
+		cancel()
+	}
+	if a.quarantine != nil {
+		qCtx, cancel := until(deadline.Add(-frac(0.05)))
+		if err := a.quarantine.Close(qCtx); err != nil {
+			log.Warn("quarantine writer close", "error", err)
+		}
+		cancel()
+	}
+
+	// 4. Correlation: hand over what the consumer queued for the engine,
+	// let the engine work through it, then stop it and alerting. The last
+	// 5% of the budget is kept for stopping and closing storage.
+	corrCtx, cancel := until(deadline.Add(-frac(0.05)))
+	if err := a.corrSink.Close(corrCtx); err != nil {
+		log.Warn("correlation input not fully processed", "error", err)
+	}
+	waitEngineIdle(corrCtx, a.engine.Stats)
+	cancel()
+	a.engine.Stop()
+	a.escalation.Stop()
+
+	a.cancelRun()
+	a.bg.Wait()
+	a.stopRateLimiter()
+
+	// 5. Close storage. database/sql waits for running queries, which a
+	// frozen server never finishes, so this is bounded too.
+	if a.chClient != nil {
+		closeCtx, cancel := context.WithTimeout(context.Background(), storageCloseGrace)
+		if err := runWithin(closeCtx, a.chClient.Close); err != nil {
+			log.Error("clickhouse close error", "error", err)
+		}
+		cancel()
+	}
+
+	report.Duration = time.Since(start)
+	report.Accepted = a.queue.Metrics().Pushed
+	cm := a.consumer.Metrics()
+	report.ConsumerErrors = cm.Errors
+	report.CorrelationDropped = a.corrSink.Metrics().Dropped
+	if a.store != nil {
+		bm := a.store.Metrics()
+		report.StoreDropped = bm.Failed - bm.DeadLettered
+		report.Lost = count(report.Undrained) + report.ConsumerErrors + report.StoreDropped
+		if report.StoreTimedOut {
+			report.StorePending = a.unsettledEvents()
+			report.Lost += count(report.StorePending)
+		}
+	}
+	a.logReport(report, drainErr)
+	return report
+}
+
+// unsettledEvents returns the events handed to the storage writer that it
+// has neither written nor given up on: still buffered, or in a flush that has
+// not finished.
+func (a *App) unsettledEvents() int {
+	consumed := a.consumer.Metrics().Consumed
+	bm := a.store.Metrics()
+	settled := bm.Written + bm.Failed
+	if consumed <= settled {
+		return 0
+	}
+	return int(min(consumed-settled, uint64(math.MaxInt32)))
+}
+
+// storageCloseGrace bounds closing the ClickHouse connection pool.
+const storageCloseGrace = 500 * time.Millisecond
+
+// count converts a non-negative length to uint64.
+func count(n int) uint64 {
+	if n <= 0 {
+		return 0
+	}
+	return uint64(n)
+}
+
+// runWithin runs fn and waits for it until ctx is done. fn keeps running in
+// the background after a timeout; the process is about to exit.
+func runWithin(ctx context.Context, fn func() error) error {
+	done := make(chan error, 1)
+	go func() { done <- fn() }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// waitEngineIdle waits until the correlation engine's event and alert
+// channels are empty or ctx is done.
+func waitEngineIdle(ctx context.Context, stats func() map[string]interface{}) {
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		s := stats()
+		events, _ := s["event_queue"].(int)
+		alerts, _ := s["alert_queue"].(int)
+		if events == 0 && alerts == 0 {
+			// One more tick so a worker can finish the event it popped
+			// last and hand its alert to the dispatcher.
+			select {
+			case <-ctx.Done():
+			case <-ticker.C:
+			}
+			s = stats()
+			events, _ = s["event_queue"].(int)
+			alerts, _ = s["alert_queue"].(int)
+			if events == 0 && alerts == 0 {
+				return
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+func (a *App) logReport(r ShutdownReport, drainErr error) {
+	log := a.logger
+	qm := a.queue.Metrics()
+	log.Info("queue metrics",
+		"events_pushed", qm.Pushed,
+		"events_popped", qm.Popped,
+		"events_rejected_queue_full", qm.Dropped,
+		"events_left_in_queue", qm.Depth,
+	)
+	if a.store != nil {
+		bm := a.store.Metrics()
+		log.Info("storage metrics",
+			"events_written", bm.Written,
+			"events_failed", bm.Failed,
+			"events_dead_lettered", bm.DeadLettered,
+			"events_requeued", bm.Requeued,
+			"batches", bm.Batches,
+		)
+	}
+	sm := a.corrSink.Metrics()
+	log.Info("correlation metrics",
+		"events_forwarded", sm.Forwarded,
+		"events_dropped", sm.Dropped,
+		"rules", len(a.engine.GetRules()),
+	)
+	for _, s := range a.sources() {
+		log.Info("CEF metrics",
+			"transport", s.Transport,
+			"received", s.Received,
+			"queued", s.Queued,
+			"errors", s.Errors,
+			"parse_errors", s.ParseErrors,
+			"validation_errors", s.ValidationErrors,
+			"oversized_lines", s.OversizedLines,
+		)
+	}
+	if a.hub != nil {
+		hm := a.hub.Metrics()
+		log.Info("websocket metrics",
+			"connections", hm.Connections,
+			"auth_failures", hm.AuthFailures,
+			"slow_clients_dropped", hm.SlowClientsDropped,
+			"messages_sent", hm.MessagesSent,
+		)
+	}
+
+	attrs := []any{
+		"duration_ms", r.Duration.Milliseconds(),
+		"events_accepted", r.Accepted,
+		"events_lost", r.Lost,
+		"events_undrained", r.Undrained,
+		"storage_timed_out", r.StoreTimedOut,
+		"correlation_dropped", r.CorrelationDropped,
+	}
+	if drainErr != nil {
+		attrs = append(attrs, "drain_error", drainErr.Error())
+	}
+	if r.Lost > 0 {
+		log.Error("shutdown complete with lost events", attrs...)
+		return
+	}
+	log.Info("shutdown complete", attrs...)
+}

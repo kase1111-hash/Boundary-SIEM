@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"time"
 
+	"boundary-siem/internal/alerting"
 	"boundary-siem/internal/encryption"
 	"boundary-siem/internal/secrets"
 
@@ -33,6 +35,43 @@ type Config struct {
 	Secrets         SecretsConfig           `yaml:"secrets"`
 	Encryption      EncryptionConfig        `yaml:"encryption"`
 	SecurityHeaders SecurityHeadersConfig   `yaml:"security_headers"`
+	Alerting        AlertingConfig          `yaml:"alerting"`
+	WebSocket       WebSocketConfig         `yaml:"websocket"`
+}
+
+// AlertingConfig holds alert management and notification settings.
+type AlertingConfig struct {
+	// Notifications lists the notification channels. With no channel
+	// configured a log channel named "default" is registered, which is the
+	// channel the built-in escalation policies notify. Secret fields (url,
+	// headers, routing_key, bot_token, chat_id, email.username and
+	// email.password) may reference environment variables as ${NAME}.
+	Notifications alerting.NotificationsConfig `yaml:"notifications"`
+
+	// DedupWindow suppresses repeated alerts for the same rule and group.
+	DedupWindow time.Duration `yaml:"dedup_window"`
+	// RetentionPeriod is how long resolved alerts stay in memory.
+	RetentionPeriod time.Duration `yaml:"retention_period"`
+	// MaxAlerts bounds the number of alerts the manager tracks.
+	MaxAlerts int `yaml:"max_alerts"`
+	// EscalationInterval is how often escalation policies are evaluated.
+	EscalationInterval time.Duration `yaml:"escalation_interval"`
+}
+
+// WebSocketConfig holds settings for the /ws/events live stream.
+type WebSocketConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// MaxClients caps concurrent connections (including ones still
+	// authenticating). Further upgrade requests get 503.
+	MaxClients int `yaml:"max_clients"`
+	// SendQueueSize is the number of messages buffered per client. A client
+	// whose queue is full is disconnected rather than slowing the server.
+	SendQueueSize int `yaml:"send_queue_size"`
+	// WriteTimeout bounds every write to a client.
+	WriteTimeout time.Duration `yaml:"write_timeout"`
+	// StatsInterval is how often event statistics are pushed to clients when
+	// storage is enabled. Zero disables stats messages.
+	StatsInterval time.Duration `yaml:"stats_interval"`
 }
 
 // RateLimitConfig holds rate limiting settings.
@@ -92,6 +131,13 @@ type BatchWriterConfig struct {
 	FlushInterval time.Duration `yaml:"flush_interval"`
 	MaxRetries    int           `yaml:"max_retries"`
 	RetryDelay    time.Duration `yaml:"retry_delay"`
+	// MaxPending bounds the events buffered in memory, including events put
+	// back after a failed flush. Zero means 10 x batch_size.
+	MaxPending int `yaml:"max_pending"`
+	// MaxRequeues is how many failed flushes an event survives before it is
+	// dead-lettered to events_quarantine. Zero means 3; a negative value
+	// gives up after the first failed flush.
+	MaxRequeues int `yaml:"max_requeues"`
 }
 
 // ConsumerConfig holds consumer settings.
@@ -107,8 +153,15 @@ type CorrelationEngineConfig struct {
 	StateCleanupFreq time.Duration `yaml:"state_cleanup_freq"` // How often to clean expired state
 	WorkerCount      int           `yaml:"worker_count"`       // Number of correlation workers
 	DedupWindow      time.Duration `yaml:"dedup_window"`       // Alert deduplication window
-	EventChannelSize int           `yaml:"event_channel_size"` // Event channel buffer size
+	EventChannelSize int           `yaml:"event_channel_size"` // Event channel buffer size (also the consumer -> engine buffer)
 	AlertChannelSize int           `yaml:"alert_channel_size"` // Alert channel buffer size
+
+	// RulesDir holds custom rules and the enabled/disabled overrides of the
+	// built-in rules. The rules API writes to it.
+	RulesDir string `yaml:"rules_dir"`
+	// SeedRulesDir holds rule files (the shipped rules/ directory) copied
+	// into RulesDir the first time it is used. Empty disables seeding.
+	SeedRulesDir string `yaml:"seed_rules_dir"`
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -116,6 +169,13 @@ type ServerConfig struct {
 	HTTPPort     int           `yaml:"http_port"`
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
 	WriteTimeout time.Duration `yaml:"write_timeout"`
+	// ShutdownTimeout bounds graceful shutdown as a whole: stopping the
+	// listeners, draining the event queue, flushing storage and stopping the
+	// correlation engine. Keep it below the orchestrator's grace period
+	// (Docker sends SIGKILL 10s after SIGTERM by default).
+	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
+	// WebDir, when set, is a built web dashboard (web/dist) served at "/".
+	WebDir string `yaml:"web_dir"`
 }
 
 // IngestConfig holds ingestion settings.
@@ -174,7 +234,8 @@ type CEFDTLSConfig struct {
 	MaxMessageSize    int           `yaml:"max_message_size"`
 	ConnectionTimeout time.Duration `yaml:"connection_timeout"`
 	IdleTimeout       time.Duration `yaml:"idle_timeout"`
-	AllowInsecure     bool          `yaml:"allow_insecure"` // Allow fallback to plain UDP (NOT RECOMMENDED)
+	MaxConnections    int           `yaml:"max_connections"` // Concurrent DTLS connections, including handshakes
+	AllowInsecure     bool          `yaml:"allow_insecure"`  // Allow fallback to plain UDP (NOT RECOMMENDED)
 }
 
 // CEFTCPConfig holds TCP server settings for CEF.
@@ -334,9 +395,10 @@ type SecurityHeadersConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			HTTPPort:     8080,
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 30 * time.Second,
+			HTTPPort:        8080,
+			ReadTimeout:     30 * time.Second,
+			WriteTimeout:    30 * time.Second,
+			ShutdownTimeout: 8 * time.Second,
 		},
 		Ingest: IngestConfig{
 			MaxBatchSize:   1000,
@@ -356,6 +418,7 @@ func DefaultConfig() *Config {
 					MaxMessageSize:    65535,
 					ConnectionTimeout: 30 * time.Second,
 					IdleTimeout:       5 * time.Minute,
+					MaxConnections:    1000,
 					AllowInsecure:     false,
 					RequireClientCert: false,
 				},
@@ -419,13 +482,13 @@ func DefaultConfig() *Config {
 			MaxAge:           86400, // 24 hours preflight cache
 		},
 		RateLimit: RateLimitConfig{
-			Enabled:       true,                            // Rate limiting enabled by default
-			RequestsPerIP: 1000,                            // 1000 requests per IP per window
-			WindowSize:    time.Minute,                     // 1 minute window
-			BurstSize:     50,                              // Allow 50 extra requests burst
-			CleanupPeriod: 5 * time.Minute,                 // Clean old entries every 5 minutes
-			ExemptPaths:   []string{"/health", "/metrics"}, // Health/metrics exempt
-			TrustProxy:    false,                           // Don't trust X-Forwarded-For by default
+			Enabled:       true,                                      // Rate limiting enabled by default
+			RequestsPerIP: 1000,                                      // 1000 requests per IP per window
+			WindowSize:    time.Minute,                               // 1 minute window
+			BurstSize:     50,                                        // Allow 50 extra requests burst
+			CleanupPeriod: 5 * time.Minute,                           // Clean old entries every 5 minutes
+			ExemptPaths:   []string{"/health", "/ready", "/metrics"}, // Health/readiness/metrics exempt
+			TrustProxy:    false,                                     // Don't trust X-Forwarded-For by default
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -469,6 +532,8 @@ func DefaultConfig() *Config {
 			DedupWindow:      15 * time.Minute,
 			EventChannelSize: 10000,
 			AlertChannelSize: 1000,
+			RulesDir:         "data/rules",
+			SeedRulesDir:     "rules",
 		},
 		Secrets: SecretsConfig{
 			EnableVault:    false,                  // Vault disabled by default
@@ -522,6 +587,19 @@ func DefaultConfig() *Config {
 			CrossOriginResourcePolicyValue:   "same-origin",                                                  // Same origin only
 			CustomHeaders:                    make(map[string]string),                                        // No custom headers by default
 		},
+		Alerting: AlertingConfig{
+			DedupWindow:        15 * time.Minute,
+			RetentionPeriod:    30 * 24 * time.Hour,
+			MaxAlerts:          100000,
+			EscalationInterval: time.Minute,
+		},
+		WebSocket: WebSocketConfig{
+			Enabled:       true,
+			MaxClients:    100,
+			SendQueueSize: 64,
+			WriteTimeout:  10 * time.Second,
+			StatsInterval: 30 * time.Second,
+		},
 	}
 }
 
@@ -537,16 +615,16 @@ func Load() (*Config, error) {
 
 	// Try to load from file
 	data, err := os.ReadFile(filepath.Clean(configPath)) // #nosec G703 -- SIEM_CONFIG_PATH is set by the operator launching the process and may legitimately point anywhere (e.g. /etc/boundary-siem); it is not request-derived
-	if err != nil {
-		if os.IsNotExist(err) {
-			// File doesn't exist, use defaults
-			return cfg, nil
+	switch {
+	case err == nil:
+		if err := yaml.Unmarshal(data, cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
+	case os.IsNotExist(err):
+		// No config file: run on the defaults. Environment overrides still
+		// apply, so env-only deployments (containers) can be configured.
+	default:
 		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
 	}
 
 	// Override with environment variables
@@ -664,6 +742,71 @@ func (c *Config) applyEnvOverrides() {
 	if frameOptions := os.Getenv("SIEM_FRAME_OPTIONS"); frameOptions != "" {
 		c.SecurityHeaders.FrameOptionsValue = frameOptions
 	}
+
+	// Service wiring
+	if dir := os.Getenv("SIEM_RULES_DIR"); dir != "" {
+		c.Correlation.RulesDir = dir
+	}
+
+	if dir := os.Getenv("SIEM_WEB_DIR"); dir != "" {
+		c.Server.WebDir = dir
+	}
+
+	envDuration("SIEM_SHUTDOWN_TIMEOUT", &c.Server.ShutdownTimeout)
+
+	c.expandAlertingSecrets()
+}
+
+// envRef matches a ${NAME} environment variable reference.
+var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// expandEnvRefs replaces every ${NAME} in s with the value of the environment
+// variable NAME. Other "$" characters are left alone, so URLs and tokens
+// that contain "$" are not mangled.
+func expandEnvRefs(s string) string {
+	if s == "" {
+		return s
+	}
+	return envRef.ReplaceAllStringFunc(s, func(ref string) string {
+		return os.Getenv(envRef.FindStringSubmatch(ref)[1])
+	})
+}
+
+// expandAlertingSecrets resolves ${NAME} references in the secret fields of
+// the notification channels, so credentials can come from the environment
+// (or a secrets manager that exports them) instead of the config file.
+func (c *Config) expandAlertingSecrets() {
+	for i := range c.Alerting.Notifications.Channels {
+		ch := &c.Alerting.Notifications.Channels[i]
+		ch.URL = expandEnvRefs(ch.URL)
+		ch.RoutingKey = expandEnvRefs(ch.RoutingKey)
+		ch.BotToken = expandEnvRefs(ch.BotToken)
+		ch.ChatID = expandEnvRefs(ch.ChatID)
+		for k, v := range ch.Headers {
+			ch.Headers[k] = expandEnvRefs(v)
+		}
+		if ch.Email != nil {
+			ch.Email.Username = expandEnvRefs(ch.Email.Username)
+			ch.Email.Password = expandEnvRefs(ch.Email.Password)
+		}
+	}
+}
+
+// envDuration sets *dst from the duration environment variable name (for
+// example "8s") when it is set. Invalid or non-positive values are logged and
+// leave *dst unchanged.
+func envDuration(name string, dst *time.Duration) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return
+	}
+	d, err := time.ParseDuration(trimSpace(raw))
+	if err != nil || d <= 0 {
+		slog.Warn("ignoring invalid duration environment override",
+			"variable", name, "value", raw, "error", err)
+		return
+	}
+	*dst = d
 }
 
 // envInt sets *dst from the integer environment variable name when it is set.
@@ -780,6 +923,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("max_batch_size must be positive")
 	}
 
+	if c.Server.ShutdownTimeout <= 0 {
+		return fmt.Errorf("server.shutdown_timeout must be positive")
+	}
+
 	// Validate admin password strength if provided
 	if c.Auth.DefaultAdminPassword != "" {
 		if err := ValidatePasswordStrength(c.Auth.DefaultAdminPassword); err != nil {
@@ -841,6 +988,7 @@ func (c *Config) NewSecretsManager() (*secrets.Manager, error) {
 		VaultAddress: c.Secrets.VaultAddress,
 		VaultToken:   c.Secrets.VaultToken,
 		VaultPath:    c.Secrets.VaultPath,
+		FileDir:      c.Secrets.FileSecretsDir,
 		CacheTTL:     c.Secrets.CacheTTL,
 	}
 

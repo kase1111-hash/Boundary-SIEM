@@ -2,6 +2,14 @@ server:
   http_port: 8080
   read_timeout: 30s
   write_timeout: 30s
+  # Graceful shutdown budget: stop listeners, drain the queue into storage
+  # and the correlation engine, flush storage. Keep it below your
+  # orchestrator's grace period (Docker: 10s). Env: SIEM_SHUTDOWN_TIMEOUT.
+  shutdown_timeout: 8s
+  # Serve the built dashboard (cd web && npm ci && npm run build) at "/".
+  # Static files are served without an API key; /v1 and /api still need one.
+  # Env: SIEM_WEB_DIR.
+  # web_dir: "web/dist"
 
 ingest:
   max_batch_size: 1000
@@ -27,6 +35,8 @@ ingest:
       max_message_size: 65535
       connection_timeout: 30s
       idle_timeout: 5m
+      max_connections: 1000   # concurrent DTLS connections, including handshakes
+      # allow_insecure: false  # NOT RECOMMENDED: fall back to plain UDP without certificates
     tcp:
       enabled: true
       address: ":5515"
@@ -69,6 +79,9 @@ validation:
 auth:
   api_key_header: X-API-Key
   enabled: true  # SECURITY: Authentication is enabled by default
+  # With no key configured every API request is rejected (401). Add keys
+  # here or set SIEM_API_KEY (which also enables auth). /health, /ready and
+  # /metrics never need a key; /ws/events authenticates in-band.
   # api_keys:
   #   - sk_test_development
 
@@ -96,6 +109,9 @@ storage:
     flush_interval: 5s
     max_retries: 3
     retry_delay: 1s
+    max_pending: 0      # events buffered in memory; 0 = 10 x batch_size
+    max_requeues: 0     # failed flushes an event survives before it is moved
+                        # to events_quarantine; 0 = 3
   retention:
     events_ttl: 2160h       # 90 days
     critical_ttl: 8760h     # 365 days
@@ -106,7 +122,7 @@ storage:
 consumer:
   workers: 4
   poll_interval: 10ms
-  shutdown_wait: 30s
+  shutdown_wait: 30s   # upper bound for draining the queue; server.shutdown_timeout applies first
 
 # Correlation engine configuration
 correlation:
@@ -114,6 +130,53 @@ correlation:
   state_cleanup_freq: 30s      # How often to clean expired state
   worker_count: 4              # Number of correlation workers
   dedup_window: 15m            # Alert deduplication window (0 = use per-rule window)
-  event_channel_size: 10000    # Event channel buffer size
+  event_channel_size: 10000    # Event channel buffer size (also the consumer -> engine buffer;
+                               # events beyond it are counted in siem_correlation_events_dropped_total)
   alert_channel_size: 1000     # Alert channel buffer size
+  # Custom rules and built-in rule overrides; the rules API writes here.
+  # Env: SIEM_RULES_DIR.
+  rules_dir: data/rules
+  # Shipped rules copied into rules_dir on first start (existing files are
+  # never overwritten; delete rules_dir/.seeded to copy missing ones again).
+  seed_rules_dir: rules
+
+# Alert management and notifications
+alerting:
+  dedup_window: 15m
+  retention_period: 720h       # resolved alerts kept in memory (all alerts persist in ClickHouse)
+  max_alerts: 100000
+  escalation_interval: 1m
+  notifications:
+    # Without channels a log channel named "default" is used, which is what
+    # the built-in escalation policies notify. Secret fields (url, headers,
+    # routing_key, bot_token, chat_id, email.username, email.password) may
+    # reference environment variables as ${NAME}.
+    channels: []
+    # channels:
+    #   - name: default
+    #     type: slack            # log | webhook | slack | discord | pagerduty | email | telegram
+    #     url: "${SLACK_WEBHOOK_URL}"
+    #     channel: "#soc"
+    #   - name: oncall
+    #     type: pagerduty
+    #     routing_key: "${PAGERDUTY_ROUTING_KEY}"
+    #     escalation_only: true  # only notified by escalation policies
+    #   - name: mail
+    #     type: email
+    #     email:
+    #       smtp_host: smtp.example.com
+    #       smtp_port: 587
+    #       username: siem@example.com
+    #       password: "${SMTP_PASSWORD}"
+    #       from: siem@example.com
+    #       to: [soc@example.com]
+    #       use_starttls: true
+
+# Live stream for the dashboard at /ws/events (alias /ws)
+websocket:
+  enabled: true
+  max_clients: 100
+  send_queue_size: 64          # per client; slower clients are disconnected
+  write_timeout: 10s
+  stats_interval: 30s          # push /v1/stats to clients (storage only); 0 = off
 

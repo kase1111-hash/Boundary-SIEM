@@ -14,6 +14,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/go-playground/validator/v10 v10.30.3
 	github.com/google/uuid v1.6.0
+	github.com/gorilla/websocket v1.5.3
 	github.com/pion/dtls/v3 v3.1.10
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/segmentio/kafka-go v0.4.51
