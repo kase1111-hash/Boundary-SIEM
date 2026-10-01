@@ -7,27 +7,37 @@ import (
 	"boundary-siem/internal/correlation"
 )
 
-// GetAllRules returns all pre-built detection rules.
+// GetAllRules returns all pre-built detection rules. Each rule's Category
+// is the group it belongs to (Validator, Consensus, ...) unless the rule sets
+// its own.
 func GetAllRules() []*correlation.Rule {
 	var rules []*correlation.Rule
+	add := func(category string, group []*correlation.Rule) {
+		for _, r := range group {
+			if r.Category == "" {
+				r.Category = category
+			}
+		}
+		rules = append(rules, group...)
+	}
 
-	rules = append(rules, GetValidatorRules()...)
-	rules = append(rules, GetConsensusRules()...)
-	rules = append(rules, GetTransactionRules()...)
-	rules = append(rules, GetContractRules()...)
-	rules = append(rules, GetMEVRules()...)
-	rules = append(rules, GetInfrastructureRules()...)
-	rules = append(rules, GetSecurityRules()...)
-	rules = append(rules, GetComplianceRules()...)
-	rules = append(rules, GetKeyManagementRules()...)
-	rules = append(rules, GetCloudSecurityRules()...)
-	rules = append(rules, GetNetworkRules()...)
-	rules = append(rules, GetAPISecurityRules()...)
-	rules = append(rules, GetDeFiRules()...)
-	rules = append(rules, GetExchangeRules()...)
+	add("Validator", GetValidatorRules())
+	add("Consensus", GetConsensusRules())
+	add("Transactions", GetTransactionRules())
+	add("Smart Contract", GetContractRules())
+	add("MEV", GetMEVRules())
+	add("Infrastructure", GetInfrastructureRules())
+	add("Security", GetSecurityRules())
+	add("Compliance", GetComplianceRules())
+	add("Key Management", GetKeyManagementRules())
+	add("Cloud Security", GetCloudSecurityRules())
+	add("Network", GetNetworkRules())
+	add("API Security", GetAPISecurityRules())
+	add("DeFi", GetDeFiRules())
+	add("Exchange", GetExchangeRules())
 
 	// Cross-system ecosystem rules
-	rules = append(rules, GetEcosystemRules()...)
+	add("Ecosystem", GetEcosystemRules())
 
 	return rules
 }
@@ -1428,23 +1438,11 @@ func GetComplianceRules() []*correlation.Rule {
 }
 
 // GetKeyManagementRules returns key management detection rules.
+//
+// There is no key-001: it was an exact copy of sec-005 (Key Export Attempt),
+// so every key export raised two critical alerts.
 func GetKeyManagementRules() []*correlation.Rule {
 	return []*correlation.Rule{
-		{
-			ID:          "key-001",
-			Name:        "Key Export Attempt",
-			Description: "Cryptographic key export was attempted",
-			Type:        correlation.RuleTypeThreshold,
-			Enabled:     true,
-			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
-			Tags:        []string{"keys", "export", "critical"},
-			EventConditions: []correlation.Condition{
-				{Field: "action", Operator: "eq", Value: "key.export"},
-			},
-			GroupBy:   []string{"target"},
-			Window:    1 * time.Hour,
-			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
-		},
 		{
 			ID:          "key-002",
 			Name:        "Key Import",

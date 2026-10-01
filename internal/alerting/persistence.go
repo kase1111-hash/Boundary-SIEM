@@ -240,9 +240,11 @@ func (m *Manager) LoadFromDB(ctx context.Context) (int, error) {
 		m.alerts[alert.ID] = alert
 		loaded++
 
-		dedupKey := fmt.Sprintf("%s:%s", alert.RuleID, alert.GroupKey)
-		if last, ok := m.dedup[dedupKey]; !ok || alert.CreatedAt.After(last) {
-			m.dedup[dedupKey] = alert.CreatedAt
+		// The newest alert of each rule and group; a recurrence within the
+		// window is merged into it unless it has been resolved.
+		dedupKey := dedupKeyOf(alert.RuleID, alert.GroupKey)
+		if entry, ok := m.dedup[dedupKey]; !ok || alert.UpdatedAt.After(entry.last) {
+			m.dedup[dedupKey] = dedupEntry{alertID: alert.ID, last: alert.UpdatedAt}
 		}
 	}
 	slog.Info("loaded alerts from database", "count", loaded)

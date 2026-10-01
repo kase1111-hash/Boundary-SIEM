@@ -457,6 +457,8 @@ func (a *App) initHTTP() error {
 			search.WithDefaultTenant(cfg.Ingest.CEF.Normalizer.DefaultTenantID))
 		searchHandler.RegisterRoutes(mux)
 		a.searchStats = statsFunc(searchHandler)
+	} else {
+		search.RegisterUnavailableRoutes(mux, "search unavailable: storage is disabled (storage.enabled: false)")
 	}
 
 	alerting.NewHandler(a.alertMgr).RegisterRoutes(mux)

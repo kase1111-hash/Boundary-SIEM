@@ -760,6 +760,43 @@ func TestSeedRules(t *testing.T) {
 	}
 }
 
+// E2E round 1: with storage disabled and the dashboard served, the search
+// routes were not registered, so POST /v1/search reached the static handler
+// (GET /) and answered 405, and the dashboard said "not found".
+func TestSearchWithoutStorageIs503(t *testing.T) {
+	cfg := testConfig(t)
+	web := t.TempDir()
+	if err := os.WriteFile(filepath.Join(web, "index.html"), []byte("<html></html>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Server.WebDir = web
+	a := startApp(t, cfg, nil)
+
+	for _, tc := range []struct{ method, path string }{
+		{http.MethodPost, "/v1/search"},
+		{http.MethodGet, "/v1/search?q=*"},
+		{http.MethodPost, "/v1/aggregations"},
+		{http.MethodGet, "/v1/stats"},
+		{http.MethodGet, "/v1/fields/action/values"},
+		{http.MethodGet, "/v1/events/" + uuid.NewString()},
+		{http.MethodPost, "/v1/search/explain"},
+	} {
+		code, body := apiRequest(t, a, tc.method, tc.path, map[string]any{"query": "*", "field": "action"})
+		if code != http.StatusServiceUnavailable || !strings.Contains(string(body), "storage is disabled") {
+			t.Errorf("%s %s = %d %s, want 503 explaining that storage is disabled", tc.method, tc.path, code, body)
+		}
+	}
+	// The dashboard itself is still served.
+	resp, err := http.Get("http://" + a.Addr() + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("GET / = %d, want 200", resp.StatusCode)
+	}
+}
+
 // TestDTLSWiring checks the DTLS server is built from the configuration:
 // without certificates startup fails, and the plain-UDP fallback (only with
 // allow_insecure) is reported as degraded.

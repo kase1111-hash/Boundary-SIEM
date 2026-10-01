@@ -132,8 +132,8 @@ func TestIntegrationFreshDatabaseMigrations(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetAppliedMigrations() error = %v", err)
 	}
-	if len(applied) != 6 {
-		t.Errorf("applied migrations = %v, want 6", applied)
+	if len(applied) != 7 {
+		t.Errorf("applied migrations = %v, want 7", applied)
 	}
 
 	// Retention TTLs apply on DateTime64 columns.
@@ -174,8 +174,8 @@ func TestIntegrationRepairsBogusMigrationHistory(t *testing.T) {
 	if got := integrationTables(t, client); strings.Join(got, ",") != strings.Join(integrationSchema, ",") {
 		t.Errorf("tables = %v, want %v", got, integrationSchema)
 	}
-	if n := integrationCount(t, client, "SELECT count() FROM schema_migrations"); n != 6 {
-		t.Errorf("schema_migrations has %d rows, want 6 (repaired versions not recorded twice)", n)
+	if n := integrationCount(t, client, "SELECT count() FROM schema_migrations"); n != 7 {
+		t.Errorf("schema_migrations has %d rows, want 7 (repaired versions not recorded twice)", n)
 	}
 }
 

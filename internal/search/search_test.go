@@ -2,6 +2,7 @@ package search
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -30,55 +31,54 @@ func mustBuildWhereClause(t *testing.T, exec *Executor, q *Query) (string, []int
 // sanitizeColumn
 // ---------------------------------------------------------------------------
 
+// Unknown columns are rejected with ErrInvalidQuery. They used to be replaced
+// with timestamp, which made foo:bar a 500 and aggregations on an unknown
+// field return timestamp buckets (E2E round 1); injection attempts are
+// rejected the same way, before any SQL is built.
 func TestSanitizeColumn(t *testing.T) {
 	exec := newTestExecutor()
 
-	tests := []struct {
-		name  string
-		input string
-		want  string
-	}{
-		// Valid column names in the allowlist
-		{name: "simple column", input: "action", want: "action"},
-		{name: "underscored column", input: "source_product", want: "source_product"},
-		{name: "event_id", input: "event_id", want: "event_id"},
-		{name: "timestamp", input: "timestamp", want: "timestamp"},
-		{name: "severity", input: "severity", want: "severity"},
-		{name: "actor_name", input: "actor_name", want: "actor_name"},
-		{name: "metadata", input: "metadata", want: "metadata"},
-		{name: "tenant_id", input: "tenant_id", want: "tenant_id"},
-		{name: "raw", input: "raw", want: "raw"},
-		{name: "schema_version", input: "schema_version", want: "schema_version"},
-
-		// Invalid columns fall back to "timestamp"
-		{name: "mixed case not in allowlist", input: "ActorName", want: "timestamp"},
-		{name: "unknown column", input: "field2", want: "timestamp"},
-		{name: "empty string", input: "", want: "timestamp"},
-
-		// SQL injection attempts -- all rejected by allowlist, return "timestamp"
-		{name: "semicolon injection", input: "action; DROP TABLE events;--", want: "timestamp"},
-		{name: "single quote injection", input: "action' OR '1'='1", want: "timestamp"},
-		{name: "double quote injection", input: `action" OR "1"="1`, want: "timestamp"},
-		{name: "parentheses injection", input: "count(*)", want: "timestamp"},
-		{name: "comment injection", input: "action/**/OR/**/1=1", want: "timestamp"},
-		{name: "backtick injection", input: "`action`", want: "timestamp"},
-		{name: "newline injection", input: "action\n; DROP TABLE events", want: "timestamp"},
-		{name: "tab injection", input: "action\tOR\t1=1", want: "timestamp"},
-		{name: "dash injection", input: "source-product", want: "timestamp"},
-		{name: "dot stripping", input: "metadata.key", want: "timestamp"},
-		{name: "slash injection", input: "../../etc/passwd", want: "timestamp"},
-		{name: "pipe injection", input: "action|cat /etc/passwd", want: "timestamp"},
-		{name: "only special chars", input: "!@#$%^&*()", want: "timestamp"},
-		{name: "unicode letters", input: "col\u00fcmn", want: "timestamp"},
-		{name: "spaces", input: "action name", want: "timestamp"},
-		{name: "very long input", input: strings.Repeat("a", 10000), want: "timestamp"},
+	valid := []string{
+		"action", "source_product", "event_id", "timestamp", "severity", "actor_name",
+		"metadata", "tenant_id", "raw", "schema_version",
+	}
+	for _, name := range valid {
+		t.Run(name, func(t *testing.T) {
+			got, err := exec.sanitizeColumn(name)
+			if err != nil || got != name {
+				t.Errorf("sanitizeColumn(%q) = %q, %v, want %q", name, got, err, name)
+			}
+		})
 	}
 
-	for _, tt := range tests {
+	invalid := []struct{ name, input string }{
+		{name: "mixed case not in allowlist", input: "ActorName"},
+		{name: "unknown column", input: "field2"},
+		{name: "empty string", input: ""},
+
+		// SQL injection attempts
+		{name: "semicolon injection", input: "action; DROP TABLE events;--"},
+		{name: "single quote injection", input: "action' OR '1'='1"},
+		{name: "double quote injection", input: `action" OR "1"="1`},
+		{name: "parentheses injection", input: "count(*)"},
+		{name: "comment injection", input: "action/**/OR/**/1=1"},
+		{name: "backtick injection", input: "`action`"},
+		{name: "newline injection", input: "action\n; DROP TABLE events"},
+		{name: "tab injection", input: "action\tOR\t1=1"},
+		{name: "dash injection", input: "source-product"},
+		{name: "dot stripping", input: "metadata.key"},
+		{name: "slash injection", input: "../../etc/passwd"},
+		{name: "pipe injection", input: "action|cat /etc/passwd"},
+		{name: "only special chars", input: "!@#$%^&*()"},
+		{name: "unicode letters", input: "colümn"},
+		{name: "spaces", input: "action name"},
+		{name: "very long input", input: strings.Repeat("a", 10000)},
+	}
+	for _, tt := range invalid {
 		t.Run(tt.name, func(t *testing.T) {
-			got := exec.sanitizeColumn(tt.input)
-			if got != tt.want {
-				t.Errorf("sanitizeColumn(%q) = %q, want %q", tt.input, got, tt.want)
+			got, err := exec.sanitizeColumn(tt.input)
+			if !errors.Is(err, ErrInvalidQuery) || got != "" {
+				t.Errorf("sanitizeColumn(%.40q) = %q, %v, want an ErrInvalidQuery error", tt.input, got, err)
 			}
 		})
 	}
@@ -103,26 +103,36 @@ func TestSanitizeOrderBy(t *testing.T) {
 		{name: "action", input: "action", want: "action"},
 		{name: "source_product", input: "source_product", want: "source_product"},
 		{name: "actor_name", input: "actor_name", want: "actor_name"},
-
-		// Invalid columns should fall back to "timestamp"
-		{name: "unknown column", input: "unknown_col", want: "timestamp"},
-		// event_id is in sanitizeColumn allowlist but NOT in sanitizeOrderBy allowlist
-		{name: "event_id not in order allowlist", input: "event_id", want: "timestamp"},
+		// Query field aliases resolve like in conditions.
+		{name: "alias", input: "actor.name", want: "actor_name"},
+		{name: "time alias", input: "time", want: "timestamp"},
+		// No order requested: newest first by timestamp.
 		{name: "empty string", input: "", want: "timestamp"},
 
-		// SQL injection -- all rejected by allowlist, return "timestamp"
-		{name: "injection semicolon", input: "timestamp; DROP TABLE events;--", want: "timestamp"},
-		{name: "injection union", input: "timestamp UNION SELECT * FROM users", want: "timestamp"},
-		{name: "injection comment", input: "severity--", want: "timestamp"},
-		{name: "injection with parens", input: "COUNT(*)", want: "timestamp"},
-		{name: "injection single quote", input: "action' OR '1'='1", want: "timestamp"},
+		// Rejected
+		{name: "unknown column", input: "unknown_col"},
+		// event_id is in sanitizeColumn allowlist but NOT in sanitizeOrderBy allowlist
+		{name: "event_id not in order allowlist", input: "event_id"},
+
+		// SQL injection
+		{name: "injection semicolon", input: "timestamp; DROP TABLE events;--"},
+		{name: "injection union", input: "timestamp UNION SELECT * FROM users"},
+		{name: "injection comment", input: "severity--"},
+		{name: "injection with parens", input: "COUNT(*)"},
+		{name: "injection single quote", input: "action' OR '1'='1"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := exec.sanitizeOrderBy(tt.input)
-			if got != tt.want {
-				t.Errorf("sanitizeOrderBy(%q) = %q, want %q", tt.input, got, tt.want)
+			got, err := exec.sanitizeOrderBy(tt.input)
+			if tt.want == "" {
+				if !errors.Is(err, ErrInvalidQuery) || got != "" {
+					t.Errorf("sanitizeOrderBy(%q) = %q, %v, want an ErrInvalidQuery error", tt.input, got, err)
+				}
+				return
+			}
+			if err != nil || got != tt.want {
+				t.Errorf("sanitizeOrderBy(%q) = %q, %v, want %q", tt.input, got, err, tt.want)
 			}
 		})
 	}
@@ -234,23 +244,82 @@ func TestBuildConditionClause(t *testing.T) {
 			wantClause: "actor_name = ''",
 			wantArgs:   0,
 		},
-		{
-			name:       "default operator",
-			column:     "action",
-			cond:       Condition{Operator: "unknown_op", Value: "test"},
-			wantClause: "action = ?",
-			wantArgs:   1,
-		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			clause, args := exec.buildConditionClause(tt.column, tt.cond)
+			clause, args, err := exec.buildConditionClause(tt.column, tt.cond)
+			if err != nil {
+				t.Fatalf("buildConditionClause() error = %v", err)
+			}
 			if clause != tt.wantClause {
 				t.Errorf("clause = %q, want %q", clause, tt.wantClause)
 			}
 			if len(args) != tt.wantArgs {
 				t.Errorf("len(args) = %d, want %d", len(args), tt.wantArgs)
+			}
+		})
+	}
+}
+
+// E2E round 1: a condition whose operator or value does not fit the column
+// is rejected before it reaches ClickHouse. An unknown operator used to fall
+// back to "=", and message~tcp (the column replaced by timestamp) failed in
+// ClickHouse with "Illegal type DateTime64 of argument of function position".
+func TestBuildConditionClauseRejectsMismatchedConditions(t *testing.T) {
+	exec := newTestExecutor()
+	tests := []struct {
+		name   string
+		column string
+		cond   Condition
+	}{
+		{"unknown operator", "action", Condition{Field: "action", Operator: "unknown_op", Value: "test"}},
+		{"unknown metadata operator", "", Condition{Field: "metadata.x", IsMetadata: true, MetadataKey: "x", Operator: "unknown_op", Value: "test"}},
+		{"contains on time", "timestamp", Condition{Field: "timestamp", Operator: OpContains, Value: "tcp"}},
+		{"wildcard on number", "severity", Condition{Field: "severity", Operator: OpEquals, Value: "^1.*$", IsRegex: true}},
+		{"text compared with number", "severity", Condition{Field: "severity", Operator: OpEquals, Value: "high"}},
+		{"bad time", "timestamp", Condition{Field: "timestamp", Operator: OpEquals, Value: "bar"}},
+		{"bad uuid", "event_id", Condition{Field: "id", Operator: OpEquals, Value: "not-a-uuid"}},
+		{"ordering on uuid", "event_id", Condition{Field: "id", Operator: OpGreater, Value: "6ba7b810-9dad-11d1-80b4-00c04fd430c8"}},
+		{"exists on number", "severity", Condition{Field: "severity", Operator: OpExists}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clause, _, err := exec.buildConditionClause(tt.column, tt.cond)
+			if !errors.Is(err, ErrInvalidQuery) {
+				t.Errorf("buildConditionClause() = %q, %v, want an ErrInvalidQuery error", clause, err)
+			}
+		})
+	}
+}
+
+func TestBuildConditionClauseConvertsTypedValues(t *testing.T) {
+	exec := newTestExecutor()
+	id := "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+	tests := []struct {
+		name   string
+		column string
+		cond   Condition
+		clause string
+		check  func(v interface{}) bool
+	}{
+		{"number from text", "severity", Condition{Field: "severity", Operator: OpGreaterEq, Value: "7"}, "severity >= ?",
+			func(v interface{}) bool { return v == float64(7) }},
+		{"date", "timestamp", Condition{Field: "timestamp", Operator: OpGreater, Value: "2024-06-01"}, "timestamp > ?",
+			func(v interface{}) bool {
+				t, ok := v.(time.Time)
+				return ok && t.Equal(time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC))
+			}},
+		{"unix seconds", "timestamp", Condition{Field: "timestamp", Operator: OpLess, Value: int64(1700000000)}, "timestamp < ?",
+			func(v interface{}) bool { t, ok := v.(time.Time); return ok && t.Unix() == 1700000000 }},
+		{"uuid", "event_id", Condition{Field: "id", Operator: OpEquals, Value: strings.ToUpper(id)}, "event_id = ?",
+			func(v interface{}) bool { return v == id }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clause, args, err := exec.buildConditionClause(tt.column, tt.cond)
+			if err != nil || clause != tt.clause || len(args) != 1 || !tt.check(args[0]) {
+				t.Errorf("buildConditionClause() = %q, %v, %v, want %q with a converted value", clause, args, err, tt.clause)
 			}
 		})
 	}
@@ -483,20 +552,15 @@ func TestBuildWhereClause_InjectionViaFieldNames(t *testing.T) {
 					{Field: field, Operator: OpEquals, Value: "test"},
 				},
 			}
-			clause, _ := mustBuildWhereClause(t, exec, q)
-
-			// With the allowlist approach, all invalid column names are
-			// replaced with "timestamp" (the safe fallback). The clause
-			// must not contain any SQL syntax metacharacters.
-			for _, bad := range []string{";", "'", `"`, "--", "/*", "*/", " OR ", " AND ", " UNION ", " SELECT ", " DROP "} {
-				if strings.Contains(clause, bad) {
-					t.Errorf("clause contains dangerous SQL syntax %q: %s", bad, clause)
-				}
+			// The allowlist rejects every field that is not a known column
+			// (they used to be replaced with "timestamp"), so no clause is
+			// built at all.
+			clause, args, err := exec.buildWhereClause(q)
+			if !errors.Is(err, ErrInvalidQuery) {
+				t.Errorf("buildWhereClause() = %q, %v, %v, want an ErrInvalidQuery error", clause, args, err)
 			}
-
-			// With allowlist, any injection field becomes "timestamp"
-			if !strings.Contains(clause, "timestamp") {
-				t.Errorf("expected injection field to be replaced with 'timestamp', got %q", clause)
+			if clause != "" {
+				t.Errorf("rejected query still produced the clause %q", clause)
 			}
 		})
 	}
@@ -1047,7 +1111,14 @@ func TestSQLInjection_EndToEnd(t *testing.T) {
 				return
 			}
 
-			clause, args := mustBuildWhereClause(t, exec, q)
+			clause, args, err := exec.buildWhereClause(q)
+			if errors.Is(err, ErrInvalidQuery) {
+				// So is rejecting an unknown field (UNION_SELECT).
+				return
+			}
+			if err != nil {
+				t.Fatalf("buildWhereClause() error = %v", err)
+			}
 
 			// Values in conditions should always be parameterized (? placeholders),
 			// not interpolated. Verify the clause uses placeholders.

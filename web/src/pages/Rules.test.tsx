@@ -4,7 +4,7 @@ import { renderToString } from "react-dom/server";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ApiError } from "../services/api";
 import type { Rule, RuleListResponse } from "../types/api";
-import { RulesPage, filterRules, summarizeRules } from "./Rules";
+import { RuleDetail, RulesPage, filterRules, ruleWindow, summarizeRules } from "./Rules";
 
 // Regression tests for R08/R09 (web side): the Rules page showed blank rows
 // for rules missing fields, crashed when searching them, and presented a
@@ -75,6 +75,44 @@ describe("RulesPage", () => {
     expect(html).not.toContain("No rules found");
     expect(html).toContain("missing API key");
     expect(html).toContain("API key");
+  });
+});
+
+// E2E round 1: the window of a rule (returned by the API) was shown nowhere,
+// and clicking a row opened nothing.
+describe("rule window and details", () => {
+  const rule: Rule = {
+    id: "api-001",
+    name: "API Key Abuse",
+    description: "API key used from multiple locations",
+    type: "aggregate",
+    enabled: true,
+    severity: 7,
+    category: "API Security",
+    window: "1h",
+    group_by: ["metadata.api_key"],
+    source: "builtin",
+  };
+
+  it("shows the window column", () => {
+    const html = renderWith({ rules: [rule], total: 1 });
+    expect(html).toContain("Window");
+    expect(html).toMatch(/>1h</);
+    expect(html).toContain("API Security");
+    expect(html).toMatch(/>high</); // severity 7 is high, as the server labels its alerts
+  });
+
+  it("formats missing windows", () => {
+    expect(ruleWindow(rule)).toBe("1h");
+    expect(ruleWindow(partial({ id: "x" }))).toBe("—");
+    expect(ruleWindow(partial({ id: "x", window: "0s" }))).toBe("—");
+  });
+
+  it("renders a rule's details", () => {
+    const html = renderToString(<RuleDetail rule={rule} onClose={() => {}} />);
+    for (const want of ["API Key Abuse", "api-001", "Aggregate", "high (7)", "1h", "metadata.api_key", "API Security"]) {
+      expect(html).toContain(want);
+    }
   });
 });
 

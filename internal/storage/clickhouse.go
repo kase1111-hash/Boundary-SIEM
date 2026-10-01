@@ -225,8 +225,89 @@ func (c *ClickHouseClient) Query(ctx context.Context, query string, args ...any)
 }
 
 // PrepareBatch prepares a batch for insertion.
+//
+// The batch runs on a context that follows ctx (its deadline, values and
+// cancellation) only until the batch is sent, closed or aborted; after that,
+// cancelling ctx no longer reaches it. clickhouse-go's batch.Send starts a
+// watchdog goroutine that closes the connection when the batch context is
+// done, and stops that goroutine only as Send returns, after the connection
+// is already back in the pool. When the caller cancelled ctx right after
+// Send (the usual defer cancel()) before the watchdog had been scheduled,
+// the watchdog could see both its stop signal and ctx.Done ready, pick
+// ctx.Done, and close a pooled connection that another query had meanwhile
+// acquired, failing that query with "use of closed network connection",
+// possibly after the server had committed it.
+//
+// A narrow window remains when ctx itself expires within microseconds of a
+// successful Send; that needs a driver fix.
 func (c *ClickHouseClient) PrepareBatch(ctx context.Context, query string) (driver.Batch, error) {
-	return c.conn.PrepareBatch(ctx, query)
+	bctx, detach := detachableContext(ctx)
+	batch, err := c.conn.PrepareBatch(bctx, query)
+	if err != nil {
+		detach()
+		return nil, contextCause(bctx, err)
+	}
+	return &detachingBatch{Batch: batch, ctx: bctx, detach: detach}, nil
+}
+
+// deadlineContext carries a deadline over a context that has no
+// cancellation of its own.
+type deadlineContext struct {
+	context.Context
+	deadline time.Time
+	ok       bool
+}
+
+func (d deadlineContext) Deadline() (time.Time, bool) { return d.deadline, d.ok }
+
+// detachableContext returns a context with ctx's values and deadline that is
+// cancelled when ctx is, until detach is called. After detach, nothing
+// cancels it any more. If ctx is cancelled, the returned context's Err is
+// context.Canceled and its cause is ctx's cause (e.g.
+// context.DeadlineExceeded).
+func detachableContext(ctx context.Context) (context.Context, func()) {
+	deadline, ok := ctx.Deadline()
+	dctx, cancel := context.WithCancelCause(deadlineContext{Context: context.WithoutCancel(ctx), deadline: deadline, ok: ok})
+	stop := context.AfterFunc(ctx, func() { cancel(context.Cause(ctx)) })
+	return dctx, func() { stop() }
+}
+
+// contextCause adds the cause of ctx's cancellation to err when err is the
+// bare context.Canceled the driver returns for a cancelled context.
+func contextCause(ctx context.Context, err error) error {
+	if err == nil || !errors.Is(err, context.Canceled) {
+		return err
+	}
+	if cause := context.Cause(ctx); cause != nil && !errors.Is(err, cause) {
+		return fmt.Errorf("%w: %w", err, cause)
+	}
+	return err
+}
+
+// detachingBatch detaches its context from the caller's once the batch is
+// finished; see PrepareBatch.
+type detachingBatch struct {
+	driver.Batch
+	ctx    context.Context
+	detach func()
+}
+
+func (b *detachingBatch) Send() error {
+	err := b.Batch.Send()
+	b.detach()
+	return contextCause(b.ctx, err)
+}
+
+func (b *detachingBatch) Close() error {
+	err := b.Batch.Close()
+	b.detach()
+	return contextCause(b.ctx, err)
+}
+
+func (b *detachingBatch) Abort() error {
+	err := b.Batch.Abort()
+	b.detach()
+	return err
 }
 
 // Stats returns connection pool statistics.

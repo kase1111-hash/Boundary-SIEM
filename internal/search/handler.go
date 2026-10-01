@@ -3,9 +3,12 @@ package search
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -155,18 +158,9 @@ func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse time range
-	if req.StartTime != "" || req.EndTime != "" {
-		query.TimeRange = &TimeRange{}
-		if req.StartTime != "" {
-			if t, err := parseTimeString(req.StartTime); err == nil {
-				query.TimeRange.Start = t
-			}
-		}
-		if req.EndTime != "" {
-			if t, err := parseTimeString(req.EndTime); err == nil {
-				query.TimeRange.End = t
-			}
-		}
+	if query.TimeRange, err = parseTimeRange("start_time", req.StartTime, "end_time", req.EndTime); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_time", "invalid time range", err.Error())
+		return
 	}
 
 	tenantID, ok := h.requireTenant(w, r)
@@ -178,8 +172,7 @@ func (h *Handler) HandleSearch(w http.ResponseWriter, r *http.Request) {
 	// Execute search
 	result, err := h.executor.Search(ctx, query)
 	if err != nil {
-		slog.Error("search failed", "error", err, "query", req.Query)
-		h.writeError(w, http.StatusInternalServerError, "search_error", "search execution failed", "")
+		h.writeExecError(w, err, "search_error", "search execution failed", "query", req.Query)
 		return
 	}
 
@@ -221,20 +214,9 @@ func (h *Handler) HandleSearchGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Parse time range
-	startTime := r.URL.Query().Get("start")
-	endTime := r.URL.Query().Get("end")
-	if startTime != "" || endTime != "" {
-		query.TimeRange = &TimeRange{}
-		if startTime != "" {
-			if t, err := parseTimeString(startTime); err == nil {
-				query.TimeRange.Start = t
-			}
-		}
-		if endTime != "" {
-			if t, err := parseTimeString(endTime); err == nil {
-				query.TimeRange.End = t
-			}
-		}
+	if query.TimeRange, err = parseTimeRange("start", r.URL.Query().Get("start"), "end", r.URL.Query().Get("end")); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_time", "invalid time range", err.Error())
+		return
 	}
 
 	tenantID, ok := h.requireTenant(w, r)
@@ -246,8 +228,7 @@ func (h *Handler) HandleSearchGet(w http.ResponseWriter, r *http.Request) {
 	// Execute search
 	result, err := h.executor.Search(ctx, query)
 	if err != nil {
-		slog.Error("search failed", "error", err, "query", queryStr)
-		h.writeError(w, http.StatusInternalServerError, "search_error", "search execution failed", "")
+		h.writeExecError(w, err, "search_error", "search execution failed", "query", queryStr)
 		return
 	}
 
@@ -314,8 +295,7 @@ func (h *Handler) HandleAggregation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
-		slog.Error("aggregation failed", "error", err, "type", req.Type, "field", req.Field)
-		h.writeError(w, http.StatusInternalServerError, "aggregation_error", "aggregation execution failed", "")
+		h.writeExecError(w, err, "aggregation_error", "aggregation execution failed", "type", req.Type, "field", req.Field)
 		return
 	}
 
@@ -397,8 +377,7 @@ func (h *Handler) HandleFieldValues(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.executor.TopN(ctx, query, field, n)
 	if err != nil {
-		slog.Error("field values query failed", "error", err, "field", field)
-		h.writeError(w, http.StatusInternalServerError, "query_error", "failed to get field values", "")
+		h.writeExecError(w, err, "query_error", "failed to get field values", "field", field)
 		return
 	}
 
@@ -409,26 +388,17 @@ func (h *Handler) HandleFieldValues(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) HandleStats(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Build time range from parameters
-	query := &Query{TimeRange: &TimeRange{}}
-
+	// Build time range from parameters (default: the last 24 hours)
 	startTime := r.URL.Query().Get("start")
-	endTime := r.URL.Query().Get("end")
-
-	if startTime != "" {
-		if t, err := parseTimeString(startTime); err == nil {
-			query.TimeRange.Start = t
-		}
-	} else {
-		// Default to last 24 hours
-		query.TimeRange.Start = time.Now().Add(-24 * time.Hour)
+	if startTime == "" {
+		startTime = "now-24h"
 	}
-
-	if endTime != "" {
-		if t, err := parseTimeString(endTime); err == nil {
-			query.TimeRange.End = t
-		}
+	timeRange, err := parseTimeRange("start", startTime, "end", r.URL.Query().Get("end"))
+	if err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_time", "invalid time range", err.Error())
+		return
 	}
+	query := &Query{TimeRange: timeRange}
 
 	tenantID, ok := h.requireTenant(w, r)
 	if !ok {
@@ -509,18 +479,9 @@ func (h *Handler) HandleExplain(w http.ResponseWriter, r *http.Request) {
 		query.OrderDesc = *req.OrderDesc
 	}
 
-	if req.StartTime != "" || req.EndTime != "" {
-		query.TimeRange = &TimeRange{}
-		if req.StartTime != "" {
-			if t, err := parseTimeString(req.StartTime); err == nil {
-				query.TimeRange.Start = t
-			}
-		}
-		if req.EndTime != "" {
-			if t, err := parseTimeString(req.EndTime); err == nil {
-				query.TimeRange.End = t
-			}
-		}
+	if query.TimeRange, err = parseTimeRange("start_time", req.StartTime, "end_time", req.EndTime); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_time", "invalid time range", err.Error())
+		return
 	}
 
 	tenantID, ok := h.requireTenant(w, r)
@@ -531,23 +492,49 @@ func (h *Handler) HandleExplain(w http.ResponseWriter, r *http.Request) {
 
 	result, err := h.executor.Explain(ctx, query)
 	if err != nil {
-		slog.Error("explain failed", "error", err, "query", req.Query)
-		h.writeError(w, http.StatusInternalServerError, "explain_error", "explain execution failed", "")
+		h.writeExecError(w, err, "explain_error", "explain execution failed", "query", req.Query)
 		return
 	}
 
 	h.writeJSON(w, http.StatusOK, result)
 }
 
+// routes maps the search route patterns to their handlers.
+func (h *Handler) routes() map[string]http.HandlerFunc {
+	return map[string]http.HandlerFunc{
+		"POST /v1/search":               h.HandleSearch,
+		"GET /v1/search":                h.HandleSearchGet,
+		"POST /v1/aggregations":         h.HandleAggregation,
+		"GET /v1/events/{id}":           h.HandleGetEvent,
+		"GET /v1/fields/{field}/values": h.HandleFieldValues,
+		"GET /v1/stats":                 h.HandleStats,
+		"POST /v1/search/explain":       h.HandleExplain,
+	}
+}
+
 // RegisterRoutes registers search routes on the given mux.
 func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
-	mux.HandleFunc("POST /v1/search", h.HandleSearch)
-	mux.HandleFunc("GET /v1/search", h.HandleSearchGet)
-	mux.HandleFunc("POST /v1/aggregations", h.HandleAggregation)
-	mux.HandleFunc("GET /v1/events/{id}", h.HandleGetEvent)
-	mux.HandleFunc("GET /v1/fields/{field}/values", h.HandleFieldValues)
-	mux.HandleFunc("GET /v1/stats", h.HandleStats)
-	mux.HandleFunc("POST /v1/search/explain", h.HandleExplain)
+	for pattern, handler := range h.routes() {
+		mux.HandleFunc(pattern, handler)
+	}
+}
+
+// RegisterUnavailableRoutes registers the search routes with a handler that
+// answers 503 with reason, for a server without the ClickHouse store that
+// search needs (storage.enabled: false). Without them, the dashboard's
+// POST /v1/search reached the static file handler (GET /) and got 405, and
+// the dashboard reported "not found".
+func RegisterUnavailableRoutes(mux *http.ServeMux, reason string) {
+	unavailable := func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		if err := json.NewEncoder(w).Encode(ErrorResponse{Error: reason, Code: "search_unavailable"}); err != nil {
+			slog.Error("failed to write response", "error", err)
+		}
+	}
+	for pattern := range (&Handler{}).routes() {
+		mux.HandleFunc(pattern, unavailable)
+	}
 }
 
 func (h *Handler) writeJSON(w http.ResponseWriter, status int, data interface{}) {
@@ -566,7 +553,19 @@ func (h *Handler) writeError(w http.ResponseWriter, status int, code, message, d
 	})
 }
 
-// parseTimeString parses various time formats.
+// unixTime converts a Unix timestamp in seconds, or in milliseconds when it
+// is too large to be seconds, to a time.
+func unixTime(ts int64) time.Time {
+	if ts > 1e12 {
+		return time.UnixMilli(ts)
+	}
+	return time.Unix(ts, 0)
+}
+
+// parseTimeString parses RFC 3339 (with or without fractional seconds), a
+// date (YYYY-MM-DD), "now" or a relative time ("now-1h", "now-7d"), or Unix
+// seconds or milliseconds. Anything else is an error: an unparseable start or
+// end used to be ignored, so the request silently searched all time.
 func parseTimeString(s string) (time.Time, error) {
 	// Try RFC3339 first
 	if t, err := time.Parse(time.RFC3339, s); err == nil {
@@ -591,14 +590,48 @@ func parseTimeString(s string) (time.Time, error) {
 		return time.Now().Add(-dur), nil
 	}
 
-	// Try Unix timestamp (seconds)
+	// Try Unix timestamp (seconds or milliseconds)
 	if ts, err := strconv.ParseInt(s, 10, 64); err == nil {
-		if ts > 1e12 {
-			// Milliseconds
-			return time.UnixMilli(ts), nil
-		}
-		return time.Unix(ts, 0), nil
+		return unixTime(ts), nil
 	}
 
-	return time.Time{}, nil
+	return time.Time{}, fmt.Errorf("unrecognised time %q: use RFC 3339, YYYY-MM-DD, now, now-<duration> (e.g. now-1h, now-7d) or Unix seconds",
+		truncateForLog(s, 100))
+}
+
+// parseTimeRange returns the time range of start and end (either may be
+// empty), or nil when both are empty. An unparseable value is an error
+// naming the parameter.
+func parseTimeRange(startName, start, endName, end string) (*TimeRange, error) {
+	if start == "" && end == "" {
+		return nil, nil
+	}
+	tr := &TimeRange{}
+	if start != "" {
+		t, err := parseTimeString(start)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", startName, err)
+		}
+		tr.Start = t
+	}
+	if end != "" {
+		t, err := parseTimeString(end)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", endName, err)
+		}
+		tr.End = t
+	}
+	return tr, nil
+}
+
+// writeExecError answers an executor error: 400 with the reason for an
+// invalid query (ErrInvalidQuery), otherwise 500 without details.
+func (h *Handler) writeExecError(w http.ResponseWriter, err error, code, message string, logAttrs ...any) {
+	if errors.Is(err, ErrInvalidQuery) {
+		h.writeError(w, http.StatusBadRequest, "invalid_query", "invalid query",
+			strings.TrimPrefix(err.Error(), ErrInvalidQuery.Error()+": "))
+		return
+	}
+	slog.Error(message, append([]any{"error", err}, logAttrs...)...)
+	h.writeError(w, http.StatusInternalServerError, code, message, "")
 }

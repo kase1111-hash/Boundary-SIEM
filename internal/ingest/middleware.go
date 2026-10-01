@@ -34,10 +34,11 @@ func isAPIPath(path string) bool {
 }
 
 // WithMiddleware wraps the handler with recovery, logging, authentication,
-// rate limiting and CORS, as configured. It returns the wrapped handler and
-// a function that releases the middleware's background resources (the rate
-// limiter's cleanup goroutine); call it on shutdown. It is safe to call more
-// than once.
+// rate limiting, CORS and the security headers (security_headers: CSP,
+// X-Frame-Options, HSTS, ...), as configured. It returns the wrapped handler
+// and a function that releases the middleware's background resources (the
+// rate limiter's cleanup goroutine); call it on shutdown. It is safe to call
+// more than once.
 func WithMiddleware(handler http.Handler, cfg *config.Config) (http.Handler, func()) {
 	// Apply middleware in reverse order (last applied runs first)
 	h := handler
@@ -61,10 +62,17 @@ func WithMiddleware(handler http.Handler, cfg *config.Config) (http.Handler, fun
 		stop = limiter.Stop
 	}
 
-	// CORS middleware (if enabled) - must be outermost to handle preflight OPTIONS
+	// CORS middleware (if enabled) - outside auth and rate limiting to
+	// handle preflight OPTIONS
 	if cfg.CORS.Enabled {
 		h = corsMiddleware(h, cfg.CORS)
 	}
+
+	// Security headers - outermost, so every response carries them: the
+	// dashboard, the API, auth errors and preflights. (They were configured
+	// and reported as enabled at startup but never applied, so the
+	// dashboard could be framed.)
+	h = middleware.NewSecurityHeadersMiddleware(cfg, slog.Default())(h)
 
 	return h, stop
 }

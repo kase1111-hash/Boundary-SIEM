@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,7 +25,7 @@ const shippedRulesDir = "../../../rules"
 // disappearing (or failing validation) is caught. The README advertises
 // "143 built-in rules"; the real number is what these constants say.
 const (
-	wantDetectionRules = 130 // GetAllRules()
+	wantDetectionRules = 129 // GetAllRules(); key-001 (a copy of sec-005) was removed
 	wantKillChains     = 3   // correlation.BuiltinChains()
 	wantYAMLRules      = 5   // rules/*.yaml
 )
@@ -110,6 +111,41 @@ func TestShippedRulesValidateAndAreCounted(t *testing.T) {
 	}
 	t.Logf("shipped rules: %d detection + %d kill chains + %d YAML = %d (README claims 143)",
 		len(detection), len(chains), yamlCount, len(detection)+len(chains)+yamlCount)
+}
+
+// E2E round 1: sec-005 and key-001 were the same rule (name, conditions,
+// group_by, window), so every key export raised two critical alerts. No two
+// shipped rules may match the same events the same way.
+func TestShippedRulesHaveNoDuplicates(t *testing.T) {
+	seen := make(map[string]string)
+	for _, r := range shippedRuleSet(t) {
+		sig := fmt.Sprintf("%s|%v|%+v|%+v|%v|%v|%+v|%+v|%+v", r.Type, r.GroupBy, r.EventConditions, r.Conditions,
+			r.Window, r.DependsOn, r.Threshold, r.Sequence, r.Aggregate)
+		if other, ok := seen[sig]; ok {
+			t.Errorf("rules %s and %s match the same events the same way", other, r.ID)
+			continue
+		}
+		seen[sig] = r.ID
+	}
+}
+
+// E2E round 1: the Rules page showed Category "—" for all built-in detection
+// rules.
+func TestDetectionRulesHaveCategories(t *testing.T) {
+	for _, r := range GetAllRules() {
+		if r.Category == "" {
+			t.Errorf("detection rule %s has no category", r.ID)
+		}
+	}
+	byID := make(map[string]*correlation.Rule)
+	for _, r := range GetAllRules() {
+		byID[r.ID] = r
+	}
+	for id, want := range map[string]string{"sec-005": "Security", "key-002": "Key Management", "val-004": "Validator", "eco-001": "Ecosystem"} {
+		if got := byID[id].Category; got != want {
+			t.Errorf("%s category = %q, want %q", id, got, want)
+		}
+	}
 }
 
 func TestFormerlyInvalidRulesAreThresholdRules(t *testing.T) {
@@ -311,12 +347,12 @@ func TestShippedRulesFireOnIntendedEvents(t *testing.T) {
 	// sec-005: a single key export attempt.
 	send(event("key.export", schema.OutcomeSuccess, nil), 1)
 	// chain-validator-compromise: missed attestations, a double vote, then
-	// access to the withdrawal key.
+	// access to the same validator's withdrawal key.
 	send(event("validator.attestation_missed", schema.OutcomeFailure, map[string]any{"validator_index": 42}), 3)
 	waitFor(t, &mu, counts, "val-004")
 	send(event("validator.double_vote", schema.OutcomeFailure, map[string]any{"validator_index": 42}), 1)
 	waitFor(t, &mu, counts, "val-002")
-	send(event("key.access", schema.OutcomeSuccess, map[string]any{"key_type": "withdrawal"}), 1)
+	send(event("key.access", schema.OutcomeSuccess, map[string]any{"key_type": "withdrawal", "validator_index": 42}), 1)
 	waitFor(t, &mu, counts, "key-007")
 	waitFor(t, &mu, counts, "chain-validator-compromise")
 
@@ -338,6 +374,90 @@ func TestShippedRulesFireOnIntendedEvents(t *testing.T) {
 		if counts[id] != 1 {
 			t.Errorf("%s fired %d time(s), want 1", id, counts[id])
 		}
+	}
+}
+
+// E2E round 1: the built-in kill chains had no group key, so RPC
+// enumeration from one IP, an admin RPC call from another and a large
+// transfer from an unrelated wallet raised a CRITICAL "Recon → Exploit →
+// Drain". Chains now require every stage to concern the same entity.
+func TestKillChainsCorrelateStagesByEntity(t *testing.T) {
+	var mu sync.Mutex
+	counts := make(map[string]int)
+	var chainAlerts []*correlation.Alert
+	e := wireLikeSiemIngest(t, func(a *correlation.Alert) {
+		mu.Lock()
+		counts[a.RuleID]++
+		counts[a.RuleID+" "+a.GroupKey]++
+		if strings.HasPrefix(a.RuleID, "chain-") {
+			chainAlerts = append(chainAlerts, a)
+		}
+		mu.Unlock()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.Start(ctx)
+	defer e.Stop()
+
+	from := func(ip string, ev *schema.Event) *schema.Event {
+		ev.Actor = &schema.Actor{ID: "actor-" + ip, IPAddress: ip}
+		return ev
+	}
+	recon := func(ip string) {
+		for i := 0; i < 21; i++ {
+			ev := from(ip, event("rpc.call", schema.OutcomeSuccess, nil))
+			ev.Target = fmt.Sprintf("m%d", i)
+			e.ProcessEvent(ev)
+		}
+	}
+	quiet := func() {
+		t.Helper()
+		time.Sleep(300 * time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		if len(chainAlerts) != 0 {
+			t.Fatalf("kill chain fired for unrelated entities: %s group %q", chainAlerts[0].RuleID, chainAlerts[0].GroupKey)
+		}
+	}
+
+	// The finding's reproduction: three unrelated actors.
+	recon("172.16.1.1")
+	waitFor(t, &mu, counts, "sec-002")
+	e.ProcessEvent(from("172.16.2.2", event("rpc.admin.nodeinfo", schema.OutcomeFailure, nil)))
+	waitFor(t, &mu, counts, "sec-001")
+	drain := event("evm.transaction", schema.OutcomeSuccess, map[string]any{"value_eth": 1200.0, "from": "0xunrelatedtreasury"})
+	drain.Actor = &schema.Actor{Type: schema.ActorService, ID: "evm-poller"} // on-chain: no IP
+	e.ProcessEvent(drain)
+	waitFor(t, &mu, counts, "tx-001")
+	quiet()
+
+	// Validator chain: the withdrawal key of a different validator.
+	for i := 0; i < 3; i++ {
+		e.ProcessEvent(event("validator.attestation_missed", schema.OutcomeFailure, map[string]any{"validator_index": 7}))
+	}
+	waitFor(t, &mu, counts, "val-004")
+	e.ProcessEvent(event("validator.double_vote", schema.OutcomeFailure, map[string]any{"validator_index": 7}))
+	waitFor(t, &mu, counts, "val-002")
+	e.ProcessEvent(event("key.access", schema.OutcomeSuccess, map[string]any{"key_type": "withdrawal", "validator_index": 8}))
+	waitFor(t, &mu, counts, "key-007")
+	quiet()
+
+	// One source IP doing all three: recon, exploit, then a transfer it
+	// initiated through a wallet API.
+	recon("198.51.100.9")
+	waitFor(t, &mu, counts, "sec-002 [actor.ip=198.51.100.9]")
+	e.ProcessEvent(from("198.51.100.9", event("rpc.admin.peers", schema.OutcomeFailure, nil)))
+	waitFor(t, &mu, counts, "sec-001 [actor.ip=198.51.100.9]")
+	e.ProcessEvent(from("198.51.100.9", event("tx.transfer", schema.OutcomeSuccess, map[string]any{"value_eth": 1500.0, "from": "0xvictim"})))
+	waitFor(t, &mu, counts, "chain-recon-exploit-drain")
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(chainAlerts) != 1 || chainAlerts[0].GroupKey != "[actor.ip=198.51.100.9]" {
+		for _, a := range chainAlerts {
+			t.Errorf("chain alert %s group %q", a.RuleID, a.GroupKey)
+		}
+		t.Fatalf("got %d chain alerts, want exactly recon-exploit-drain for 198.51.100.9", len(chainAlerts))
 	}
 }
 

@@ -8,21 +8,26 @@ import {
   testRule,
   describeError,
 } from "../services/api";
-import type { Rule, RuleListResponse, RuleType } from "../types/api";
+import type { Rule, RuleListResponse, RuleType, Severity } from "../types/api";
+import { severityClass } from "../services/severity";
 
-// --- Severity number to label ---
-function severityLabel(sev: number): string {
-  if (sev >= 8) return "critical";
-  if (sev >= 5) return "high";
-  if (sev >= 3) return "medium";
-  return "low";
-}
+// --- Severity number to label (the class the rule's alerts get) ---
+const severityTextColors: Record<Severity, string> = {
+  critical: "text-red-400",
+  high: "text-orange-400",
+  medium: "text-yellow-400",
+  low: "text-blue-400",
+};
 
 function severityColor(sev: number): string {
-  if (sev >= 8) return "text-red-400";
-  if (sev >= 5) return "text-orange-400";
-  if (sev >= 3) return "text-yellow-400";
-  return "text-blue-400";
+  return severityTextColors[severityClass(sev)];
+}
+
+/** The rule's time window as shown in the table ("—" when it has none). */
+export function ruleWindow(rule: Rule): string {
+  const w = rule.window;
+  if (typeof w !== "string" || w === "" || w === "0s") return "—";
+  return w;
 }
 
 // Rules come from the API and may lack fields the type marks as required
@@ -80,6 +85,7 @@ export const RulesPage: React.FC = () => {
   const [editingRule, setEditingRule] = useState<Rule | null>(null);
   const [testResults, setTestResults] = useState<Record<string, unknown> | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [detailRule, setDetailRule] = useState<Rule | null>(null);
 
   const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["rules", typeFilter],
@@ -211,6 +217,7 @@ export const RulesPage: React.FC = () => {
                 <th className="p-3">Name</th>
                 <th className="p-3">Type</th>
                 <th className="p-3">Severity</th>
+                <th className="p-3">Window</th>
                 <th className="p-3">Category</th>
                 <th className="p-3">Source</th>
                 <th className="p-3 w-32">Actions</th>
@@ -220,9 +227,11 @@ export const RulesPage: React.FC = () => {
               {filtered.map((rule, idx) => (
                 <tr
                   key={rule.id || `rule-${idx}`}
-                  className="border-b border-gray-700/50 hover:bg-gray-700/30"
+                  className="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer"
+                  onClick={() => setDetailRule(rule)}
+                  title="Show rule details"
                 >
-                  <td className="p-3">
+                  <td className="p-3" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() =>
                         toggleMutation.mutate({
@@ -258,7 +267,7 @@ export const RulesPage: React.FC = () => {
                         <span
                           className={`font-medium ${severityColor(rule.severity)}`}
                         >
-                          {severityLabel(rule.severity)}
+                          {severityClass(rule.severity)}
                         </span>
                         <span className="text-gray-500 text-xs ml-1">
                           ({rule.severity})
@@ -267,6 +276,9 @@ export const RulesPage: React.FC = () => {
                     ) : (
                       <span className="text-gray-500">—</span>
                     )}
+                  </td>
+                  <td className="p-3 text-gray-400 text-xs whitespace-nowrap">
+                    {ruleWindow(rule)}
                   </td>
                   <td className="p-3 text-gray-400 text-xs">
                     {rule.category || "—"}
@@ -282,7 +294,7 @@ export const RulesPage: React.FC = () => {
                       {rule.source || "builtin"}
                     </span>
                   </td>
-                  <td className="p-3">
+                  <td className="p-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-1">
                       <button
                         onClick={() => testMutation.mutate(rule.id)}
@@ -323,7 +335,7 @@ export const RulesPage: React.FC = () => {
               {filtered.length === 0 && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="p-8 text-center text-gray-500"
                   >
                     No rules found
@@ -334,6 +346,11 @@ export const RulesPage: React.FC = () => {
           </table>
         )}
       </div>
+
+      {/* Rule detail modal (click a row) */}
+      {detailRule && (
+        <RuleDetail rule={detailRule} onClose={() => setDetailRule(null)} />
+      )}
 
       {/* Test result modal */}
       {testResults && testingId && (
@@ -371,6 +388,63 @@ export const RulesPage: React.FC = () => {
           }}
         />
       )}
+    </div>
+  );
+};
+
+// --- Rule Detail ---
+
+/** Read-only view of a rule: the summary fields, then the full definition. */
+export const RuleDetail: React.FC<{ rule: Rule; onClose: () => void }> = ({
+  rule,
+  onClose,
+}) => {
+  const fields: [string, string][] = [
+    ["ID", rule.id || "—"],
+    ["Type", ruleTypeLabels[rule.type] || rule.type || "—"],
+    [
+      "Severity",
+      typeof rule.severity === "number"
+        ? `${severityClass(rule.severity)} (${rule.severity})`
+        : "—",
+    ],
+    ["Window", ruleWindow(rule)],
+    ["Group by", rule.group_by?.length ? rule.group_by.join(", ") : "—"],
+    ["Category", rule.category || "—"],
+    ["Source", rule.source || "builtin"],
+    ["Enabled", rule.enabled ? "yes" : "no"],
+  ];
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+      onClick={onClose}
+    >
+      <div
+        className="bg-gray-800 rounded-lg p-6 w-[40rem] max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 className="text-white font-semibold">{ruleName(rule)}</h3>
+        {rule.description && (
+          <p className="text-gray-400 text-sm mt-1">{rule.description}</p>
+        )}
+        <dl className="grid grid-cols-3 gap-x-4 gap-y-1 text-sm mt-4">
+          {fields.map(([label, value]) => (
+            <React.Fragment key={label}>
+              <dt className="text-gray-500">{label}</dt>
+              <dd className="col-span-2 text-gray-300">{value}</dd>
+            </React.Fragment>
+          ))}
+        </dl>
+        <pre className="text-gray-300 text-xs bg-gray-900 rounded p-3 mt-4 overflow-x-auto">
+          {JSON.stringify(rule, null, 2)}
+        </pre>
+        <button
+          onClick={onClose}
+          className="mt-4 w-full px-4 py-2 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 text-sm"
+        >
+          Close
+        </button>
+      </div>
     </div>
   );
 };

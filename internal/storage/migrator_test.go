@@ -322,8 +322,21 @@ func TestMigratorRunExecutesEmbeddedMigrations(t *testing.T) {
 		t.Errorf("executed %d ALTER TABLE events statements, want 6 (005: 4 indices, 006: column + index)", alters)
 	}
 
-	if got := conn.recorded(); len(got) != 6 {
-		t.Errorf("recorded migrations = %v, want versions 1-6", got)
+	// 007: the deduplication windows that make retried inserts idempotent.
+	for _, table := range []string{"events", "events_critical"} {
+		var dedupWindow bool
+		for _, stmt := range execs {
+			if strings.HasPrefix(stmt, "ALTER TABLE "+table+" MODIFY SETTING non_replicated_deduplication_window = ") {
+				dedupWindow = true
+			}
+		}
+		if !dedupWindow {
+			t.Errorf("migration 007 did not set %s.non_replicated_deduplication_window", table)
+		}
+	}
+
+	if got := conn.recorded(); len(got) != 7 {
+		t.Errorf("recorded migrations = %v, want versions 1-7", got)
 	}
 
 	// A second run is a no-op.
@@ -361,15 +374,15 @@ func TestMigratorRunRepairsMigrationsRecordedWithoutSchema(t *testing.T) {
 	}
 
 	got := conn.recorded()
-	if len(got) != 6 || got[5] != 6 {
-		t.Errorf("recorded migrations = %v, want [1 2 3 4 5 6] (repaired versions not recorded twice)", got)
+	if len(got) != 7 || got[5] != 6 || got[6] != 7 {
+		t.Errorf("recorded migrations = %v, want [1 2 3 4 5 6 7] (repaired versions not recorded twice)", got)
 	}
 }
 
 // When the schema is complete, recorded migrations are not re-applied.
 func TestMigratorRunSkipsCompleteMigrations(t *testing.T) {
 	conn := &migrationConn{
-		applied: []uint32{1, 2, 3, 4, 5, 6},
+		applied: []uint32{1, 2, 3, 4, 5, 6, 7},
 		tables:  append([]string{"schema_migrations"}, embeddedSchemaObjects(t)...),
 	}
 	m := NewMigrator(newMockClient(conn))
@@ -410,7 +423,8 @@ func TestEmbeddedMigrationsAreIdempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadMigrations() error = %v", err)
 	}
-	idempotent := regexp.MustCompile(`(?is)^(CREATE\s+(TABLE|MATERIALIZED\s+VIEW|VIEW)\s+IF\s+NOT\s+EXISTS\b|ALTER\s+TABLE\s+\w+\s+(ADD|DROP)\s+(COLUMN|INDEX)\s+IF\s+(NOT\s+)?EXISTS\b)`)
+	// MODIFY SETTING to a constant value leaves the same state when repeated.
+	idempotent := regexp.MustCompile(`(?is)^(CREATE\s+(TABLE|MATERIALIZED\s+VIEW|VIEW)\s+IF\s+NOT\s+EXISTS\b|ALTER\s+TABLE\s+\w+\s+(ADD|DROP)\s+(COLUMN|INDEX)\s+IF\s+(NOT\s+)?EXISTS\b|ALTER\s+TABLE\s+\w+\s+MODIFY\s+SETTING\s+\w+\s*=\s*\w+\s*$)`)
 	for _, m := range migrations {
 		stmts := splitStatements(m.SQL)
 		if len(stmts) == 0 {

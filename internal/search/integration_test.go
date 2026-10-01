@@ -184,6 +184,8 @@ func TestIntegrationSearchAPI(t *testing.T) {
 		{"metadata sum aggregation", "/v1/aggregations", `{"field":"metadata.gas","type":"sum"}`, `"value":600`},
 		{"stats", "/v1/stats", "", `"total_events":4`},
 		{"explain", "/v1/search/explain", `{"query":"action:auth.login"}`, `"plan":[`},
+		{"free-text search", "/v1/search", `{"query":"dave"}`, `"total_count":1`},
+		{"free-text explain", "/v1/search/explain", `{"query":"dave"}`, `positionCaseInsensitiveUTF8(raw, ?)`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			method := http.MethodPost
@@ -195,6 +197,37 @@ func TestIntegrationSearchAPI(t *testing.T) {
 				t.Errorf("status = %d, want 200 containing %s: %s", code, tc.contains, body)
 			}
 		})
+	}
+}
+
+// E2E round 1: these requests used to answer 500 (foo:bar became
+// timestamp = 'bar') or 200 with timestamp buckets; ClickHouse never sees
+// them now.
+func TestIntegrationInvalidRequestsAre400(t *testing.T) {
+	f := newIntegrationFixture(t)
+	for _, tc := range []struct{ method, path, body string }{
+		{http.MethodGet, "/v1/search?q=foo:bar", ""},
+		{http.MethodGet, "/v1/search?q=message~tcp", ""},
+		{http.MethodGet, "/v1/search?q=severity:high", ""},
+		{http.MethodGet, "/v1/search?q=*&start=1h", ""},
+		{http.MethodPost, "/v1/aggregations", `{"field":"bogus","type":"terms"}`},
+		{http.MethodPost, "/v1/aggregations", `{"field":"x","type":"nope"}`},
+		{http.MethodGet, "/v1/fields/bogus/values", ""},
+	} {
+		t.Run(tc.path+tc.body, func(t *testing.T) {
+			code, body := f.do(t, tc.method, tc.path, tc.body)
+			if code != http.StatusBadRequest {
+				t.Errorf("status = %d, want 400: %s", code, body)
+			}
+		})
+	}
+
+	code, body := f.do(t, http.MethodGet, "/v1/search?q=*&limit=1", "")
+	var resp struct {
+		TookMs float64 `json:"took_ms"`
+	}
+	if code != http.StatusOK || json.Unmarshal(body, &resp) != nil || resp.TookMs > 10000 {
+		t.Errorf("status = %d, took_ms = %v, want milliseconds (it reported nanoseconds): %s", code, resp.TookMs, body)
 	}
 }
 
@@ -225,6 +258,23 @@ func TestIntegrationQuerySemantics(t *testing.T) {
 		{`raw~"say \"hi\" auth.logout"`, []int{2}},
 		{"request_id:req-42 action!=auth.login", []int{2, 3}},
 		{"timestamp>now-150s", []int{0, 1}},
+		// E2E round 1: free-text terms are searched (they were dropped, so
+		// every event matched), case-insensitively across the text columns.
+		{"carol", []int{2}},
+		{"CAROL", []int{2}},
+		{"DELETE", []int{3}},
+		{"NOT voilà", []int{1, 2, 3}},
+		{`"say \"hi\" auth.logout"`, []int{2}},
+		{"ca*ol", []int{2}},
+		{"action:auth.login bob", []int{1}},
+		{"*", []int{0, 1, 2, 3}},
+		{"nosuchword", nil},
+		// Typed values: a number given as text, a date, a UUID, Lucene-style
+		// comparisons.
+		{"severity:>=7", []int{1, 3}},
+		{`severity:"9"`, []int{3}},
+		{"timestamp>2000-01-01", []int{0, 1, 2, 3}},
+		{`id:"` + ev[1].EventID.String() + `"`, []int{1}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.query, func(t *testing.T) {

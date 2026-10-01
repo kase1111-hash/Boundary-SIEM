@@ -130,9 +130,20 @@ type Manager struct {
 	db       *sql.DB
 	channels []NotificationChannel
 	alerts   map[uuid.UUID]*Alert
-	dedup    map[string]time.Time // rule_id+group_key -> last alert time
+	dedup    map[string]dedupEntry // "rule_id:group_key" -> latest alert
 	mu       sync.RWMutex
 }
+
+// dedupEntry is the latest alert raised for a rule and group, and when that
+// alert was last raised or recurred.
+type dedupEntry struct {
+	alertID uuid.UUID
+	last    time.Time
+}
+
+// maxAlertEventIDs bounds the event IDs an alert keeps in memory as
+// recurrences are merged into it; EventCount keeps the full count.
+const maxAlertEventIDs = 1000
 
 // NewManager creates a new alert manager. db is the database/sql handle of
 // the ClickHouse store (storage.ClickHouseClient.DB()); pass nil to keep
@@ -143,7 +154,7 @@ func NewManager(config ManagerConfig, db *sql.DB) *Manager {
 		db:       db,
 		channels: make([]NotificationChannel, 0),
 		alerts:   make(map[uuid.UUID]*Alert),
-		dedup:    make(map[string]time.Time),
+		dedup:    make(map[string]dedupEntry),
 	}
 }
 
@@ -156,19 +167,40 @@ func (m *Manager) AddChannel(channel NotificationChannel) {
 }
 
 // HandleCorrelationAlert handles an alert from the correlation engine.
+//
+// Deduplication: when the rule fired for the same group within
+// DeduplicationWindow of the previous occurrence and that alert is still
+// open (any status but resolved), the recurrence is merged into it: its
+// event count, event IDs and updated_at grow, metadata.occurrences counts
+// the merged alerts, and no notification is sent. Once the alert has been
+// resolved, a recurrence raises a new alert: the attack resumed. (Every
+// recurrence within a fixed window from the first alert used to be dropped,
+// logged at debug only, even after the alert was resolved.)
 func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correlation.Alert) error {
-	// Check for deduplication
-	dedupKey := fmt.Sprintf("%s:%s", corrAlert.RuleID, corrAlert.GroupKey)
+	dedupKey := dedupKeyOf(corrAlert.RuleID, corrAlert.GroupKey)
+	now := time.Now()
 
 	m.mu.Lock()
-	if lastTime, ok := m.dedup[dedupKey]; ok {
-		if time.Since(lastTime) < m.config.DeduplicationWindow {
+	if entry, ok := m.dedup[dedupKey]; ok && now.Sub(entry.last) < m.config.DeduplicationWindow {
+		if open, ok := m.alerts[entry.alertID]; ok && open.Status != StatusResolved {
+			m.dedup[dedupKey] = dedupEntry{alertID: open.ID, last: now}
+			mergeRecurrence(open, corrAlert, nextUpdateTime(open.UpdatedAt))
+			snapshot := open.clone()
 			m.mu.Unlock()
-			slog.Debug("suppressing duplicate alert", "rule_id", corrAlert.RuleID)
+
+			slog.Info("alert recurred; merged into the open alert",
+				"rule_id", corrAlert.RuleID, "group_key", corrAlert.GroupKey,
+				"alert_id", snapshot.ID, "status", snapshot.Status,
+				"occurrences", snapshot.Metadata[metaOccurrences], "event_count", snapshot.EventCount)
+			if m.db != nil {
+				if err := m.persistAlert(ctx, snapshot); err != nil {
+					slog.Error("failed to persist merged alert", "alert_id", snapshot.ID, "error", err)
+				}
+			}
 			return nil
 		}
 	}
-	m.dedup[dedupKey] = time.Now()
+	m.dedup[dedupKey] = dedupEntry{alertID: corrAlert.ID, last: now}
 	m.mu.Unlock()
 
 	// Convert to managed alert
@@ -217,6 +249,46 @@ func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correla
 	m.sendNotifications(ctx, snapshot)
 
 	return nil
+}
+
+// Metadata keys maintained on alerts that recurrences were merged into.
+const (
+	metaOccurrences    = "occurrences"
+	metaLastOccurrence = "last_occurrence"
+)
+
+// dedupKeyOf is the deduplication key of a rule and group.
+func dedupKeyOf(ruleID, groupKey string) string {
+	return fmt.Sprintf("%s:%s", ruleID, groupKey)
+}
+
+// mergeRecurrence folds a recurrence of alert's rule and group into alert.
+// The caller holds the manager lock.
+func mergeRecurrence(alert *Alert, recurrence *correlation.Alert, now time.Time) {
+	alert.EventCount += len(recurrence.Events)
+	for _, e := range recurrence.Events {
+		if len(alert.EventIDs) >= maxAlertEventIDs {
+			break
+		}
+		alert.EventIDs = append(alert.EventIDs, e.EventID)
+	}
+	if alert.Metadata == nil {
+		alert.Metadata = make(map[string]interface{})
+	}
+	occurrences := 1
+	switch n := alert.Metadata[metaOccurrences].(type) {
+	case int:
+		occurrences = n
+	case float64: // decoded from the persisted JSON
+		occurrences = int(n)
+	}
+	alert.Metadata[metaOccurrences] = occurrences + 1
+	seen := recurrence.Timestamp
+	if seen.IsZero() {
+		seen = now
+	}
+	alert.Metadata[metaLastOccurrence] = seen.UTC().Format(time.RFC3339Nano)
+	alert.UpdatedAt = now
 }
 
 // storeAlert stores an alert in memory and database. It returns a snapshot
@@ -512,14 +584,22 @@ func (m *Manager) Stats() map[string]interface{} {
 
 	statusCounts := make(map[string]int)
 	severityCounts := make(map[string]int)
+	open := 0
 
 	for _, alert := range m.alerts {
 		statusCounts[string(alert.Status)]++
 		severityCounts[string(alert.Severity)]++
+		switch alert.Status {
+		case StatusNew, StatusAcknowledged, StatusInProgress:
+			open++
+		}
 	}
 
 	stats := map[string]interface{}{
-		"total":       len(m.alerts),
+		"total": len(m.alerts),
+		// open counts the alerts still to be worked: new, acknowledged or
+		// in progress (not resolved or suppressed).
+		"open":        open,
 		"by_status":   statusCounts,
 		"by_severity": severityCounts,
 		"channels":    len(m.channels),
@@ -544,8 +624,8 @@ func (m *Manager) Cleanup(ctx context.Context) int {
 	}
 
 	// Cleanup dedup map
-	for key, t := range m.dedup {
-		if time.Since(t) > m.config.DeduplicationWindow*2 {
+	for key, entry := range m.dedup {
+		if time.Since(entry.last) > m.config.DeduplicationWindow*2 {
 			delete(m.dedup, key)
 		}
 	}

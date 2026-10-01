@@ -145,6 +145,46 @@ func TestHub_AuthPingAndBroadcast(t *testing.T) {
 	}
 }
 
+// E2E round 1: a client that disconnected stayed registered (and counted in
+// siem_websocket_clients) until the next ping tick, up to 30s, because serve
+// waited for the writer before closing the connection, and the writer only
+// stopped on close or a failed write.
+func TestHub_DisconnectedClientIsReleasedAtOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		leave func(*websocket.Conn)
+	}{
+		{"close frame", func(c *websocket.Conn) {
+			_ = c.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "bye"), time.Now().Add(time.Second))
+		}},
+		{"connection dropped", func(c *websocket.Conn) { _ = c.NetConn().Close() }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			hub, _, url := newTestHub(t, Config{
+				AuthEnabled: true, APIKeyValid: keyChecker("k1"),
+				PingInterval: time.Hour, ReadTimeout: time.Hour,
+			})
+			conn := authed(t, url, "k1")
+			waitClients(t, hub, 1)
+
+			tc.leave(conn)
+			deadline := time.Now().Add(2 * time.Second)
+			for hub.Clients() != 0 {
+				if time.Now().After(deadline) {
+					t.Fatalf("clients = %d two seconds after the client left, want 0", hub.Clients())
+				}
+				time.Sleep(5 * time.Millisecond)
+			}
+			hub.mu.RLock()
+			tracked := len(hub.all)
+			hub.mu.RUnlock()
+			if tracked != 0 {
+				t.Errorf("hub still tracks %d connection(s)", tracked)
+			}
+		})
+	}
+}
+
 func TestHub_AuthFailures(t *testing.T) {
 	hub, _, url := newTestHub(t, Config{
 		AuthEnabled: true,

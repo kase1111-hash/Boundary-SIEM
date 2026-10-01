@@ -422,7 +422,13 @@ func (c *client) serve() {
 		defer close(writerDone)
 		c.writeLoop()
 	}()
-	defer func() { <-writerDone }()
+	// When the read loop ends (the client closed or went away), stop the
+	// writer at once: it only notices c.done or a failed write, so waiting
+	// for it first kept a departed client registered until the next ping.
+	defer func() {
+		c.close(websocket.CloseNormalClosure, "")
+		<-writerDone
+	}()
 
 	if !c.hub.register(c) {
 		c.close(websocket.CloseGoingAway, "server shutting down")

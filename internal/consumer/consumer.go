@@ -261,7 +261,8 @@ func (c *Consumer) Stop() {
 // then flushes the storage writer. It waits until that is done, ctx is done
 // or ShutdownWait has passed, whichever comes first. If it gives up, the
 // workers are told to stop at once and the returned error (wrapping
-// ErrDrainTimeout) says how many events were left in the queue.
+// ErrDrainTimeout) says how many events were left in the queue, or that the
+// queue was empty and a storage write was still running.
 func (c *Consumer) Drain(ctx context.Context) error {
 	c.stopOnce.Do(func() { close(c.done) })
 
@@ -297,11 +298,21 @@ func (c *Consumer) Drain(ctx context.Context) error {
 	abort := c.abortCh()
 	c.abortClose.Do(func() { close(abort) })
 	remaining := c.queue.Len()
-	slog.Error("queue consumer did not drain the queue in time; remaining events are lost",
-		"remaining_events", remaining,
+	if remaining > 0 {
+		slog.Error("queue consumer did not drain the queue in time; events left in the queue are not stored",
+			"remaining_events", remaining,
+			"consumed", atomic.LoadUint64(&c.consumed),
+		)
+		return fmt.Errorf("%w: %d events left in the queue", ErrDrainTimeout, remaining)
+	}
+	// The queue is empty: the time went into storage writes (a flush
+	// retrying against an unavailable ClickHouse, or the final flush). The
+	// events they hold are still the writer's, which stores, dead-letters
+	// or reports them as lost when it is closed.
+	slog.Warn("queue consumer did not finish in time: the queue is empty but a storage write is still running",
 		"consumed", atomic.LoadUint64(&c.consumed),
 	)
-	return fmt.Errorf("%w: %d events left in the queue", ErrDrainTimeout, remaining)
+	return fmt.Errorf("%w: queue empty, storage write still in progress", ErrDrainTimeout)
 }
 
 // Metrics returns consumer statistics.

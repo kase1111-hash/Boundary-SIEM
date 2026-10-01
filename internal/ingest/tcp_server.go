@@ -319,7 +319,19 @@ func (s *TCPServer) handleConnection(ctx context.Context, conn net.Conn) {
 			if !idle && !s.stopping() {
 				slog.Debug("TCP read error", "error", err, "remote", sourceIP)
 			}
-			return // idle timeout, Stop, or a broken connection
+			// The connection ends here (idle timeout, Stop, or a reset such
+			// as a TLS client closing without close_notify). A final line
+			// without a newline that was already read is still a message,
+			// as at a clean EOF; it used to be dropped without a trace. If
+			// the error cut it short, parsing fails and it is counted and
+			// quarantined like any other unparseable line.
+			if strings.TrimSpace(line) != "" {
+				slog.Debug("processing unterminated final line of a connection that ended with an error",
+					"remote", sourceIP, "error", err)
+				atomic.AddUint64(&s.received, 1)
+				s.processMessage(ctx, line, sourceIP)
+			}
+			return
 		}
 
 		// A final line without a newline is still a message.

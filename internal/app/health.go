@@ -237,7 +237,7 @@ func (a *App) metrics() []ingest.Metric {
 			counter("siem_storage_events_failed_total", "Events not written to the events table (includes dead-lettered)", bm.Failed),
 			counter("siem_storage_events_dead_lettered_total", "Events moved to events_quarantine after failed inserts", bm.DeadLettered),
 			counter("siem_storage_events_requeued_total", "Events put back after a failed flush", bm.Requeued),
-			gauge("siem_storage_pending", "Events buffered for the next storage flush", float64(bm.Pending)),
+			gauge("siem_storage_pending", "Events held by the storage writer: buffered or in a flush that has not finished (retries included)", float64(bm.Pending)),
 		)
 		status, _ := a.storage.get()
 		up := 0.0

@@ -90,23 +90,42 @@ func (r *AlertReinjector) Reinject(alert *Alert) {
 		Source: schema.Source{
 			Product: "boundary-siem-correlation",
 		},
-		Action:   "alert.fired",
-		Outcome:  schema.OutcomeSuccess,
-		Severity: alert.Severity,
-		Target:   alert.RuleName,
-		Metadata: map[string]any{
-			"alert_id":      alert.ID.String(),
-			"rule_id":       alert.RuleID,
-			"rule_name":     alert.RuleName,
-			"group_key":     alert.GroupKey,
-			"event_count":   len(alert.Events),
-			metaIsSynthetic: true,
-			metaChainDepth:  depth + 1,
-			metaReinjected:  reinjected{depth: depth + 1},
-		},
+		Action:        "alert.fired",
+		Outcome:       schema.OutcomeSuccess,
+		Severity:      alert.Severity,
+		Target:        alert.RuleName,
+		Metadata:      make(map[string]any),
 		SchemaVersion: schema.SchemaVersionCurrent,
 		ReceivedAt:    time.Now(),
 		TenantID:      "system",
+	}
+
+	// The entity of the event that raised the alert (who did it, and its
+	// metadata such as metadata.from or metadata.validator_index), so that a
+	// chain can require all of its stages to concern the same entity.
+	// Alert fields are set below and always win.
+	if t := alert.trigger; t != nil {
+		if t.Actor != nil {
+			actor := *t.Actor
+			event.Actor = &actor
+		}
+		for k, v := range t.Metadata {
+			if !isAlertField(k) && k != metaReinjected {
+				event.Metadata[k] = v
+			}
+		}
+	}
+	for k, v := range map[string]any{
+		"alert_id":      alert.ID.String(),
+		"rule_id":       alert.RuleID,
+		"rule_name":     alert.RuleName,
+		"group_key":     alert.GroupKey,
+		"event_count":   len(alert.Events),
+		metaIsSynthetic: true,
+		metaChainDepth:  depth + 1,
+		metaReinjected:  reinjected{depth: depth + 1},
+	} {
+		event.Metadata[k] = v
 	}
 
 	if alert.MITRE != nil {
@@ -128,6 +147,14 @@ func (r *AlertReinjector) Reinject(alert *Alert) {
 }
 
 // ChainDef defines a kill-chain pattern built from rule dependencies.
+//
+// GroupBy names the entity every stage must concern, as fields of the event
+// that raised each stage alert (AlertReinjector copies its actor and
+// metadata into the re-injected alert.fired event): "actor.ip" requires all
+// stages to have been raised by events from the same source IP. Stage alerts
+// whose event lacks the field are not counted. Without GroupBy the stages
+// may concern unrelated entities, which is what made the built-in chains
+// fire for three unrelated actors (E2E round 1).
 type ChainDef struct {
 	ID          string   `yaml:"id" json:"id"`
 	Name        string   `yaml:"name" json:"name"`
@@ -135,6 +162,7 @@ type ChainDef struct {
 	Stages      []string `yaml:"stages" json:"stages"` // ordered rule IDs
 	Window      string   `yaml:"window" json:"window"` // max span
 	Severity    int      `yaml:"severity" json:"severity"`
+	GroupBy     []string `yaml:"group_by,omitempty" json:"group_by,omitempty"`
 }
 
 // BuiltinChains returns pre-built kill chain definitions for blockchain attacks.
@@ -147,29 +175,35 @@ func BuiltinChains() []ChainDef {
 		{
 			ID:          "chain-recon-exploit-drain",
 			Name:        "Blockchain Attack Chain: Recon → Exploit → Drain",
-			Description: "Multi-stage attack: RPC enumeration, then exploit, then fund drain",
+			Description: "Multi-stage attack from one source IP: RPC enumeration, then exploit, then a large transfer it initiated",
 			// RPC Enumeration Attack → Blocked RPC Method Access → Large ETH Transfer
 			Stages:   []string{"sec-002", "sec-001", "tx-001"},
 			Window:   "1h",
 			Severity: 10,
+			// The transfer must carry the initiator's IP (e.g. tx.transfer
+			// from a wallet or custody API); on-chain evm.transaction events
+			// cannot be attributed to an IP and never complete the chain.
+			GroupBy: []string{"actor.ip"},
 		},
 		{
 			ID:          "chain-credential-theft",
 			Name:        "Credential Theft Chain: Brute Force → Stuffing → Exfil",
-			Description: "Credential attack escalation: brute force, then credential stuffing, then large transfer",
+			Description: "Credential attack escalation from one source IP: brute force, then credential stuffing, then a large transfer it initiated",
 			// Authentication Failure Spike → Multi-System Authentication Failure → Large ETH Transfer
 			Stages:   []string{"sec-004", "eco-001", "tx-001"},
 			Window:   "2h",
 			Severity: 10,
+			GroupBy:  []string{"actor.ip"},
 		},
 		{
 			ID:          "chain-validator-compromise",
 			Name:        "Validator Compromise Chain",
-			Description: "Validator compromise: missed attestations, then slashing risk, then suspicious withdrawal",
+			Description: "Validator compromise: missed attestations, then slashing risk, then access to the same validator's withdrawal key",
 			// Multiple Missed Attestations → Double Voting Detected → Withdrawal Key Access
 			Stages:   []string{"val-004", "val-002", "key-007"},
 			Window:   "4h",
 			Severity: 10,
+			GroupBy:  []string{"metadata.validator_index"},
 		},
 	}
 }
@@ -205,6 +239,13 @@ func ChainToRule(chain ChainDef) *Rule {
 		}
 	}
 
+	// Stage alerts that name no entity cannot be correlated: without these
+	// conditions they would all share one "<nil>" group.
+	match := []MatchCondition{{Field: "action", Operator: "eq", Value: "alert.fired"}}
+	for _, field := range chain.GroupBy {
+		match = append(match, MatchCondition{Field: field, Operator: "exists"})
+	}
+
 	return &Rule{
 		ID:          chain.ID,
 		Name:        chain.Name,
@@ -214,12 +255,9 @@ func ChainToRule(chain ChainDef) *Rule {
 		Severity:    chain.Severity,
 		Category:    "Kill Chain",
 		Tags:        []string{"kill-chain", "multi-stage"},
-		Conditions: Conditions{
-			Match: []MatchCondition{
-				{Field: "action", Operator: "eq", Value: "alert.fired"},
-			},
-		},
-		Window: windowDur,
+		Conditions:  Conditions{Match: match},
+		GroupBy:     append([]string(nil), chain.GroupBy...),
+		Window:      windowDur,
 		Sequence: &SequenceConfig{
 			Ordered: true,
 			MaxSpan: windowDur,

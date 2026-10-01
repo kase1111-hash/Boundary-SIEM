@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -129,6 +130,34 @@ func TestConsumer_DrainTimeout(t *testing.T) {
 	}
 	if q.Len() == 0 {
 		t.Error("queue unexpectedly empty; the test writer is too fast to time out")
+	}
+}
+
+// E2E round 1: with ClickHouse down, the queue was empty and every event was
+// inside a retrying storage write, yet Drain said "remaining events are lost"
+// with remaining_events 0 and returned "0 events left in the queue".
+func TestConsumer_DrainTimeoutWithEmptyQueueBlamesStorage(t *testing.T) {
+	q := queue.NewRingBuffer(10)
+	if err := q.Push(newTestEvent()); err != nil {
+		t.Fatal(err)
+	}
+	writer := &slowWriter{delay: 2 * time.Second}
+	c := NewConsumer(q, Config{Workers: 1, PollInterval: time.Millisecond, ShutdownWait: 10 * time.Second}, WithWriter(writer))
+	c.Start(context.Background())
+	q.Close()
+	deadline := time.Now().Add(time.Second)
+	for q.Len() > 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := c.Drain(ctx)
+	if !errors.Is(err, ErrDrainTimeout) {
+		t.Fatalf("Drain() error = %v, want ErrDrainTimeout", err)
+	}
+	if msg := err.Error(); !strings.Contains(msg, "storage write still in progress") || strings.Contains(msg, "0 events left") {
+		t.Errorf("Drain() error = %q, want it to blame the running storage write, not report 0 events left", msg)
 	}
 }
 

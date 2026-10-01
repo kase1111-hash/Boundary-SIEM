@@ -47,6 +47,46 @@ func TestLoad_EnvOverridesWithoutConfigFile(t *testing.T) {
 	}
 }
 
+// E2E round 1: an environment-only deployment could not move or disable the
+// CEF listeners, so a second instance failed with "Port 5515 is not
+// available".
+func TestLoad_CEFListenerEnvOverrides(t *testing.T) {
+	t.Setenv("SIEM_CONFIG_PATH", filepath.Join(t.TempDir(), "missing.yaml"))
+	t.Setenv("SIEM_CEF_TCP_ADDRESS", ":5525")
+	t.Setenv("SIEM_CEF_UDP_ENABLED", "false")
+	t.Setenv("SIEM_CEF_UDP_ADDRESS", ":5524")
+	t.Setenv("SIEM_CEF_DTLS_ENABLED", "true")
+	t.Setenv("SIEM_CEF_DTLS_ADDRESS", " 127.0.0.1:5526 ")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	cef := cfg.Ingest.CEF
+	if !cef.TCP.Enabled || cef.TCP.Address != ":5525" {
+		t.Errorf("TCP = enabled %v at %q, want enabled at :5525", cef.TCP.Enabled, cef.TCP.Address)
+	}
+	if cef.UDP.Enabled || cef.UDP.Address != ":5524" {
+		t.Errorf("UDP = enabled %v at %q, want disabled, :5524", cef.UDP.Enabled, cef.UDP.Address)
+	}
+	if !cef.DTLS.Enabled || cef.DTLS.Address != "127.0.0.1:5526" {
+		t.Errorf("DTLS = enabled %v at %q, want enabled at 127.0.0.1:5526", cef.DTLS.Enabled, cef.DTLS.Address)
+	}
+
+	t.Setenv("SIEM_CEF_TCP_ENABLED", "0")
+	t.Setenv("SIEM_CEF_UDP_ENABLED", "maybe") // invalid: ignored
+	cfg, err = Load()
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+	if cfg.Ingest.CEF.TCP.Enabled {
+		t.Error("SIEM_CEF_TCP_ENABLED=0 left the TCP listener enabled")
+	}
+	if cfg.Ingest.CEF.UDP.Enabled != DefaultConfig().Ingest.CEF.UDP.Enabled {
+		t.Error("an invalid SIEM_CEF_UDP_ENABLED changed the setting")
+	}
+}
+
 func TestLoad_FileThenEnvOverrides(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	content := `

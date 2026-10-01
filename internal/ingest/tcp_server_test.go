@@ -673,6 +673,87 @@ func TestTCPServer_FinalLineWithoutNewline(t *testing.T) {
 	}
 }
 
+// E2E round 1: a final line without a newline was dropped silently (no
+// metric, no quarantine) when the connection ended with an error instead of
+// a clean EOF: a reset (a TLS client closing without reading the session
+// tickets), the idle timeout, or Stop.
+func TestTCPServer_FinalLineAfterReadError(t *testing.T) {
+	line := strings.TrimSuffix(validCEFLine(), "\n")
+	certFile, keyFile := writeSelfSignedCert(t)
+
+	tests := []struct {
+		name string
+		tls  bool
+		// end ends the connection after the payload was written.
+		end func(t *testing.T, conn net.Conn, srv *TCPServer)
+	}{
+		{"reset", false, func(t *testing.T, conn net.Conn, _ *TCPServer) { resetConn(t, conn) }},
+		{"tls: reset without close_notify", true, func(t *testing.T, conn net.Conn, _ *TCPServer) { resetConn(t, conn) }},
+		{"idle timeout", false, func(*testing.T, net.Conn, *TCPServer) {}},
+		{"stop", false, func(t *testing.T, _ net.Conn, srv *TCPServer) {
+			time.Sleep(100 * time.Millisecond) // the server has read the partial line
+			srv.Stop()
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv, q := newTestTCPServer(t, func(cfg *TCPServerConfig) {
+				cfg.TLSEnabled = tt.tls
+				cfg.TLSCertFile = certFile
+				cfg.TLSKeyFile = keyFile
+				cfg.IdleTimeout = 300 * time.Millisecond
+			})
+			if err := srv.Start(context.Background()); err != nil {
+				t.Fatalf("Start() error: %v", err)
+			}
+			defer srv.Stop()
+
+			addr := srv.listener.Addr().String()
+			raw, err := net.DialTimeout("tcp", addr, time.Second)
+			if err != nil {
+				t.Fatal(err)
+			}
+			conn := raw
+			if tt.tls {
+				tc := tls.Client(raw, &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS13})
+				if err := tc.Handshake(); err != nil {
+					t.Fatal(err)
+				}
+				conn = tc
+			}
+			defer raw.Close()
+			if _, err := conn.Write([]byte(line + "\n" + line)); err != nil {
+				t.Fatal(err)
+			}
+			tt.end(t, raw, srv)
+
+			if !waitForCondition(3*time.Second, func() bool { return srv.Metrics().Queued >= 2 }) {
+				m := srv.Metrics()
+				t.Fatalf("queued = %d, received = %d, errors = %d: the unterminated final line was dropped",
+					m.Queued, m.Received, m.Errors)
+			}
+			if q.Len() != 2 {
+				t.Errorf("queue len = %d, want 2", q.Len())
+			}
+		})
+	}
+}
+
+// resetConn closes conn with SO_LINGER 0, so the peer sees a reset instead
+// of a clean FIN.
+func resetConn(t *testing.T, conn net.Conn) {
+	t.Helper()
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		t.Fatalf("not a TCP connection: %T", conn)
+	}
+	if err := tcp.SetLinger(0); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(50 * time.Millisecond) // let the payload reach the server first
+	_ = tcp.Close()
+}
+
 // TestTCPServer_StopClosesIdleConnections is a regression test for Stop()
 // blocking until every idle client hit IdleTimeout (5 minutes by default).
 func TestTCPServer_StopClosesIdleConnections(t *testing.T) {

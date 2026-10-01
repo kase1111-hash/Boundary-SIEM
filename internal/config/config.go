@@ -754,6 +754,15 @@ func (c *Config) applyEnvOverrides() {
 
 	envDuration("SIEM_SHUTDOWN_TIMEOUT", &c.Server.ShutdownTimeout)
 
+	// CEF listeners, so an environment-only deployment can move or disable
+	// them (the TCP listener was otherwise always on :5515).
+	envBool("SIEM_CEF_UDP_ENABLED", &c.Ingest.CEF.UDP.Enabled)
+	envString("SIEM_CEF_UDP_ADDRESS", &c.Ingest.CEF.UDP.Address)
+	envBool("SIEM_CEF_TCP_ENABLED", &c.Ingest.CEF.TCP.Enabled)
+	envString("SIEM_CEF_TCP_ADDRESS", &c.Ingest.CEF.TCP.Address)
+	envBool("SIEM_CEF_DTLS_ENABLED", &c.Ingest.CEF.DTLS.Enabled)
+	envString("SIEM_CEF_DTLS_ADDRESS", &c.Ingest.CEF.DTLS.Address)
+
 	c.expandAlertingSecrets()
 }
 
@@ -825,6 +834,31 @@ func envInt(name string, dst *int) {
 		return
 	}
 	*dst = n
+}
+
+// envBool sets *dst from the boolean environment variable name (true/false,
+// 1/0, ...) when it is set. Other values are logged and leave *dst
+// unchanged.
+func envBool(name string, dst *bool) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return
+	}
+	b, err := strconv.ParseBool(trimSpace(raw))
+	if err != nil {
+		slog.Warn("ignoring invalid boolean environment override",
+			"variable", name, "value", raw, "error", err)
+		return
+	}
+	*dst = b
+}
+
+// envString sets *dst from the environment variable name when it is set to
+// something other than blanks.
+func envString(name string, dst *string) {
+	if v := trimSpace(os.Getenv(name)); v != "" {
+		*dst = v
+	}
 }
 
 // splitAndTrim splits a string by separator and trims whitespace from each part.

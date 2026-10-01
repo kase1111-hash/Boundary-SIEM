@@ -314,9 +314,19 @@ func TestExecutor_LogicOperatorsAreNormalized(t *testing.T) {
 func TestExecutor_SearchOrderAndPagination(t *testing.T) {
 	exec, rec := newRecordingExecutor(t)
 
+	// A hostile sort column is rejected before any SQL is sent (it used to
+	// be replaced with timestamp).
+	hostile := &Query{TenantID: "tenant-a", OrderBy: "timestamp; DROP TABLE events -- " + injectionMarker}
+	if _, err := exec.Search(context.Background(), hostile); !errors.Is(err, ErrInvalidQuery) {
+		t.Fatalf("Search() with a hostile order_by error = %v, want ErrInvalidQuery", err)
+	}
+	if stmts := rec.recorded(); len(stmts) != 0 {
+		t.Fatalf("rejected search reached the database: %v", stmts)
+	}
+
 	q := &Query{
 		TenantID:  "tenant-a",
-		OrderBy:   "timestamp; DROP TABLE events -- " + injectionMarker,
+		OrderBy:   "severity",
 		OrderDesc: true,
 		Limit:     25,
 		Offset:    50,
@@ -332,7 +342,7 @@ func TestExecutor_SearchOrderAndPagination(t *testing.T) {
 	}
 
 	sel := stmts[1]
-	if !strings.HasSuffix(sel.query, "WHERE tenant_id = ? ORDER BY timestamp DESC LIMIT ? OFFSET ?") {
+	if !strings.HasSuffix(sel.query, "WHERE tenant_id = ? ORDER BY severity DESC LIMIT ? OFFSET ?") {
 		t.Errorf("select statement = %q", sel.query)
 	}
 	if len(sel.args) != 3 {
@@ -347,15 +357,36 @@ func TestExecutor_AggregationIdentifiersAreAllowlisted(t *testing.T) {
 	ctx := context.Background()
 	hostileField := "action) FROM events; DROP TABLE events -- " + injectionMarker
 
+	// E2E round 1: unknown fields used to fall back to timestamp, so an
+	// aggregation on "bogus" returned timestamp buckets with 200. They are
+	// rejected now, before any SQL is sent.
 	t.Run("group-by field", func(t *testing.T) {
 		exec, rec := newRecordingExecutor(t)
-		if _, err := exec.Aggregate(ctx, &Query{TenantID: "t"}, hostileField, "terms"); err != nil {
-			t.Fatalf("Aggregate() error = %v", err)
+		if _, err := exec.Aggregate(ctx, &Query{TenantID: "t"}, hostileField, "terms"); !errors.Is(err, ErrInvalidQuery) {
+			t.Fatalf("Aggregate() error = %v, want ErrInvalidQuery", err)
 		}
-		stmts := rec.recorded()
-		assertNoMarkerInSQL(t, stmts)
-		if len(stmts) != 1 || !strings.HasPrefix(stmts[0].query, "SELECT timestamp AS key") {
-			t.Errorf("unknown field should fall back to timestamp, got %v", stmts)
+		if stmts := rec.recorded(); len(stmts) != 0 {
+			t.Errorf("rejected aggregation reached the database: %v", stmts)
+		}
+	})
+
+	t.Run("numeric aggregation on a text field", func(t *testing.T) {
+		exec, rec := newRecordingExecutor(t)
+		if _, err := exec.Aggregate(ctx, &Query{TenantID: "t"}, "action", "sum"); !errors.Is(err, ErrInvalidQuery) {
+			t.Fatalf("Aggregate(sum of action) error = %v, want ErrInvalidQuery", err)
+		}
+		if stmts := rec.recorded(); len(stmts) != 0 {
+			t.Errorf("rejected aggregation reached the database: %v", stmts)
+		}
+	})
+
+	t.Run("unsupported aggregation type", func(t *testing.T) {
+		exec, rec := newRecordingExecutor(t)
+		if _, err := exec.Aggregate(ctx, &Query{TenantID: "t"}, "action", "nope"); !errors.Is(err, ErrInvalidQuery) {
+			t.Fatalf("Aggregate(nope) error = %v, want ErrInvalidQuery", err)
+		}
+		if stmts := rec.recorded(); len(stmts) != 0 {
+			t.Errorf("rejected aggregation reached the database: %v", stmts)
 		}
 	})
 
@@ -383,7 +414,13 @@ func TestExecutor_AggregationIdentifiersAreAllowlisted(t *testing.T) {
 
 	t.Run("top-n limit is bound", func(t *testing.T) {
 		exec, rec := newRecordingExecutor(t)
-		if _, err := exec.TopN(ctx, &Query{TenantID: "t"}, hostileField, 7); err != nil {
+		if _, err := exec.TopN(ctx, &Query{TenantID: "t"}, hostileField, 7); !errors.Is(err, ErrInvalidQuery) {
+			t.Fatalf("TopN(hostile field) error = %v, want ErrInvalidQuery", err)
+		}
+		if stmts := rec.recorded(); len(stmts) != 0 {
+			t.Fatalf("rejected top-n reached the database: %v", stmts)
+		}
+		if _, err := exec.TopN(ctx, &Query{TenantID: "t"}, "action", 7); err != nil {
 			t.Fatalf("TopN() error = %v", err)
 		}
 		stmts := rec.recorded()
@@ -399,7 +436,13 @@ func TestExecutor_AggregationIdentifiersAreAllowlisted(t *testing.T) {
 
 	t.Run("histogram interval", func(t *testing.T) {
 		exec, rec := newRecordingExecutor(t)
-		if _, err := exec.TimeHistogram(ctx, &Query{TenantID: "t"}, "1h) FROM events --"+injectionMarker); err != nil {
+		if _, err := exec.TimeHistogram(ctx, &Query{TenantID: "t"}, "1h) FROM events --"+injectionMarker); !errors.Is(err, ErrInvalidQuery) {
+			t.Fatalf("TimeHistogram(hostile interval) error = %v, want ErrInvalidQuery", err)
+		}
+		if stmts := rec.recorded(); len(stmts) != 0 {
+			t.Fatalf("rejected histogram reached the database: %v", stmts)
+		}
+		if _, err := exec.TimeHistogram(ctx, &Query{TenantID: "t"}, ""); err != nil {
 			t.Fatalf("TimeHistogram() error = %v", err)
 		}
 		stmts := rec.recorded()
@@ -497,8 +540,10 @@ func TestExecutor_HostileQueriesStayParameterizedAndTenantScoped(t *testing.T) {
 		`metadata.` + injectionMarker + `:"` + injectionMarker + `"`,
 		`meta.key` + injectionMarker + `~value OR severity>=7`,
 		`(action:a OR action:b) OR (action:c AND NOT outcome:` + injectionMarker + `)`,
-		injectionMarker + `_field:value OR ` + injectionMarker + `:*wild*`,
 		`action:login || action:logout && severity>3`,
+		// Free-text terms (E2E round 1: they used to be dropped).
+		injectionMarker + `'; DROP TABLE events -- AND "` + injectionMarker + ` x"`,
+		`NOT ` + injectionMarker + `*wild*`,
 	}
 
 	for _, qs := range queries {
@@ -508,18 +553,36 @@ func TestExecutor_HostileQueriesStayParameterizedAndTenantScoped(t *testing.T) {
 
 			q := mustParse(t, qs)
 			q.TenantID = "tenant-a"
-			q.OrderBy = injectionMarker
+
+			// Hostile identifiers are rejected before any SQL is built.
+			hostileOrder := *q
+			hostileOrder.OrderBy = injectionMarker
+			if _, err := exec.Search(ctx, &hostileOrder); !errors.Is(err, ErrInvalidQuery) {
+				t.Errorf("Search() with order_by %q error = %v, want ErrInvalidQuery", injectionMarker, err)
+			}
+			if _, err := exec.Aggregate(ctx, q, injectionMarker, "count"); !errors.Is(err, ErrInvalidQuery) {
+				t.Errorf("Aggregate(%q) error = %v, want ErrInvalidQuery", injectionMarker, err)
+			}
+			if _, err := exec.TopN(ctx, q, injectionMarker, 5); !errors.Is(err, ErrInvalidQuery) {
+				t.Errorf("TopN(%q) error = %v, want ErrInvalidQuery", injectionMarker, err)
+			}
+			if _, err := exec.TimeHistogram(ctx, q, injectionMarker); !errors.Is(err, ErrInvalidQuery) {
+				t.Errorf("TimeHistogram(%q) error = %v, want ErrInvalidQuery", injectionMarker, err)
+			}
+			if stmts := rec.recorded(); len(stmts) != 0 {
+				t.Fatalf("rejected requests reached the database: %v", stmts)
+			}
 
 			if _, err := exec.Search(ctx, q); err != nil {
 				t.Fatalf("Search() error = %v", err)
 			}
-			if _, err := exec.Aggregate(ctx, q, injectionMarker, "count"); err != nil {
+			if _, err := exec.Aggregate(ctx, q, "action", "count"); err != nil {
 				t.Fatalf("Aggregate() error = %v", err)
 			}
-			if _, err := exec.TopN(ctx, q, injectionMarker, 5); err != nil {
+			if _, err := exec.TopN(ctx, q, "outcome", 5); err != nil {
 				t.Fatalf("TopN() error = %v", err)
 			}
-			if _, err := exec.TimeHistogram(ctx, q, injectionMarker); err != nil {
+			if _, err := exec.TimeHistogram(ctx, q, "1h"); err != nil {
 				t.Fatalf("TimeHistogram() error = %v", err)
 			}
 			if _, err := exec.Explain(ctx, q); err != nil {

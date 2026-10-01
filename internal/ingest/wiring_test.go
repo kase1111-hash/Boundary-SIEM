@@ -414,6 +414,54 @@ func TestAuthMiddleware_PublicAndProtectedPaths(t *testing.T) {
 	}
 }
 
+// E2E round 1: the configured security headers (CSP, X-Frame-Options, HSTS,
+// ...) were never applied by siem-ingest although startup diagnostics
+// listed them as enabled, so the dashboard could be framed.
+func TestWithMiddleware_AppliesSecurityHeaders(t *testing.T) {
+	cfg := testMiddlewareConfig()
+	cfg.Server.WebDir = "web/dist"
+	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTeapot) })
+	h, stop := WithMiddleware(ok, cfg)
+	defer stop()
+
+	for _, tt := range []struct{ path, key string }{
+		{"/", ""},                  // dashboard
+		{"/v1/alerts", "good-key"}, // API
+		{"/v1/alerts", ""},         // auth error
+		{"/health", ""},
+	} {
+		req := httptest.NewRequest(http.MethodGet, tt.path, nil)
+		if tt.key != "" {
+			req.Header.Set("X-API-Key", tt.key)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		hdr := rec.Header()
+		if csp := hdr.Get("Content-Security-Policy"); !strings.Contains(csp, "default-src 'self'") || !strings.Contains(csp, "frame-ancestors 'none'") {
+			t.Errorf("%s: Content-Security-Policy = %q", tt.path, csp)
+		}
+		if got := hdr.Get("X-Frame-Options"); got != "DENY" {
+			t.Errorf("%s: X-Frame-Options = %q, want DENY", tt.path, got)
+		}
+		if got := hdr.Get("Strict-Transport-Security"); !strings.HasPrefix(got, "max-age=") {
+			t.Errorf("%s: Strict-Transport-Security = %q", tt.path, got)
+		}
+		if got := hdr.Get("X-Content-Type-Options"); got != "nosniff" {
+			t.Errorf("%s: X-Content-Type-Options = %q", tt.path, got)
+		}
+	}
+
+	// security_headers.enabled: false turns them off.
+	cfg.SecurityHeaders.Enabled = false
+	h2, stop2 := WithMiddleware(ok, cfg)
+	defer stop2()
+	rec := httptest.NewRecorder()
+	h2.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Header().Get("Content-Security-Policy") != "" || rec.Header().Get("X-Frame-Options") != "" {
+		t.Errorf("security headers sent although disabled: %v", rec.Header())
+	}
+}
+
 func TestValidAPIKey(t *testing.T) {
 	keys := []string{"alpha", "beta"}
 	for key, want := range map[string]bool{"alpha": true, "beta": true, "gamma": false, "": false, "alph": false} {

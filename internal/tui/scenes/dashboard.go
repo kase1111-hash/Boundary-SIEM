@@ -144,7 +144,9 @@ func (d *DashboardScene) View() string {
 
 	// Metrics cards - Row 1: Overview
 	cards1 := []string{
-		d.renderMetricCard("Events Total", formatNumber(d.stats.EventsTotal)),
+		// events_total counts since the server process started; the Events
+		// tab shows what is stored.
+		d.renderMetricCard("Events (uptime)", formatNumber(d.stats.EventsTotal)),
 		d.renderMetricCard("Events/sec", fmt.Sprintf("%.1f", d.stats.EventsPerSecond)),
 		d.renderMetricCard("Queue Depth", fmt.Sprintf("%d/%d", d.stats.QueueSize, d.stats.QueueCapacity)),
 		d.renderMetricCard("Uptime", d.stats.Uptime),
@@ -182,7 +184,7 @@ func (d *DashboardScene) renderMetricCard(label, value string) string {
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(styles.MutedColor).
-		Padding(0, 2).
+		Padding(0, 1). // 16 columns of text: "Events (uptime)" fits
 		Width(18).
 		Align(lipgloss.Center)
 

@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"boundary-siem/internal/schema"
+
+	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/google/uuid"
 )
 
 // DefaultTenantID is the tenant stored for events that carry no tenant ID.
@@ -73,6 +76,13 @@ func WithDeadLetter(fn DeadLetterFunc) BatchWriterOption {
 type pendingEvent struct {
 	event    *schema.Event
 	requeues int
+
+	// token is the insert_deduplication_token of the failed INSERT the event
+	// was last part of, or "" before its first INSERT. The event is retried
+	// under the same token, so when that INSERT was in fact committed (the
+	// error came after the server had stored it) ClickHouse drops the repeat
+	// instead of storing the events twice.
+	token string
 }
 
 // BatchWriter handles batched inserts to ClickHouse.
@@ -89,6 +99,12 @@ type pendingEvent struct {
 // set, and are otherwise dropped. Every failed flush returns an error wrapping
 // ErrBatchInsertFailed that says how many events were requeued, dead-lettered
 // and dropped, and the Metrics counters track the same numbers.
+//
+// Retries are idempotent: every INSERT carries an insert_deduplication_token,
+// and the events of a failed INSERT are retried, within the flush and after a
+// requeue, under that same token (the events table keeps a deduplication
+// window, migration 007). An INSERT that failed only after the server had
+// committed it is therefore not stored a second time.
 type BatchWriter struct {
 	client     *ClickHouseClient
 	config     BatchWriterConfig
@@ -101,6 +117,8 @@ type BatchWriter struct {
 	// idle is signalled (under mu) whenever it drops.
 	inflight int
 	idle     *sync.Cond
+	// inflightEvents counts the events of those flushes.
+	inflightEvents int
 
 	flushTimer *time.Timer
 	done       chan struct{}
@@ -224,14 +242,16 @@ func (bw *BatchWriter) flushLocked(final bool) error {
 	pending := bw.buffer
 	bw.buffer = make([]pendingEvent, 0, bw.batchSize())
 	bw.inflight++
+	bw.inflightEvents += len(pending)
 
 	bw.mu.Unlock()
-	insertErr := bw.insertBatchWithRetries(eventsOf(pending))
+	failed, insertErr := bw.insertPending(pending)
 	bw.mu.Lock()
+	bw.inflightEvents -= len(pending)
 
 	var err error
-	if insertErr != nil {
-		giveUp, requeued := bw.requeueLocked(pending, final)
+	if len(failed) > 0 {
+		giveUp, requeued := bw.requeueLocked(failed, final)
 
 		// Hand given-up events to the dead-letter handler without the lock.
 		bw.mu.Unlock()
@@ -315,18 +335,72 @@ func eventsOf(pending []pendingEvent) []*schema.Event {
 	return events
 }
 
-// insertBatchWithRetries attempts to insert a batch with exponential backoff.
-// The insert is always attempted at least once, even if MaxRetries is
-// negative: a loop that never ran would report success for a batch that was
-// never written. Must NOT be called with the mutex held.
-func (bw *BatchWriter) insertBatchWithRetries(events []*schema.Event) error {
+// insertGroup is the events of one INSERT and its deduplication token.
+type insertGroup struct {
+	token  string
+	events []pendingEvent
+}
+
+// insertGroups splits pending events into INSERTs: the events of each earlier
+// failed INSERT form a group under that INSERT's token, and events not yet
+// attempted form one group under a fresh token. Groups are in the order of
+// their first event.
+func insertGroups(pending []pendingEvent) []insertGroup {
+	var groups []insertGroup
+	index := make(map[string]int)
+	for _, p := range pending {
+		i, ok := index[p.token]
+		if !ok {
+			i = len(groups)
+			index[p.token] = i
+			token := p.token
+			if token == "" {
+				token = uuid.NewString()
+			}
+			groups = append(groups, insertGroup{token: token})
+		}
+		groups[i].events = append(groups[i].events, p)
+	}
+	return groups
+}
+
+// insertPending inserts pending events, one INSERT (with retries) per
+// insertGroup, and returns the events that were not inserted, each tagged
+// with the token of its failed INSERT, and the insert error. Once a group has
+// failed, the remaining groups are not attempted (ClickHouse is most likely
+// unavailable) and are returned as failed with their tokens unchanged. Must
+// NOT be called with the mutex held.
+func (bw *BatchWriter) insertPending(pending []pendingEvent) ([]pendingEvent, error) {
+	var failed []pendingEvent
+	var insertErr error
+	for _, g := range insertGroups(pending) {
+		if insertErr == nil {
+			insertErr = bw.insertBatchWithRetries(eventsOf(g.events), g.token)
+			if insertErr == nil {
+				continue
+			}
+			for i := range g.events {
+				g.events[i].token = g.token
+			}
+		}
+		failed = append(failed, g.events...)
+	}
+	return failed, insertErr
+}
+
+// insertBatchWithRetries attempts to insert a batch with exponential backoff,
+// every attempt under the same deduplication token. The insert is always
+// attempted at least once, even if MaxRetries is negative: a loop that never
+// ran would report success for a batch that was never written. Must NOT be
+// called with the mutex held.
+func (bw *BatchWriter) insertBatchWithRetries(events []*schema.Event, token string) error {
 	var lastErr error
 	for attempt := 0; attempt <= max(bw.config.MaxRetries, 0); attempt++ {
 		if attempt > 0 {
 			time.Sleep(bw.config.RetryDelay * time.Duration(1<<(attempt-1)))
 		}
 
-		if err := bw.insertBatch(events); err != nil {
+		if err := bw.insertBatch(events, token); err != nil {
 			lastErr = err
 			slog.Warn("batch insert failed, retrying",
 				"attempt", attempt+1,
@@ -344,9 +418,13 @@ func (bw *BatchWriter) insertBatchWithRetries(events []*schema.Event) error {
 	return lastErr
 }
 
-// insertBatch inserts a batch of events into ClickHouse.
-func (bw *BatchWriter) insertBatch(events []*schema.Event) error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+// insertTimeout bounds one INSERT attempt.
+const insertTimeout = 30 * time.Second
+
+// insertBatch inserts a batch of events into ClickHouse as one INSERT with
+// the given insert_deduplication_token.
+func (bw *BatchWriter) insertBatch(events []*schema.Event, token string) error {
+	ctx, cancel := context.WithTimeout(insertContext(token), insertTimeout)
 	defer cancel()
 
 	batch, err := bw.client.PrepareBatch(ctx, `
@@ -433,6 +511,18 @@ func (bw *BatchWriter) insertBatch(events []*schema.Event) error {
 	return nil
 }
 
+// insertContext returns the base context of an INSERT into events. It sets
+// insert_deduplication_token, so the server drops a repeat of an INSERT it
+// has already stored, and extends that to the blocks events_critical_mv
+// writes to events_critical (see migration 007). The SummingMergeTree inside
+// events_hourly_mv has no deduplication window and still counts a repeat.
+func insertContext(token string) context.Context {
+	return clickhouse.Context(context.Background(), clickhouse.WithSettings(clickhouse.Settings{
+		"insert_deduplication_token":                         token,
+		"deduplicate_blocks_in_dependent_materialized_views": 1,
+	}))
+}
+
 // severityToUInt8 converts an event severity to the UInt8 severity column.
 // Validated events are always within 1-10, but events reaching the writer
 // without validation are clamped so they cannot wrap (e.g. 256 -> 0, -1 -> 255).
@@ -489,10 +579,13 @@ func (bw *BatchWriter) Metrics() BatchWriterMetrics {
 	}
 }
 
+// pendingCount returns the events the writer holds: buffered, or in a flush
+// that has not finished (an insert still retrying against an unavailable
+// server included).
 func (bw *BatchWriter) pendingCount() int {
 	bw.mu.Lock()
 	defer bw.mu.Unlock()
-	return len(bw.buffer)
+	return len(bw.buffer) + bw.inflightEvents
 }
 
 // BatchWriterMetrics holds batch writer statistics.
@@ -510,5 +603,8 @@ type BatchWriterMetrics struct {
 	// (an event requeued twice counts twice).
 	Requeued uint64 `json:"requeued"`
 	Batches  uint64 `json:"batches"`
-	Pending  int    `json:"pending"`
+	// Pending is the number of events the writer holds and has neither
+	// written nor given up on: buffered, or in a flush that is still running
+	// (including its retries).
+	Pending int `json:"pending"`
 }

@@ -77,6 +77,14 @@ type Condition struct {
 	MetadataKey string // the JSON key within metadata (e.g., "chain_id")
 	OpenParens  int    // number of opening parens before this condition
 	CloseParens int    // number of closing parens after this condition
+
+	// IsFreeText marks a term written without a field ("alice"): Operator
+	// is OpContains (OpNotContains when negated) and the term matches the
+	// text columns listed in freeTextColumns, ignoring case. Value is the
+	// term, or with IsRegex its case-insensitive pattern; Term is the term
+	// as written.
+	IsFreeText bool
+	Term       string
 }
 
 // Query represents a parsed search query.
@@ -422,11 +430,42 @@ func (p *Parser) parsePrimary() (*exprNode, error) {
 		}
 		return &exprNode{cond: cond}, nil
 
+	case TokenValue:
+		// A term without a field is a free-text search. (Such terms used
+		// to be dropped, so "alice" returned every event.)
+		tok := p.current
+		p.advance()
+		cond, ok := freeTextCondition(tok)
+		if !ok {
+			return nil, nil
+		}
+		return &exprNode{cond: cond}, nil
+
 	default:
-		// Bare values and stray operators name no field; they are ignored.
+		// A stray operator names no field; it is ignored.
 		p.advance()
 		return nil, nil
 	}
+}
+
+// freeTextCondition returns the condition for a term without a field, or
+// false for "*" (or "**"...), which matches every event and adds nothing.
+// An unquoted term containing '*' is a wildcard pattern; a quoted term is
+// literal.
+func freeTextCondition(tok Token) (Condition, bool) {
+	cond := Condition{Operator: OpContains, IsFreeText: true, Term: tok.Value, Value: tok.Value}
+	if tok.Quoted {
+		cond.IsPhrase = strings.Contains(tok.Value, " ")
+		return cond, tok.Value != ""
+	}
+	if strings.Trim(tok.Value, "*") == "" {
+		return Condition{}, false
+	}
+	if strings.Contains(tok.Value, "*") {
+		cond.IsRegex = true
+		cond.Value = "(?i)" + strings.ReplaceAll(regexp.QuoteMeta(tok.Value), `\*`, ".*")
+	}
+	return cond, true
 }
 
 // combine joins children with op; nil when there are none.
@@ -519,10 +558,15 @@ func (p *Parser) parseCondition() (Condition, error) {
 
 	p.advance()
 
-	// Parse operator
+	// Parse operator. "field:>5" (Lucene style) is "field>5": an operator
+	// right after ":" or "=" replaces it.
 	if p.current.Type == TokenOperator {
 		cond.Operator = Operator(p.current.Value)
 		p.advance()
+		if cond.Operator == OpEquals && p.current.Type == TokenOperator {
+			cond.Operator = Operator(p.current.Value)
+			p.advance()
+		}
 	}
 
 	// Parse value
@@ -722,6 +766,15 @@ func (q *Query) String() string {
 	var parts []string
 	for i, cond := range q.Conditions {
 		part := fmt.Sprintf("%s%s%v", cond.Field, cond.Operator, cond.Value)
+		if cond.IsFreeText {
+			part = cond.Term
+			if strings.ContainsAny(part, " \t\"") || cond.IsPhrase {
+				part = strconv.Quote(part)
+			}
+			if cond.Operator == OpNotContains {
+				part = "NOT " + part
+			}
+		}
 		parts = append(parts, part)
 		if i < len(q.Logic) {
 			parts = append(parts, q.Logic[i])

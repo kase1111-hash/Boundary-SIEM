@@ -30,6 +30,11 @@ type Alert struct {
 	MITRE       *MITREMapping  `json:"mitre,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
 	Status      AlertStatus    `json:"status"`
+
+	// trigger is the event whose arrival made the rule fire. AlertReinjector
+	// copies its actor and metadata into the re-injected alert.fired event,
+	// so that chains can correlate their stages by entity (see ChainDef).
+	trigger *schema.Event
 }
 
 // EventRef references an event that contributed to the alert.
@@ -648,6 +653,7 @@ func (e *Engine) evaluateRule(ctx context.Context, rule *Rule, event *schema.Eve
 		state.lastFire[groupKey] = now
 
 		alert := e.createAlert(rule, window, groupKey)
+		alert.trigger = event
 		e.sendAlert(alert)
 	}
 }
