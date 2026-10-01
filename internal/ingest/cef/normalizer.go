@@ -152,36 +152,60 @@ func (n *Normalizer) Normalize(cef *CEFEvent, sourceIP string) (*schema.Event, e
 	return event, nil
 }
 
+// zonelessFutureTolerance is how far ahead of the receiver's clock a
+// timestamp without a time zone may lie and still be used. Such a timestamp
+// is read as UTC, but RFC 3164 headers and many CEF senders write their local
+// wall-clock time, so a sender east of UTC appears to be hours in the future
+// and the validator would drop the event. A zone-less timestamp further ahead
+// than the validator's default allowance is therefore not trusted.
+var zonelessFutureTolerance = schema.DefaultValidatorConfig().MaxFuture
+
 // extractTimestamp takes the event time from the rt or start extension, then
-// from the syslog header, and falls back to the current time.
+// from the syslog header, and falls back to the current time. A candidate
+// without a time zone that lies in the future (beyond
+// zonelessFutureTolerance) is skipped, since its UTC offset is unknown.
 func (n *Normalizer) extractTimestamp(cef *CEFEvent) time.Time {
+	now := n.currentTime()
 	candidates := []string{cef.Extensions["rt"], cef.Extensions["start"], cef.SyslogTimestamp}
 	for _, s := range candidates {
 		if s == "" {
 			continue
 		}
-		if t, err := n.parseTimestamp(s); err == nil {
-			return t
+		t, zoned, err := n.parseTimestampZone(s)
+		if err != nil {
+			continue
 		}
+		if !zoned && t.Sub(now) > zonelessFutureTolerance {
+			continue
+		}
+		return t
 	}
 
-	return n.currentTime().UTC()
+	return now.UTC()
 }
 
 // parseTimestamp handles the CEF timestamp formats: milliseconds since the
 // epoch and "MMM dd [yyyy] HH:mm:ss[.SSS] [zzz]", plus RFC 3339.
 func (n *Normalizer) parseTimestamp(s string) (time.Time, error) {
+	t, _, err := n.parseTimestampZone(s)
+	return t, err
+}
+
+// parseTimestampZone is parseTimestamp that also reports whether the
+// timestamp identified its time zone (epoch milliseconds, a numeric offset or
+// a zone abbreviation). Zone-less timestamps are read as UTC.
+func (n *Normalizer) parseTimestampZone(s string) (t time.Time, zoned bool, err error) {
 	s = strings.TrimSpace(s)
 
 	// CEF uses milliseconds since epoch
 	if ms, err := strconv.ParseInt(s, 10, 64); err == nil {
-		return time.UnixMilli(ms).UTC(), nil
+		return time.UnixMilli(ms).UTC(), true, nil
 	}
 
 	for _, layout := range timestampLayouts {
 		if parsed, err := time.Parse(layout, s); err == nil {
 			if t, ok := resolveZone(parsed); ok {
-				return t.UTC(), nil
+				return t.UTC(), layoutHasZone(layout), nil
 			}
 		}
 	}
@@ -189,12 +213,17 @@ func (n *Normalizer) parseTimestamp(s string) (time.Time, error) {
 	for _, layout := range yearlessLayouts {
 		if parsed, err := time.Parse(layout, s); err == nil {
 			if t, ok := resolveZone(parsed); ok {
-				return resolveYear(t, n.currentTime()).UTC(), nil
+				return resolveYear(t, n.currentTime()).UTC(), layoutHasZone(layout), nil
 			}
 		}
 	}
 
-	return time.Time{}, fmt.Errorf("unable to parse timestamp: %s", s)
+	return time.Time{}, false, fmt.Errorf("unable to parse timestamp: %s", s)
+}
+
+// layoutHasZone reports whether a time layout contains a zone element.
+func layoutHasZone(layout string) bool {
+	return strings.Contains(layout, "MST") || strings.Contains(layout, "Z07") || strings.Contains(layout, "-0700")
 }
 
 // resolveZone gives a time parsed with a zone abbreviation its real offset.

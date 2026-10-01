@@ -580,6 +580,85 @@ func TestNormalizer_SyslogHeaderFallback(t *testing.T) {
 	}
 }
 
+// TestNormalizer_ZonelessTimestampAheadOfUTC is a regression test for
+// syslog-framed or rt-stamped CEF from a sender east of UTC being dropped: a
+// zone-less local wall-clock time (RFC 3164 header, "MMM dd HH:mm:ss" rt) was
+// read as UTC, landed hours in the future and failed validation.
+func TestNormalizer_ZonelessTimestampAheadOfUTC(t *testing.T) {
+	normalizer := NewNormalizer(DefaultNormalizerConfig())
+	parser := NewParser(DefaultParserConfig())
+	validator := schema.NewValidator()
+
+	now := time.Now().UTC()
+	// Wall clock of a sender in UTC+2 (e.g. CEST).
+	ahead := now.Add(2 * time.Hour).Truncate(time.Second)
+	recent := now.Add(-10 * time.Minute).Truncate(time.Second)
+	const body = "CEF:0|Acme|FW|1.0|100|Session Created|5|src=10.0.0.1"
+
+	tests := []struct {
+		name    string
+		message string
+		// want is the expected timestamp; zero means "receipt time".
+		want time.Time
+	}{
+		{
+			name:    "RFC3164 header ahead of UTC falls back to receipt time",
+			message: "<134>" + ahead.Format("Jan _2 15:04:05") + " fw01 " + body,
+		},
+		{
+			name:    "year-less rt ahead of UTC falls back to receipt time",
+			message: body + " rt=" + ahead.Format("Jan 02 15:04:05"),
+		},
+		{
+			name:    "rt with year but no zone ahead of UTC falls back to receipt time",
+			message: body + " rt=" + ahead.Format("Jan 02 2006 15:04:05.000"),
+		},
+		{
+			name:    "ISO rt without zone ahead of UTC falls back to receipt time",
+			message: body + " rt=" + ahead.Format("2006-01-02 15:04:05"),
+		},
+		{
+			name:    "zone-less rt ahead of UTC falls through to a zoned syslog timestamp",
+			message: "<134>1 " + recent.Format(time.RFC3339) + " fw01 app - - - " + body + " rt=" + ahead.Format("Jan 02 15:04:05"),
+			want:    recent,
+		},
+		{
+			name:    "the same wall-clock time with its zone is used",
+			message: body + " rt=" + ahead.Add(-2*time.Hour).In(time.FixedZone("", 2*3600)).Format("Jan 02 2006 15:04:05 -0700"),
+			want:    ahead.Add(-2 * time.Hour),
+		},
+		{
+			name:    "zone-less timestamps in the past are still used",
+			message: "<134>" + recent.Format("Jan _2 15:04:05") + " fw01 " + body,
+			want:    recent,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cef, err := parser.Parse(tt.message)
+			if err != nil {
+				t.Fatalf("Parse() error: %v", err)
+			}
+			before := time.Now().UTC()
+			event, err := normalizer.Normalize(cef, "192.0.2.9")
+			if err != nil {
+				t.Fatalf("Normalize() error: %v", err)
+			}
+			if tt.want.IsZero() {
+				if event.Timestamp.Before(before) || event.Timestamp.After(time.Now().UTC()) {
+					t.Errorf("Timestamp = %v, want the receipt time (~%v)", event.Timestamp, before)
+				}
+			} else if !event.Timestamp.Equal(tt.want) {
+				t.Errorf("Timestamp = %v, want %v", event.Timestamp, tt.want)
+			}
+			if err := validator.Validate(event); err != nil {
+				t.Errorf("Validate() error: %v", err)
+			}
+		})
+	}
+}
+
 // TestNormalizer_FortinetStyleEventValidates runs a realistic vendor message
 // through parse, normalize and validate, which used to fail on the action.
 func TestNormalizer_FortinetStyleEventValidates(t *testing.T) {

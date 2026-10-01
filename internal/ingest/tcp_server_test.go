@@ -847,3 +847,58 @@ func TestTCPServer_SyslogFramedCEF(t *testing.T) {
 		t.Errorf("metrics = %+v, want Queued=1 ParseErrors=1 Errors=1", m)
 	}
 }
+
+// TestTCPServer_ContextCancelClosesConnections checks that cancelling the
+// context passed to Start closes idle client connections, with and without
+// TLS, instead of leaving them open until IdleTimeout. With TLS the accept
+// loop used to block in Accept and never saw the cancellation.
+func TestTCPServer_ContextCancelClosesConnections(t *testing.T) {
+	certFile, keyFile := writeSelfSignedCert(t)
+
+	for _, useTLS := range []bool{false, true} {
+		name := "plain"
+		if useTLS {
+			name = "tls"
+		}
+		t.Run(name, func(t *testing.T) {
+			srv, q := newTestTCPServer(t, func(cfg *TCPServerConfig) {
+				cfg.IdleTimeout = time.Minute
+				cfg.TLSEnabled = useTLS
+				cfg.TLSCertFile = certFile
+				cfg.TLSKeyFile = keyFile
+			})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			if err := srv.Start(ctx); err != nil {
+				t.Fatalf("Start() error: %v", err)
+			}
+			defer stopWithin(t, srv.Stop, 2*time.Second)
+			addr := srv.listener.Addr().String()
+
+			var c net.Conn
+			var err error
+			if useTLS {
+				// The server uses a throwaway self-signed certificate.
+				c, err = tls.DialWithDialer(&net.Dialer{Timeout: time.Second}, "tcp", addr,
+					&tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12})
+			} else {
+				c, err = net.DialTimeout("tcp", addr, time.Second)
+			}
+			if err != nil {
+				t.Fatalf("Dial() error: %v", err)
+			}
+			defer c.Close()
+			if _, err := c.Write([]byte(validCEFLine())); err != nil {
+				t.Fatalf("Write() error: %v", err)
+			}
+			if !waitForCondition(2*time.Second, func() bool { return q.Len() == 1 }) {
+				t.Fatalf("event not queued; metrics=%+v", srv.Metrics())
+			}
+
+			cancel()
+			if !waitForCondition(2*time.Second, func() bool { return srv.ActiveConnections() == 0 }) {
+				t.Fatalf("ActiveConnections() = %d two seconds after cancel, want 0", srv.ActiveConnections())
+			}
+		})
+	}
+}

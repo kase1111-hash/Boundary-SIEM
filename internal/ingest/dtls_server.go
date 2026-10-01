@@ -51,6 +51,14 @@ type DTLSServerConfig struct {
 	// ConnectionTimeout is the timeout for DTLS handshake
 	ConnectionTimeout time.Duration
 
+	// MaxConnections caps the number of concurrent DTLS connections,
+	// including those still in the handshake. Every new source address that
+	// sends a handshake record gets a connection that lives for up to
+	// ConnectionTimeout, so without a cap a flood of (easily spoofed)
+	// datagrams could hold an unbounded number of handshakes open. Zero or a
+	// negative value selects the default.
+	MaxConnections int
+
 	// IdleTimeout is the timeout for idle connections
 	IdleTimeout time.Duration
 
@@ -66,6 +74,7 @@ func DefaultDTLSServerConfig() DTLSServerConfig {
 		Workers:           8,
 		MaxMessageSize:    65535,
 		ConnectionTimeout: 30 * time.Second,
+		MaxConnections:    1000,
 		IdleTimeout:       5 * time.Minute,
 		AllowInsecure:     false,
 		RequireClientCert: false,
@@ -88,6 +97,10 @@ type DTLSServerMetrics struct {
 	// ValidationErrors counts events that failed normalization or validation.
 	ValidationErrors uint64
 	InsecureWarned   bool
+
+	// RejectedConnections counts connections closed at once because
+	// MaxConnections connections were already open.
+	RejectedConnections uint64
 }
 
 // DTLSServer receives CEF messages over DTLS (secure UDP).
@@ -122,6 +135,7 @@ type DTLSServer struct {
 	connections      uint64
 	handshakes       uint64
 	handshakeErrs    uint64
+	rejectedConns    uint64
 	received         uint64
 	parsed           uint64
 	normalized       uint64
@@ -170,6 +184,9 @@ func NewDTLSServer(
 	}
 	if cfg.IdleTimeout <= 0 {
 		cfg.IdleTimeout = defaults.IdleTimeout
+	}
+	if cfg.MaxConnections <= 0 {
+		cfg.MaxConnections = defaults.MaxConnections
 	}
 
 	return &DTLSServer{
@@ -367,9 +384,14 @@ func (s *DTLSServer) acceptLoop(ctx context.Context) {
 			continue
 		}
 
-		if !s.trackConn(conn) {
-			conn.Close() // shutting down
-			return
+		if err := s.trackConn(conn); err != nil {
+			conn.Close()
+			if errors.Is(err, errDTLSConnLimit) {
+				atomic.AddUint64(&s.rejectedConns, 1)
+				s.rejects.Reject("connection_limit", err, dtlsSourceIP(conn.RemoteAddr()), "")
+				continue
+			}
+			return // shutting down
 		}
 		atomic.AddUint64(&s.connections, 1)
 
@@ -381,16 +403,39 @@ func (s *DTLSServer) acceptLoop(ctx context.Context) {
 	}
 }
 
+// errDTLSConnLimit reports a connection refused because MaxConnections
+// connections are already open.
+var errDTLSConnLimit = errors.New("too many DTLS connections")
+
+// errDTLSClosing reports a connection accepted while the server shuts down.
+var errDTLSClosing = errors.New("DTLS server is shutting down")
+
 // trackConn registers an accepted connection so that shutdown can close it.
-// It returns false once the server has started closing connections.
-func (s *DTLSServer) trackConn(conn net.Conn) bool {
+// It fails once the server has started closing connections, or when
+// MaxConnections connections are already open.
+func (s *DTLSServer) trackConn(conn net.Conn) error {
 	s.connsMu.Lock()
 	defer s.connsMu.Unlock()
 	if s.closing {
-		return false
+		return errDTLSClosing
+	}
+	if len(s.conns) >= s.config.MaxConnections {
+		return errDTLSConnLimit
 	}
 	s.conns[conn] = struct{}{}
-	return true
+	return nil
+}
+
+// dtlsSourceIP returns the IP of a UDP peer address, or the address as a
+// string for other address types.
+func dtlsSourceIP(addr net.Addr) string {
+	if udpAddr, ok := addr.(*net.UDPAddr); ok {
+		return udpAddr.IP.String()
+	}
+	if addr == nil {
+		return ""
+	}
+	return addr.String()
 }
 
 // untrackConn forgets and closes a connection.
@@ -422,14 +467,7 @@ func (s *DTLSServer) closeConns() {
 func (s *DTLSServer) handleConnection(ctx context.Context, conn net.Conn, messages chan<- dtlsMessage) {
 	defer s.untrackConn(conn)
 
-	var sourceIP string
-	if addr := conn.RemoteAddr(); addr != nil {
-		if udpAddr, ok := addr.(*net.UDPAddr); ok {
-			sourceIP = udpAddr.IP.String()
-		} else {
-			sourceIP = addr.String()
-		}
-	}
+	sourceIP := dtlsSourceIP(conn.RemoteAddr())
 
 	// Complete the handshake before reading so that it is bounded by
 	// ConnectionTimeout and failures are counted.
@@ -620,6 +658,7 @@ func (s *DTLSServer) Stop() {
 			"connections", atomic.LoadUint64(&s.connections),
 			"handshakes", atomic.LoadUint64(&s.handshakes),
 			"handshake_errors", atomic.LoadUint64(&s.handshakeErrs),
+			"rejected_connections", atomic.LoadUint64(&s.rejectedConns),
 			"received", atomic.LoadUint64(&s.received),
 			"queued", atomic.LoadUint64(&s.queued),
 			"errors", atomic.LoadUint64(&s.errors),
@@ -632,17 +671,18 @@ func (s *DTLSServer) Stop() {
 // Metrics returns the current server metrics.
 func (s *DTLSServer) Metrics() DTLSServerMetrics {
 	return DTLSServerMetrics{
-		Connections:      atomic.LoadUint64(&s.connections),
-		Handshakes:       atomic.LoadUint64(&s.handshakes),
-		HandshakeErrs:    atomic.LoadUint64(&s.handshakeErrs),
-		Received:         atomic.LoadUint64(&s.received),
-		Parsed:           atomic.LoadUint64(&s.parsed),
-		Normalized:       atomic.LoadUint64(&s.normalized),
-		Queued:           atomic.LoadUint64(&s.queued),
-		Errors:           atomic.LoadUint64(&s.errors),
-		ParseErrors:      atomic.LoadUint64(&s.parseErrors),
-		ValidationErrors: atomic.LoadUint64(&s.validationErrors),
-		InsecureWarned:   s.insecureWarned.Load(),
+		Connections:         atomic.LoadUint64(&s.connections),
+		Handshakes:          atomic.LoadUint64(&s.handshakes),
+		HandshakeErrs:       atomic.LoadUint64(&s.handshakeErrs),
+		RejectedConnections: atomic.LoadUint64(&s.rejectedConns),
+		Received:            atomic.LoadUint64(&s.received),
+		Parsed:              atomic.LoadUint64(&s.parsed),
+		Normalized:          atomic.LoadUint64(&s.normalized),
+		Queued:              atomic.LoadUint64(&s.queued),
+		Errors:              atomic.LoadUint64(&s.errors),
+		ParseErrors:         atomic.LoadUint64(&s.parseErrors),
+		ValidationErrors:    atomic.LoadUint64(&s.validationErrors),
+		InsecureWarned:      s.insecureWarned.Load(),
 	}
 }
 

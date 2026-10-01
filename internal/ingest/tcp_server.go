@@ -75,6 +75,10 @@ type TCPServer struct {
 	queue      *queue.RingBuffer
 	rejects    *cef.RejectLogger
 
+	// tcpListener is the TCP listener under listener (which wraps it for
+	// TLS); the accept loop sets its deadline.
+	tcpListener *net.TCPListener
+
 	connCount int64
 	wg        sync.WaitGroup
 	done      chan struct{}
@@ -127,29 +131,28 @@ func NewTCPServer(
 
 // Start starts the TCP server.
 func (s *TCPServer) Start(ctx context.Context) error {
-	var listener net.Listener
-	var err error
-
+	var tlsConfig *tls.Config
 	if s.config.TLSEnabled {
 		cert, err := tls.LoadX509KeyPair(s.config.TLSCertFile, s.config.TLSKeyFile)
 		if err != nil {
 			return err
 		}
 
-		tlsConfig := &tls.Config{
+		tlsConfig = &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS12,
 		}
+	}
 
-		listener, err = tls.Listen("tcp", s.config.Address, tlsConfig)
-		if err != nil {
-			return err
-		}
-	} else {
-		listener, err = net.Listen("tcp", s.config.Address)
-		if err != nil {
-			return err
-		}
+	listener, err := net.Listen("tcp", s.config.Address)
+	if err != nil {
+		return err
+	}
+	// Keep the TCP listener: the accept loop sets deadlines on it to notice
+	// ctx cancellation, which a TLS listener does not support.
+	s.tcpListener, _ = listener.(*net.TCPListener)
+	if tlsConfig != nil {
+		listener = tls.NewListener(listener, tlsConfig)
 	}
 
 	s.listener = listener
@@ -179,8 +182,8 @@ func (s *TCPServer) acceptLoop(ctx context.Context) {
 		}
 
 		// Set accept deadline to allow periodic context checks
-		if tcpListener, ok := s.listener.(*net.TCPListener); ok {
-			if err := tcpListener.SetDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+		if s.tcpListener != nil {
+			if err := s.tcpListener.SetDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
 				// Accept below surfaces the underlying listener failure.
 				slog.Debug("failed to set TCP accept deadline", "error", err)
 			}

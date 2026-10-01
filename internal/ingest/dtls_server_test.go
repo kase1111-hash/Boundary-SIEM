@@ -353,6 +353,71 @@ func TestDTLSServer_MutualTLS(t *testing.T) {
 	}
 }
 
+// TestDTLSServer_ConnectionLimit is a regression test for unbounded DTLS
+// connections. pion/dtls v3 runs the handshake outside Accept, so every
+// datagram from a new source address that looks like a handshake record held
+// a connection and its goroutines open for ConnectionTimeout; a spoofed flood
+// could exhaust memory. Connections beyond MaxConnections are now closed at
+// once, and the slots are released when the stalled handshakes time out.
+func TestDTLSServer_ConnectionLimit(t *testing.T) {
+	certFile, keyFile := writeSelfSignedCert(t)
+	const limit, flood = 5, 50
+	srv, q := newTestDTLSServer(t, func(c *DTLSServerConfig) {
+		c.CertFile = certFile
+		c.KeyFile = keyFile
+		c.MaxConnections = limit
+		c.ConnectionTimeout = 2 * time.Second
+	})
+	if err := srv.Start(context.Background()); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer stopWithin(t, srv.Stop, 3*time.Second)
+	addr, ok := srv.listener.Addr().(*net.UDPAddr)
+	if !ok {
+		t.Fatalf("listener address %T is not *net.UDPAddr", srv.listener.Addr())
+	}
+
+	// A DTLS 1.2 handshake record header with a one-byte body: accepted as a
+	// new connection, but never a valid ClientHello.
+	bogus := []byte{22, 0xfe, 0xfd, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1}
+	for i := 0; i < flood; i++ {
+		c, err := net.DialUDP("udp", nil, addr)
+		if err != nil {
+			t.Fatalf("DialUDP: %v", err)
+		}
+		defer c.Close()
+		if _, err := c.Write(bogus); err != nil {
+			t.Fatalf("Write: %v", err)
+		}
+	}
+
+	if !waitForCondition(3*time.Second, func() bool {
+		m := srv.Metrics()
+		return m.Connections+m.RejectedConnections == flood
+	}) {
+		t.Fatalf("metrics = %+v, want %d connections accepted or rejected", srv.Metrics(), flood)
+	}
+	if m := srv.Metrics(); m.Connections != limit || m.RejectedConnections != flood-limit {
+		t.Fatalf("metrics = %+v, want Connections=%d RejectedConnections=%d", m, limit, flood-limit)
+	}
+
+	// Once the stalled handshakes time out, a real client gets a slot.
+	if !waitForCondition(5*time.Second, func() bool { return srv.Metrics().HandshakeErrs == limit }) {
+		t.Fatalf("metrics = %+v, want HandshakeErrs=%d", srv.Metrics(), limit)
+	}
+	client := dialDTLS(t, srv.listener.Addr())
+	defer client.Close()
+	if _, err := client.Write([]byte(validCEFLine())); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	if !waitForCondition(5*time.Second, func() bool {
+		ev, _ := q.Pop()
+		return ev != nil
+	}) {
+		t.Fatalf("no event queued after the flood; metrics=%+v", srv.Metrics())
+	}
+}
+
 func TestDefaultDTLSServerConfig(t *testing.T) {
 	cfg := DefaultDTLSServerConfig()
 
@@ -464,5 +529,8 @@ func TestDTLSServerConfig_Defaults(t *testing.T) {
 	}
 	if cfg.IdleTimeout != 5*time.Minute {
 		t.Errorf("IdleTimeout = %v, want 5m", cfg.IdleTimeout)
+	}
+	if cfg.MaxConnections != 1000 {
+		t.Errorf("MaxConnections = %d, want 1000", cfg.MaxConnections)
 	}
 }
