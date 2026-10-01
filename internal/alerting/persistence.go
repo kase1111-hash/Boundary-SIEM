@@ -19,12 +19,14 @@ import (
 // internal/storage/migrations/004_create_alerts.sql, through the
 // database/sql handle returned by storage.ClickHouseClient.DB().
 //
-// The table is a ReplacingMergeTree(updated_at) whose sorting key contains
-// status, and ClickHouse cannot UPDATE sorting-key columns. Every change is
-// therefore written as a complete new version of the row with a strictly
-// increasing updated_at, and every read selects the newest version of each
-// alert (ORDER BY updated_at DESC LIMIT 1 BY alert_id) before filtering.
-// Versions that share a status collapse during background merges.
+// The table is a ReplacingMergeTree(updated_at). Migration 004 put status in
+// its sorting key, which ClickHouse cannot UPDATE (storage.fixAlertsSortingKey
+// rebuilds the table without it). Every change is therefore written as a
+// complete new version of the row with a strictly increasing updated_at, and
+// every read selects the newest version of each alert (ORDER BY updated_at
+// DESC LIMIT 1 BY alert_id) before filtering. Older versions collapse during
+// background merges. Writing the same version again changes nothing a read
+// can see, which is what lets a failed write be retried (see pending.go).
 //
 // The table has no tags or MITRE columns, so those are stored together with
 // the alert's metadata in the metadata column (see persistedMetadata).

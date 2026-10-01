@@ -29,6 +29,19 @@ func (c *wsAlertChannel) Send(_ context.Context, alert *alerting.Alert) error {
 	return c.hub.Broadcast(ws.TypeAlert, alert)
 }
 
+// broadcastAlertUpdate returns an alerting.Manager.OnRecurrence listener
+// that pushes an alert a recurrence was merged into to WebSocket clients,
+// as alertChangeNotifier does for lifecycle changes, so open views see its
+// new event count. (Merges used to be pushed by nothing: live views kept the
+// stale count until their next poll.)
+func broadcastAlertUpdate(hub *ws.Hub, logger *slog.Logger) func(*alerting.Alert) {
+	return func(alert *alerting.Alert) {
+		if err := hub.Broadcast(ws.TypeAlert, alert); err != nil {
+			logger.Warn("failed to broadcast alert update", "alert_id", alert.ID, "error", err)
+		}
+	}
+}
+
 // alertActionPath matches the alert lifecycle endpoints.
 var alertActionPath = regexp.MustCompile(`^/v1/alerts/([^/]+)/(acknowledge|resolve|notes|assign)$`)
 

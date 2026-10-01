@@ -30,6 +30,14 @@ type ShutdownReport struct {
 	// Lost is the number of accepted events that are not in storage (when
 	// storage is enabled).
 	Lost uint64
+
+	// AlertsUnpersisted is the number of alerts whose latest change was
+	// still not in storage after the final alert flush (their write failed
+	// and was queued); AlertWritesDropped counts failed alert writes never
+	// queued because too many were pending. Those changes are lost; the
+	// alert manager logs them at ERROR.
+	AlertsUnpersisted  int
+	AlertWritesDropped uint64
 }
 
 // Shutdown stops the service within timeout, in an order that loses no
@@ -41,12 +49,16 @@ type ShutdownReport struct {
 //  3. flush and close the batch writer and the quarantine writer;
 //  4. let the correlation engine finish, then stop it and alerting (alerts
 //     raised meanwhile are still persisted unless storage hangs past the
-//     deadline, in which case their handling is aborted);
-//  5. close the ClickHouse connection.
+//     deadline, in which case their handling is aborted and the aborted
+//     writes are queued like any other failed alert write);
+//  5. make one final attempt to write the alert changes whose write failed
+//     (see alerting.Manager.Close);
+//  6. close the ClickHouse connection.
 //
-// Every phase is bounded by its share of timeout. Events that cannot be
-// stored in time are counted in the report and logged at ERROR. Shutdown is
-// safe to call more than once; later calls return the first report.
+// Every phase is bounded by its share of timeout. Events and alert changes
+// that cannot be stored in time are counted in the report and logged at
+// ERROR. Shutdown is safe to call more than once; later calls return the
+// first report.
 func (a *App) Shutdown(timeout time.Duration) ShutdownReport {
 	a.shutdownOnce.Do(func() { a.report = a.shutdown(timeout) })
 	return a.report
@@ -56,7 +68,11 @@ func (a *App) shutdown(timeout time.Duration) ShutdownReport {
 	if timeout <= 0 {
 		timeout = 8 * time.Second
 	}
-	// Leave room for the bounded ClickHouse close after the last phase.
+	// Leave room for the final alert flush and the bounded ClickHouse close
+	// after the last phase.
+	if a.alertMgr.Persistent() && timeout > 2*alertFlushGrace {
+		timeout -= alertFlushGrace
+	}
 	if a.chClient != nil && timeout > 2*storageCloseGrace {
 		timeout -= storageCloseGrace
 	}
@@ -145,7 +161,20 @@ func (a *App) shutdown(timeout time.Duration) ShutdownReport {
 	a.bg.Wait()
 	a.stopRateLimiter()
 
-	// 5. Close storage. database/sql waits for running queries, which a
+	// 5. Alert changes whose write failed are kept in memory and retried in
+	// the background; make one last attempt to write them, within what is
+	// left of the budget plus alertFlushGrace. The alert manager logs at
+	// ERROR what it could not write.
+	flushBy := deadline
+	if now := time.Now(); now.After(flushBy) {
+		flushBy = now
+	}
+	flushCtx, cancel := context.WithDeadline(context.Background(), flushBy.Add(alertFlushGrace))
+	report.AlertsUnpersisted = a.alertMgr.Close(flushCtx)
+	cancel()
+	report.AlertWritesDropped = a.alertMgr.PersistenceMetrics().DroppedWrites
+
+	// 6. Close storage. database/sql waits for running queries, which a
 	// frozen server never finishes, so this is bounded too.
 	if a.chClient != nil {
 		closeCtx, cancel := context.WithTimeout(context.Background(), storageCloseGrace)
@@ -200,7 +229,7 @@ func (a *App) stopAlerting(ctx context.Context) {
 		return
 	case <-ctx.Done():
 	}
-	a.logger.Error("correlation engine and alerting did not stop before the shutdown deadline; aborting in-flight alert handling (alerts being persisted may be lost)")
+	a.logger.Error("correlation engine and alerting did not stop before the shutdown deadline; aborting in-flight alert handling (aborted alert writes are left to the final alert flush)")
 	a.cancelRun()
 	select {
 	case <-stopped:
@@ -224,6 +253,10 @@ func (a *App) unsettledEvents() int {
 
 // storageCloseGrace bounds closing the ClickHouse connection pool.
 const storageCloseGrace = 500 * time.Millisecond
+
+// alertFlushGrace is the time the final alert flush gets beyond the
+// shutdown phases (reserved from the budget when it is large enough).
+const alertFlushGrace = time.Second
 
 // runWithin runs fn and waits for it until ctx is done. fn keeps running in
 // the background after a timeout; the process is about to exit.
@@ -323,12 +356,18 @@ func (a *App) logReport(r ShutdownReport, drainErr error) {
 		"storage_timed_out", r.StoreTimedOut,
 		"correlation_dropped", r.CorrelationDropped,
 	}
+	if a.alertMgr.Persistent() {
+		attrs = append(attrs, "alerts_unpersisted", r.AlertsUnpersisted, "alert_writes_dropped", r.AlertWritesDropped)
+	}
 	if drainErr != nil {
 		attrs = append(attrs, "drain_error", drainErr.Error())
 	}
-	if r.Lost > 0 {
+	switch {
+	case r.Lost > 0:
 		log.Error("shutdown complete with lost events", attrs...)
-		return
+	case r.AlertsUnpersisted > 0 || r.AlertWritesDropped > 0:
+		log.Error("shutdown complete with alert changes not persisted", attrs...)
+	default:
+		log.Info("shutdown complete", attrs...)
 	}
-	log.Info("shutdown complete", attrs...)
 }

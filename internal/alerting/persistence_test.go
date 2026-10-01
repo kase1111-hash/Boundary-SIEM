@@ -58,10 +58,11 @@ type recordedExec struct {
 }
 
 type recordingDB struct {
-	mu      sync.Mutex
-	execs   []recordedExec
-	queries []string
-	execErr error // returned by every Exec when set
+	mu       sync.Mutex
+	execs    []recordedExec
+	queries  []string
+	execErr  error // returned by every Exec when set
+	queryErr error // returned by every Query when set
 }
 
 func (r *recordingDB) Connect(context.Context) (driver.Conn, error) {
@@ -105,8 +106,11 @@ func (c *recordingConn) ExecContext(_ context.Context, query string, args []driv
 
 func (c *recordingConn) QueryContext(_ context.Context, query string, _ []driver.NamedValue) (driver.Rows, error) {
 	c.db.mu.Lock()
+	defer c.db.mu.Unlock()
 	c.db.queries = append(c.db.queries, query)
-	c.db.mu.Unlock()
+	if c.db.queryErr != nil {
+		return nil, c.db.queryErr
+	}
 	return emptyRows{}, nil
 }
 
@@ -214,43 +218,53 @@ func TestAlertPersistenceMatchesMigration(t *testing.T) {
 	}
 }
 
-// TestHandlerReportsStorageErrors checks that a failed database write is
-// reported as a server error, not as "alert not found" (the handler used to
-// map every manager error to 404).
+// TestHandlerReportsStorageErrors checks that a storage failure is reported
+// as a server error, not as "alert not found" (the handler used to map every
+// manager error to 404). An action on an alert that is only in the database
+// cannot be applied while the database cannot be read: it fails with 500 and
+// changes nothing, so the same request succeeds or fails on its own merits
+// once storage is back.
+//
+// A failed write of a change that was applied is not an error (E2E round 3:
+// the API answered 500 for an acknowledgement it had applied); see
+// TestAlertActionDuringOutageSucceedsAndIsPersistedLater.
 func TestHandlerReportsStorageErrors(t *testing.T) {
-	rec := &recordingDB{}
+	rec := &recordingDB{execErr: errors.New("clickhouse unavailable"), queryErr: errors.New("clickhouse unavailable")}
 	db := sql.OpenDB(rec)
 	defer db.Close()
 
-	ctx := context.Background()
-	mgr := NewManager(DefaultManagerConfig(), db)
-	corrAlert := makeCorrelationAlert("storage-err", "storage-err", "Storage error", 5)
-	if err := mgr.HandleCorrelationAlert(ctx, corrAlert); err != nil {
-		t.Fatalf("HandleCorrelationAlert: %v", err)
-	}
-	rec.mu.Lock()
-	rec.execErr = errors.New("clickhouse unavailable")
-	rec.mu.Unlock()
-
+	mgr := NewManager(DefaultManagerConfig(), db) // nothing in memory
+	id := uuid.New()
 	mux := http.NewServeMux()
 	NewHandler(mgr).RegisterRoutes(mux)
-	req := httptest.NewRequest(http.MethodPost, "/v1/alerts/"+corrAlert.ID.String()+"/acknowledge", strings.NewReader(`{"user":"a"}`))
-	w := httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "storage_error") {
+	acknowledge := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/v1/alerts/"+id.String()+"/acknowledge", strings.NewReader(`{"user":"a"}`))
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, req)
+		return w
+	}
+
+	if w := acknowledge(); w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "storage_error") {
 		t.Fatalf("expected 500 storage_error, got %d %s", w.Code, w.Body.String())
 	}
-	// The change is applied in memory; a retry is rejected as a conflict
-	// rather than silently re-acknowledging.
-	got, err := mgr.GetAlert(ctx, corrAlert.ID)
-	if err != nil || got.Status != StatusAcknowledged {
-		t.Fatalf("expected in-memory acknowledgement, got %+v, %v", got, err)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/v1/alerts/"+id.String(), nil))
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("GET with storage down: expected 500, got %d %s", w.Code, w.Body.String())
 	}
-	req = httptest.NewRequest(http.MethodPost, "/v1/alerts/"+corrAlert.ID.String()+"/acknowledge", strings.NewReader(`{"user":"a"}`))
-	w = httptest.NewRecorder()
-	mux.ServeHTTP(w, req)
-	if w.Code != http.StatusConflict {
-		t.Errorf("retry: expected 409, got %d %s", w.Code, w.Body.String())
+	if n := len(rec.snapshot()); n != 0 {
+		t.Errorf("a failed action wrote %d rows", n)
+	}
+	if m := mgr.PersistenceMetrics(); m.PendingWrites != 0 {
+		t.Errorf("a failed action queued a write: %+v", m)
+	}
+
+	// Storage is back: the alert does not exist, and the retry says so.
+	rec.mu.Lock()
+	rec.execErr, rec.queryErr = nil, nil
+	rec.mu.Unlock()
+	if w := acknowledge(); w.Code != http.StatusNotFound {
+		t.Errorf("retry once storage is back: expected 404, got %d %s", w.Code, w.Body.String())
 	}
 }
 

@@ -229,6 +229,15 @@ func (a *App) metrics() []ingest.Metric {
 			out = append(out, gauge("siem_alerts", "Alerts held by the alert manager", float64(total)))
 		}
 	}
+	if a.alertMgr.Persistent() {
+		pm := a.alertMgr.PersistenceMetrics()
+		out = append(out,
+			gauge("siem_alerts_pending_writes", "Alerts whose latest change is not yet in storage (kept in memory, write retried in the background)", float64(pm.PendingWrites)),
+			counter("siem_alerts_write_failures_total", "Alert writes to storage that failed (first attempts and retries)", pm.FailedWrites),
+			counter("siem_alerts_writes_retried_total", "Alert changes written by a retry after a failed write", pm.RetriedWrites),
+			counter("siem_alerts_writes_dropped_total", "Failed alert writes not queued for retry because too many were pending (in memory only, lost on restart)", pm.DroppedWrites),
+		)
+	}
 
 	if a.store != nil {
 		bm := a.store.Metrics()

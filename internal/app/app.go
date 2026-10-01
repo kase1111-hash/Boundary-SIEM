@@ -5,6 +5,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -47,6 +48,9 @@ type Options struct {
 	// Quarantine replaces the ClickHouse events_quarantine writer for
 	// rejected events when Store is set.
 	Quarantine ingest.QuarantineStore
+	// AlertDB is the database the alert manager persists alerts to when
+	// Store is set (without it alerts are then kept in memory only).
+	AlertDB *sql.DB
 }
 
 // App is the assembled ingest service. Every accepted event flows
@@ -65,6 +69,7 @@ type App struct {
 	store      EventStore
 	quarantine *ingest.Quarantiner
 	storage    *storageHealth
+	alertDB    *sql.DB // where alerts are persisted; nil keeps them in memory only
 
 	consumer *consumer.Consumer
 	corrSink *consumer.AsyncSink
@@ -117,7 +122,7 @@ func New(cfg *config.Config, opts Options) (*App, error) {
 	})
 	a.queue = queue.NewRingBuffer(cfg.Queue.Size)
 
-	if err := a.initStorage(opts.Store, opts.Quarantine); err != nil {
+	if err := a.initStorage(opts.Store, opts.Quarantine, opts.AlertDB); err != nil {
 		a.closeStorage()
 		return nil, err
 	}
@@ -163,11 +168,12 @@ const quarantineBuffer = 1000
 
 // initStorage connects to ClickHouse (creating the database if needed),
 // runs the migrations and builds the batch writer and quarantine writer.
-func (a *App) initStorage(store EventStore, quarantine ingest.QuarantineStore) error {
+func (a *App) initStorage(store EventStore, quarantine ingest.QuarantineStore, alertDB *sql.DB) error {
 	cfg := a.cfg
 	if store != nil {
 		a.store = store
 		a.storage = newStorageHealth(nil)
+		a.alertDB = alertDB
 		if quarantine != nil {
 			a.quarantine = ingest.NewQuarantiner(quarantine, quarantineBuffer)
 		}
@@ -197,6 +203,7 @@ func (a *App) initStorage(store EventStore, quarantine ingest.QuarantineStore) e
 		return fmt.Errorf("connect to ClickHouse: %w", err)
 	}
 	a.chClient = client
+	a.alertDB = client.DB()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
@@ -288,8 +295,10 @@ func (a *App) initCorrelation() error {
 	if cfg.Alerting.MaxAlerts > 0 {
 		managerCfg.MaxAlerts = cfg.Alerting.MaxAlerts
 	}
-	if a.chClient != nil {
-		a.alertMgr = alerting.NewManager(managerCfg, a.chClient.DB())
+	if a.alertDB != nil {
+		// Changes whose write fails are kept and retried by the manager's
+		// background writer (started in Start) and flushed at shutdown.
+		a.alertMgr = alerting.NewManager(managerCfg, a.alertDB)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		n, err := a.alertMgr.LoadFromDB(ctx)
 		cancel()
@@ -483,10 +492,12 @@ func (a *App) initHTTP() error {
 		}, a.logger)
 		mux.Handle("GET /ws/events", a.hub)
 		mux.Handle("GET /ws", a.hub)
-		// New alerts reach the dashboard through a notification channel;
-		// lifecycle changes through the API are broadcast by
-		// alertChangeNotifier below.
+		// New alerts reach the dashboard through a notification channel,
+		// recurrences merged into an open alert through the manager's
+		// recurrence listener; lifecycle changes through the API are
+		// broadcast by alertChangeNotifier below.
 		a.alertMgr.AddChannel(&wsAlertChannel{hub: a.hub})
+		a.alertMgr.OnRecurrence(broadcastAlertUpdate(a.hub, a.logger))
 	}
 
 	if cfg.Server.WebDir != "" {
@@ -529,6 +540,7 @@ func (a *App) Start() error {
 	ctx := a.runCtx
 	cfg := a.cfg
 
+	a.alertMgr.Start(ctx)
 	a.engine.Start(ctx)
 	a.escalation.Start(ctx, cfg.Alerting.EscalationInterval)
 	a.consumer.Start(ctx)

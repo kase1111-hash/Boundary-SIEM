@@ -108,7 +108,30 @@ type ManagerConfig struct {
 	DeduplicationWindow time.Duration
 	RetentionPeriod     time.Duration
 	MaxAlerts           int
+
+	// MaxPendingWrites bounds the alerts whose latest change could not be
+	// written to the database and waits for a retry (see Manager.Start).
+	// A failed write beyond it is not queued: it is logged at ERROR and
+	// counted in PersistenceMetrics.DroppedWrites. Zero means
+	// DefaultMaxPendingWrites.
+	MaxPendingWrites int
+	// PersistRetryInitial and PersistRetryMax bound the exponential backoff
+	// between retries of pending writes while storage stays unavailable.
+	// Zero means DefaultPersistRetryInitial and DefaultPersistRetryMax.
+	PersistRetryInitial time.Duration
+	PersistRetryMax     time.Duration
+	// PersistTimeout bounds each alert write. Zero means
+	// DefaultPersistTimeout.
+	PersistTimeout time.Duration
 }
+
+// Defaults of the persistence settings of ManagerConfig.
+const (
+	DefaultMaxPendingWrites    = 10000
+	DefaultPersistRetryInitial = time.Second
+	DefaultPersistRetryMax     = 30 * time.Second
+	DefaultPersistTimeout      = 10 * time.Second
+)
 
 // DefaultManagerConfig returns default manager configuration.
 func DefaultManagerConfig() ManagerConfig {
@@ -116,22 +139,52 @@ func DefaultManagerConfig() ManagerConfig {
 		DeduplicationWindow: 15 * time.Minute,
 		RetentionPeriod:     30 * 24 * time.Hour, // 30 days
 		MaxAlerts:           100000,
+		MaxPendingWrites:    DefaultMaxPendingWrites,
+		PersistRetryInitial: DefaultPersistRetryInitial,
+		PersistRetryMax:     DefaultPersistRetryMax,
+		PersistTimeout:      DefaultPersistTimeout,
 	}
+}
+
+// withDefaults fills in the persistence settings left at zero.
+func (c ManagerConfig) withDefaults() ManagerConfig {
+	if c.MaxPendingWrites <= 0 {
+		c.MaxPendingWrites = DefaultMaxPendingWrites
+	}
+	if c.PersistRetryInitial <= 0 {
+		c.PersistRetryInitial = DefaultPersistRetryInitial
+	}
+	if c.PersistRetryMax <= 0 {
+		c.PersistRetryMax = DefaultPersistRetryMax
+	}
+	c.PersistRetryMax = max(c.PersistRetryMax, c.PersistRetryInitial)
+	if c.PersistTimeout <= 0 {
+		c.PersistTimeout = DefaultPersistTimeout
+	}
+	return c
 }
 
 // Manager manages alerts and notifications.
 //
-// Alerts are held in memory and, when db is non-nil, persisted to the
-// ClickHouse "alerts" table (see persistence.go). Every accessor returns a
-// snapshot (deep copy) of an alert, so callers may read or encode it without
-// holding the manager's lock while lifecycle methods mutate the original.
+// Alerts are held in memory, which is the source of truth, and, when db is
+// non-nil, persisted to the ClickHouse "alerts" table (see persistence.go).
+// A change whose write fails stays applied in memory and its alert is
+// queued: the background writer started by Start writes the alert's latest
+// version once storage is back, and Close makes a final attempt (see
+// pending.go). Every accessor returns a snapshot (deep copy) of an alert, so
+// callers may read or encode it without holding the manager's lock while
+// lifecycle methods mutate the original.
 type Manager struct {
-	config   ManagerConfig
-	db       *sql.DB
-	channels []NotificationChannel
-	alerts   map[uuid.UUID]*Alert
-	dedup    map[string]dedupEntry // "rule_id:group_key" -> latest alert
-	mu       sync.RWMutex
+	config      ManagerConfig
+	db          *sql.DB
+	channels    []NotificationChannel
+	recurrences []func(*Alert)              // OnRecurrence listeners
+	alerts      map[uuid.UUID]*Alert        // guarded by mu
+	dedup       map[string]dedupEntry       // "rule_id:group_key" -> latest alert; guarded by mu
+	pending     map[uuid.UUID]*pendingWrite // alerts whose latest change is not stored; guarded by mu
+	mu          sync.RWMutex
+
+	writes writeState // background writer and persistence counters
 }
 
 // dedupEntry is the latest alert raised for a rule and group, and when that
@@ -150,11 +203,13 @@ const maxAlertEventIDs = 1000
 // alerts in memory only.
 func NewManager(config ManagerConfig, db *sql.DB) *Manager {
 	return &Manager{
-		config:   config,
+		config:   config.withDefaults(),
 		db:       db,
 		channels: make([]NotificationChannel, 0),
 		alerts:   make(map[uuid.UUID]*Alert),
 		dedup:    make(map[string]dedupEntry),
+		pending:  make(map[uuid.UUID]*pendingWrite),
+		writes:   writeState{wake: make(chan struct{}, 1)},
 	}
 }
 
@@ -164,6 +219,19 @@ func (m *Manager) AddChannel(channel NotificationChannel) {
 	defer m.mu.Unlock()
 	m.channels = append(m.channels, channel)
 	slog.Info("added notification channel", "name", channel.Name())
+}
+
+// OnRecurrence registers fn to be called with a snapshot of an open alert
+// each time a recurrence is merged into it (its event count, event IDs,
+// metadata and updated_at changed). Merged recurrences are not sent to the
+// notification channels, which only see new alerts, so this is how live
+// views learn about them. fn runs on the goroutine that handles the
+// correlation alert, after the change has been stored or queued; it must
+// not block and must not modify the alert, which all listeners share.
+func (m *Manager) OnRecurrence(fn func(alert *Alert)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recurrences = append(m.recurrences, fn)
 }
 
 // HandleCorrelationAlert handles an alert from the correlation engine.
@@ -198,11 +266,8 @@ func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correla
 				"rule_id", corrAlert.RuleID, "group_key", corrAlert.GroupKey,
 				"alert_id", snapshot.ID, "status", snapshot.Status,
 				"occurrences", snapshot.Metadata[metaOccurrences], "event_count", snapshot.EventCount)
-			if m.db != nil {
-				if err := m.persistAlert(ctx, snapshot); err != nil {
-					slog.Error("failed to persist merged alert", "alert_id", snapshot.ID, "error", err)
-				}
-			}
+			m.store(ctx, snapshot, "merge recurrence")
+			m.notifyRecurrence(snapshot)
 			return nil
 		}
 	}
@@ -214,14 +279,20 @@ func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correla
 	snapshot := alert.clone()
 	m.mu.Unlock()
 
-	if m.db != nil {
-		if err := m.persistAlert(ctx, snapshot); err != nil {
-			slog.Error("failed to store alert", "error", err)
-		}
-	}
-
+	m.store(ctx, snapshot, "create")
 	m.sendNotifications(ctx, snapshot)
 	return nil
+}
+
+// notifyRecurrence calls the OnRecurrence listeners with a snapshot of an
+// alert a recurrence was merged into.
+func (m *Manager) notifyRecurrence(alert *Alert) {
+	m.mu.RLock()
+	listeners := m.recurrences
+	m.mu.RUnlock()
+	for _, fn := range listeners {
+		fn(alert)
+	}
 }
 
 // newManagedAlert converts an alert of the correlation engine into a new
@@ -482,11 +553,21 @@ func nextUpdateTime(prev time.Time) time.Time {
 
 // updateAlert applies fn to the alert under the manager lock and persists the
 // resulting version. fn must validate before mutating: if it returns an error
-// the alert is left untouched and nothing is written. The in-memory change
-// stays applied even if persisting it fails; the error is returned and the
-// next successful write of the alert (which stores the full row) repairs the
-// database copy.
-func (m *Manager) updateAlert(ctx context.Context, id uuid.UUID, fn func(alert *Alert, now time.Time) error) error {
+// the alert is left untouched and nothing is written.
+//
+// The in-memory alert is the source of truth, so once fn has applied the
+// change the call succeeds even if writing it to the database fails: the
+// alert is queued and its latest version written later (see store). The
+// write error used to be returned with the change applied anyway, so the API
+// answered 500 for an action that had taken effect, a retry got 409, and the
+// change was never persisted. Now the caller sees the state it asked for,
+// and repeating the action is judged against that state, as it would be
+// once stored (a second acknowledge is ErrInvalidTransition).
+//
+// An error is returned only when the alert is unknown, fn rejects the
+// change, or the alert is not in memory and cannot be loaded from the
+// database; nothing has changed then.
+func (m *Manager) updateAlert(ctx context.Context, id uuid.UUID, action string, fn func(alert *Alert, now time.Time) error) error {
 	if err := m.ensureLoaded(ctx, id); err != nil {
 		return err
 	}
@@ -506,9 +587,7 @@ func (m *Manager) updateAlert(ctx context.Context, id uuid.UUID, fn func(alert *
 	snapshot := alert.clone()
 	m.mu.Unlock()
 
-	if m.db != nil {
-		return m.persistAlert(ctx, snapshot)
-	}
+	m.store(ctx, snapshot, action)
 	return nil
 }
 
@@ -537,7 +616,7 @@ func (m *Manager) ensureLoaded(ctx context.Context, id uuid.UUID) error {
 
 // AcknowledgeAlert acknowledges an alert.
 func (m *Manager) AcknowledgeAlert(ctx context.Context, id uuid.UUID, user string) error {
-	return m.updateAlert(ctx, id, func(alert *Alert, now time.Time) error {
+	return m.updateAlert(ctx, id, "acknowledge", func(alert *Alert, now time.Time) error {
 		if alert.Status != StatusNew && alert.Status != StatusSuppressed {
 			return transitionError(id, "acknowledge", alert.Status)
 		}
@@ -550,7 +629,7 @@ func (m *Manager) AcknowledgeAlert(ctx context.Context, id uuid.UUID, user strin
 
 // ResolveAlert resolves an alert.
 func (m *Manager) ResolveAlert(ctx context.Context, id uuid.UUID, user string) error {
-	return m.updateAlert(ctx, id, func(alert *Alert, now time.Time) error {
+	return m.updateAlert(ctx, id, "resolve", func(alert *Alert, now time.Time) error {
 		if alert.Status == StatusResolved {
 			return transitionError(id, "resolve", alert.Status)
 		}
@@ -563,7 +642,7 @@ func (m *Manager) ResolveAlert(ctx context.Context, id uuid.UUID, user string) e
 
 // AddNote adds a note to an alert.
 func (m *Manager) AddNote(ctx context.Context, alertID uuid.UUID, author, content string) error {
-	return m.updateAlert(ctx, alertID, func(alert *Alert, now time.Time) error {
+	return m.updateAlert(ctx, alertID, "add note", func(alert *Alert, now time.Time) error {
 		alert.Notes = append(alert.Notes, Note{
 			ID:        uuid.New(),
 			Author:    author,
@@ -576,7 +655,7 @@ func (m *Manager) AddNote(ctx context.Context, alertID uuid.UUID, author, conten
 
 // AssignAlert assigns an alert to a user.
 func (m *Manager) AssignAlert(ctx context.Context, id uuid.UUID, assignee string) error {
-	return m.updateAlert(ctx, id, func(alert *Alert, _ time.Time) error {
+	return m.updateAlert(ctx, id, "assign", func(alert *Alert, _ time.Time) error {
 		if alert.Status == StatusResolved {
 			return transitionError(id, "assign", alert.Status)
 		}
@@ -617,7 +696,9 @@ func (m *Manager) Stats() map[string]interface{} {
 	return stats
 }
 
-// Cleanup removes old alerts.
+// Cleanup removes old resolved alerts from memory. An alert whose latest
+// change is not yet in the database is kept until it is, since memory holds
+// its only copy.
 func (m *Manager) Cleanup(ctx context.Context) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -626,6 +707,9 @@ func (m *Manager) Cleanup(ctx context.Context) int {
 	removed := 0
 
 	for id, alert := range m.alerts {
+		if _, unsaved := m.pending[id]; unsaved {
+			continue
+		}
 		if alert.CreatedAt.Before(cutoff) && alert.Status == StatusResolved {
 			delete(m.alerts, id)
 			removed++

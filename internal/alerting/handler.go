@@ -337,7 +337,10 @@ func (h *Handler) writeJSON(w http.ResponseWriter, status int, data interface{})
 
 // writeManagerError maps an error from a Manager lifecycle method to an HTTP
 // response: unknown alert -> 404, invalid status transition -> 409, anything
-// else (the alert store failed) -> 500.
+// else -> 500. A lifecycle method fails with a storage error only when the
+// alert is not in memory and the database cannot be read, so nothing was
+// changed; a change that was applied but could not be written succeeds (it
+// is queued for persistence, see Manager.updateAlert).
 func (h *Handler) writeManagerError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, ErrAlertNotFound):
