@@ -390,6 +390,72 @@ func TestRuleAPI_RejectsInvalidBodies(t *testing.T) {
 	}
 }
 
+// Review: provenance fields came from the JSON request body, so a client
+// could record any created_by / updated_by it liked.
+func TestRuleAPI_ClientCannotSetProvenance(t *testing.T) {
+	engine := NewEngine(DefaultEngineConfig())
+	h := NewRuleHandler(engine, t.TempDir())
+	body := `{"id":"prov-001","name":"P","type":"threshold","enabled":true,"severity":5,
+		"conditions":{"match":[{"field":"action","operator":"eq","value":"x.y"}]},
+		"window":"1m","threshold":{"count":1},
+		"created_by":"admin","updated_by":"admin","created_at":"2001-01-01T00:00:00Z"}`
+	if w := serveRules(h, http.MethodPost, "/v1/rules", body); w.Code != http.StatusCreated {
+		t.Fatalf("POST = %d: %s", w.Code, w.Body.String())
+	}
+	r, _ := engine.GetRule("prov-001")
+	if r.CreatedBy != "" || r.UpdatedBy != "" || r.CreatedAt.Year() == 2001 {
+		t.Errorf("POST took provenance from the body: created_by=%q updated_by=%q created_at=%v",
+			r.CreatedBy, r.UpdatedBy, r.CreatedAt)
+	}
+	createdAt := r.CreatedAt
+
+	if w := serveRules(h, http.MethodPut, "/v1/rules/prov-001", body); w.Code != http.StatusOK {
+		t.Fatalf("PUT = %d: %s", w.Code, w.Body.String())
+	}
+	r, _ = engine.GetRule("prov-001")
+	if r.UpdatedBy != "" || !r.CreatedAt.Equal(createdAt) {
+		t.Errorf("PUT took provenance from the body: updated_by=%q created_at=%v (want %v)",
+			r.UpdatedBy, r.CreatedAt, createdAt)
+	}
+}
+
+// Review: rewriting a .json rule file stored the rule's content_hash in it,
+// which can never equal the file's own hash, so every restart reported the
+// file as tampered with.
+func TestRuleAPI_RewrittenJSONRuleFileHasNoContentHash(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "custom.json")
+	rule := `{"id":"json-001","name":"J","type":"threshold","enabled":true,"severity":5,
+		"conditions":{"match":[{"field":"action","operator":"eq","value":"x.y"}]},
+		"window":"1m","threshold":{"count":1}}`
+	if err := os.WriteFile(path, []byte(rule), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	engine := NewEngine(DefaultEngineConfig())
+	h := NewRuleHandler(engine, dir)
+	if err := h.LoadCustomRules(); err != nil {
+		t.Fatal(err)
+	}
+	if w := serveRules(h, http.MethodPut, "/v1/rules/json-001", `{"enabled": false}`); w.Code != http.StatusOK {
+		t.Fatalf("PUT = %d: %s", w.Code, w.Body.String())
+	}
+
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stored map[string]any
+	if err := json.Unmarshal(data, &stored); err != nil {
+		t.Fatalf("rewritten file is not a JSON rule: %v\n%s", err, data)
+	}
+	if _, ok := stored["content_hash"]; ok {
+		t.Errorf("rewritten rule file stores content_hash:\n%s", data)
+	}
+	if stored["enabled"] != false {
+		t.Errorf("rewritten rule file enabled = %v, want false", stored["enabled"])
+	}
+}
+
 // Builtin rules still refuse edits other than the enabled flag.
 func TestRuleAPI_BuiltinRuleIsImmutable(t *testing.T) {
 	engine := NewEngine(DefaultEngineConfig())

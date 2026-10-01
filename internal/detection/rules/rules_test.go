@@ -254,6 +254,39 @@ func TestBenignEventTriggersNoShippedRule(t *testing.T) {
 	}
 }
 
+// Review: a numeric condition such as "metadata.value_eth gte 1000" compared
+// a missing field as the string "<nil>", which sorts above every number, so
+// every evm.transaction or tx.transfer without the field fired tx-001 ("Large
+// ETH Transfer", the last stage of two kill chains) and other critical rules.
+func TestNumericConditionsNeedTheField(t *testing.T) {
+	var mu sync.Mutex
+	counts := make(map[string]int)
+	e := wireLikeSiemIngest(t, func(a *correlation.Alert) {
+		mu.Lock()
+		counts[a.RuleID]++
+		mu.Unlock()
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	e.Start(ctx)
+	defer e.Stop()
+
+	for _, action := range []string{"evm.transaction", "tx.transfer", "tx.submitted", "defi.swap", "block.reorg"} {
+		e.ProcessEvent(event(action, schema.OutcomeSuccess, nil))
+		e.ProcessEvent(event(action, schema.OutcomeSuccess, map[string]any{"value_eth": "n/a", "value_usd": "n/a"}))
+	}
+	time.Sleep(300 * time.Millisecond)
+	mu.Lock()
+	if len(counts) != 0 {
+		t.Errorf("events without the compared numeric field fired %v", counts)
+	}
+	mu.Unlock()
+
+	// The field present and large enough still fires.
+	e.ProcessEvent(event("evm.transaction", schema.OutcomeSuccess, map[string]any{"value_eth": 5000.0, "from": "0xabc"}))
+	waitFor(t, &mu, counts, "tx-001")
+}
+
 // Rules still fire on the events they describe, and chaining still works: a
 // kill chain completes from the alerts of its stage rules.
 func TestShippedRulesFireOnIntendedEvents(t *testing.T) {

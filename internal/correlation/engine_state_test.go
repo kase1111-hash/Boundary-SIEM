@@ -2,13 +2,117 @@ package correlation
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"boundary-siem/internal/schema"
+
 	"github.com/google/uuid"
 )
+
+// ingestedEvent returns an event whose metadata was decoded from JSON, as the
+// ingest API does with whatever a log source sends.
+func ingestedEvent(t *testing.T, action, metadataJSON string) *schema.Event {
+	t.Helper()
+	ev := testEvent(action)
+	if err := json.Unmarshal([]byte(metadataJSON), &ev.Metadata); err != nil {
+		t.Fatal(err)
+	}
+	return ev
+}
+
+// Review: an ingested event claiming is_synthetic skipped every rule that
+// does not consume alerts, i.e. every detection rule (evasion).
+func TestEngine_IngestedSyntheticFlagIsNotTrusted(t *testing.T) {
+	e := NewEngine(DefaultEngineConfig())
+	mustAddRule(t, e, contractTestRule()) // key.export, count 1
+
+	e.processEvent(context.Background(), ingestedEvent(t, "key.export", `{"is_synthetic": true}`))
+
+	if n := len(drainAlerts(e)); n != 1 {
+		t.Errorf("alerts = %d, want 1: an event's own is_synthetic metadata let it evade detection", n)
+	}
+}
+
+// Review: an ingested event claiming chain_depth made the alert it caused
+// look like the end of a chain, so it was never re-injected and no rule
+// depending on it (kill chains) could fire.
+func TestEngine_IngestedChainDepthIsNotTrusted(t *testing.T) {
+	e := NewEngine(DefaultEngineConfig())
+	rule := contractTestRule()
+	rule.Metadata = map[string]any{metaChainDepth: MaxChainDepth} // nor may the rule set it
+	mustAddRule(t, e, rule)
+
+	e.processEvent(context.Background(), ingestedEvent(t, "key.export", `{"chain_depth": 3}`))
+	alerts := drainAlerts(e)
+	if len(alerts) != 1 {
+		t.Fatalf("alerts = %d, want 1", len(alerts))
+	}
+	if d := chainDepth(alerts[0].Metadata); d != 0 {
+		t.Errorf("alert chain_depth = %d, want 0 (raised from ingested events)", d)
+	}
+	NewAlertReinjector(e).Reinject(alerts[0])
+	if len(e.eventCh) != 1 {
+		t.Error("alert raised from ingested events was not re-injected")
+	}
+}
+
+// Review: rules that select alerts by alert metadata other than rule_id
+// (tags, MITRE tactic, rule name, ...) never saw re-injected alerts.
+func TestEngine_AlertMetadataRulesConsumeAlerts(t *testing.T) {
+	e := NewEngine(DefaultEngineConfig())
+	mustAddRule(t, e, &Rule{
+		ID: "cred-alerts", Name: "credential access alerts", Type: RuleTypeThreshold,
+		Enabled: true, Severity: 8, Window: time.Minute,
+		EventConditions: []Condition{{Field: "metadata.mitre_tactic", Operator: "eq", Value: "TA0006"}},
+		Threshold:       &ThresholdConfig{Count: 1},
+	})
+
+	NewAlertReinjector(e).Reinject(&Alert{
+		ID: uuid.New(), RuleID: "sec-004", RuleName: "Auth failures", Severity: 7,
+		Timestamp: time.Now(), MITRE: &MITREMapping{TacticID: "TA0006"},
+	})
+	e.processEvent(context.Background(), <-e.eventCh)
+
+	if n := len(drainAlerts(e)); n != 1 {
+		t.Errorf("alerts = %d, want 1 (rule matches the alert's MITRE tactic)", n)
+	}
+}
+
+// Review: re-enabling an absence rule reported the time it was disabled
+// (when no event could reach it) as an absence, and fired at once.
+func TestEngine_ReenabledAbsenceRuleStartsNewPeriod(t *testing.T) {
+	for _, groupBy := range [][]string{nil, {"source.host"}} {
+		e := NewEngine(DefaultEngineConfig())
+		rule := heartbeatAbsenceRule(groupBy, 100*time.Millisecond)
+		mustAddRule(t, e, rule)
+		hb := testEvent("system.heartbeat")
+		e.processEvent(context.Background(), hb)
+		time.Sleep(110 * time.Millisecond)
+		e.checkAbsenceRules() // period 1: heartbeat seen, period 2 starts
+		if n := len(drainAlerts(e)); n != 0 {
+			t.Fatalf("group_by %v: alerts after a period with a heartbeat = %d", groupBy, n)
+		}
+
+		e.SetRuleEnabled(rule.ID, false)
+		time.Sleep(150 * time.Millisecond)
+		e.SetRuleEnabled(rule.ID, true)
+		e.checkAbsenceRules()
+		if n := len(drainAlerts(e)); n != 0 {
+			t.Errorf("group_by %v: re-enabled absence rule fired %d alert(s) at once", groupBy, n)
+		}
+
+		// The group is still watched: a full period without heartbeat fires.
+		time.Sleep(110 * time.Millisecond)
+		e.checkAbsenceRules()
+		if n := len(drainAlerts(e)); n != 1 {
+			t.Errorf("group_by %v: alerts after a full period without heartbeat = %d, want 1", groupBy, n)
+		}
+	}
+}
 
 // Regression (R05): re-injection had no loop guard. An alert raised from
 // alerts at MaxChainDepth is not fed back again.

@@ -294,11 +294,21 @@ func TestEngine_OrderedSequence(t *testing.T) {
 			events:     []string{"a.a", "b.b", "b.b"},
 			wantAlerts: 1,
 		},
+		{
+			name:       "next sequence after firing is detected",
+			steps:      []SequenceStep{step("a", "a.a", true), step("b", "b.b", true)},
+			events:     []string{"a.a", "b.b", "a.a", "b.b"},
+			wantAlerts: 2,
+		},
 	}
 
 	for i, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			e := NewEngine(DefaultEngineConfig())
+			// No dedup suppression, so a sequence that is not consumed when it
+			// fires would fire again.
+			cfg := DefaultEngineConfig()
+			cfg.DedupWindow = time.Nanosecond
+			e := NewEngine(cfg)
 			mustAddRule(t, e, &Rule{
 				ID: fmt.Sprintf("seq-%d", i), Name: tt.name, Type: RuleTypeSequence,
 				Enabled: true, Severity: 5, Window: time.Minute,

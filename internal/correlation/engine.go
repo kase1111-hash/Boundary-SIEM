@@ -240,7 +240,9 @@ func (e *Engine) RemoveRule(ruleID string) {
 // SetRuleEnabled enables or disables a loaded rule and returns the updated
 // rule. Rules are shared with running workers and API readers, so the rule is
 // replaced by an updated copy instead of being modified in place; its
-// correlation state is kept.
+// correlation state is kept, except that enabling an absence rule starts a
+// new period for every group (no event reached the rule while it was
+// disabled, so that time must not count as an absence).
 func (e *Engine) SetRuleEnabled(ruleID string, enabled bool) (*Rule, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -258,6 +260,14 @@ func (e *Engine) SetRuleEnabled(ruleID string, enabled bool) (*Rule, bool) {
 	if state := e.states[ruleID]; state != nil {
 		state.mu.Lock()
 		state.rule = &updated
+		if enabled && updated.Type == RuleTypeAbsence {
+			now := time.Now()
+			for _, window := range state.windows {
+				window.StartTime = now
+				window.AbsenceSeen = false
+				window.clearEvents()
+			}
+		}
 		state.mu.Unlock()
 	}
 	return &updated, true
@@ -346,10 +356,11 @@ func (e *Engine) worker(ctx context.Context, id int) {
 }
 
 // isSynthetic reports whether event is an alert re-injected by
-// AlertReinjector.
+// AlertReinjector. An ingested event's own is_synthetic metadata does not
+// count (see metaReinjected).
 func isSynthetic(event *schema.Event) bool {
-	synthetic, _ := event.Metadata[metaIsSynthetic].(bool)
-	return synthetic
+	_, ok := reinjectedDepth(event)
+	return ok
 }
 
 func (e *Engine) processEvent(ctx context.Context, event *schema.Event) {
@@ -878,19 +889,20 @@ func (e *Engine) createAlert(rule *Rule, window *Window, groupKey string) *Alert
 			Timestamp: event.Timestamp,
 			Action:    event.Action,
 		})
-		if d := chainDepth(event.Metadata); d > depth {
+		if d, ok := reinjectedDepth(event); ok && d > depth {
 			depth = d
 		}
 	}
 
 	// Copy the rule metadata: alert consumers must not share (and mutate)
-	// the rule's map.
+	// the rule's map. chain_depth is the engine's to set.
 	var metadata map[string]any
 	if len(rule.Metadata) > 0 || depth > 0 {
 		metadata = make(map[string]any, len(rule.Metadata)+1)
 		for k, v := range rule.Metadata {
 			metadata[k] = v
 		}
+		delete(metadata, metaChainDepth)
 		if depth > 0 {
 			metadata[metaChainDepth] = depth
 		}

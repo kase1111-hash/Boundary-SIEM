@@ -472,13 +472,17 @@ func (c *Condition) Match(eventValue any) bool {
 	case "ne":
 		return !c.matchEquals(eventValue)
 	case "gt":
-		return c.matchCompare(eventValue) > 0
+		cmp, ok := c.matchCompare(eventValue)
+		return ok && cmp > 0
 	case "gte":
-		return c.matchCompare(eventValue) >= 0
+		cmp, ok := c.matchCompare(eventValue)
+		return ok && cmp >= 0
 	case "lt":
-		return c.matchCompare(eventValue) < 0
+		cmp, ok := c.matchCompare(eventValue)
+		return ok && cmp < 0
 	case "lte":
-		return c.matchCompare(eventValue) <= 0
+		cmp, ok := c.matchCompare(eventValue)
+		return ok && cmp <= 0
 	case "contains":
 		return c.matchContains(eventValue)
 	case "prefix":
@@ -513,22 +517,31 @@ func (c *Condition) matchEquals(eventValue any) bool {
 	return fmt.Sprintf("%v", eventValue) == fmt.Sprintf("%v", c.Value)
 }
 
-func (c *Condition) matchCompare(eventValue any) int {
+// matchCompare compares eventValue with the condition value: numerically when
+// both are numbers, as strings when neither is. A missing field (nil) or a
+// number compared with a non-number is not comparable (ok is false), so it
+// satisfies none of gt/gte/lt/lte; otherwise "<nil>" or "abc" would compare
+// above every number and an event lacking the field would pass e.g.
+// "value_eth gte 1000".
+func (c *Condition) matchCompare(eventValue any) (cmp int, ok bool) {
+	if eventValue == nil || c.Value == nil {
+		return 0, false
+	}
 	numVal, ok1 := toFloat64(eventValue)
 	condVal, ok2 := toFloat64(c.Value)
-	if !ok1 || !ok2 {
-		// Fall back to string comparison
-		str1 := fmt.Sprintf("%v", eventValue)
-		str2 := fmt.Sprintf("%v", c.Value)
-		return strings.Compare(str1, str2)
+	switch {
+	case ok1 && ok2:
+		switch {
+		case numVal < condVal:
+			return -1, true
+		case numVal > condVal:
+			return 1, true
+		}
+		return 0, true
+	case !ok1 && !ok2:
+		return strings.Compare(fmt.Sprintf("%v", eventValue), fmt.Sprintf("%v", c.Value)), true
 	}
-	if numVal < condVal {
-		return -1
-	}
-	if numVal > condVal {
-		return 1
-	}
-	return 0
+	return 0, false
 }
 
 func (c *Condition) matchContains(eventValue any) bool {
@@ -749,6 +762,19 @@ func (r *Rule) ReferencedRuleIDs() []string {
 	return ids
 }
 
+// isAlertField reports whether field names metadata that only the alert.fired
+// events built by AlertReinjector carry (with or without the "metadata."
+// prefix, as getEventField accepts both).
+func isAlertField(field string) bool {
+	switch key := strings.TrimPrefix(field, "metadata."); key {
+	case "alert_id", "rule_id", "rule_name", "group_key", "event_count",
+		metaIsSynthetic, metaChainDepth, "mitre_tactic", "mitre_technique":
+		return true
+	default:
+		return strings.HasPrefix(key, "tag_")
+	}
+}
+
 // consumesAlerts reports whether the rule is written to evaluate the
 // synthetic alert.fired events that AlertReinjector feeds back into the
 // engine: it depends on other rules or one of its conditions tests the action
@@ -761,7 +787,7 @@ func (r *Rule) consumesAlerts() bool {
 	r.walkConditions(func(field, _ string, value any, values []string) {
 		switch {
 		case consumes:
-		case ruleIDFields[field], field == "metadata.alert_id", field == "metadata.is_synthetic":
+		case isAlertField(field):
 			consumes = true
 		case field == "action":
 			candidates := append([]string{fmt.Sprintf("%v", value)}, values...)

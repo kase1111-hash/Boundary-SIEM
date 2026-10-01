@@ -10,10 +10,29 @@ import (
 )
 
 // Metadata keys of the synthetic alert.fired events built by AlertReinjector.
+//
+// is_synthetic and chain_depth are for rule authors to test. The engine never
+// trusts them on an event: ingested events carry arbitrary metadata, so an
+// event could claim to be synthetic (and skip every rule that does not
+// consume alerts) or claim the maximum chain depth (and keep the alerts it
+// causes from being chained). The engine relies on metaReinjected instead.
 const (
 	metaIsSynthetic = "is_synthetic"
 	metaChainDepth  = "chain_depth"
+	metaReinjected  = "_reinjected"
 )
+
+// reinjected is the metaReinjected value of an event built by
+// AlertReinjector. Its type is unexported, so no ingested event (decoded from
+// JSON, CEF, syslog, ...) can carry one.
+type reinjected struct{ depth int }
+
+// reinjectedDepth reports whether event was built by AlertReinjector and, if
+// so, the chain depth it carries.
+func reinjectedDepth(event *schema.Event) (int, bool) {
+	r, ok := event.Metadata[metaReinjected].(reinjected)
+	return r.depth, ok
+}
 
 // MaxChainDepth bounds rule chaining: an alert is re-injected only while the
 // chain that produced it is shallower than this. An alert raised from
@@ -22,17 +41,19 @@ const (
 // can still be built on top of other chains without alerts looping forever.
 const MaxChainDepth = 3
 
-// chainDepth returns the chain depth recorded in event or alert metadata.
+// chainDepth returns the chain depth recorded in alert metadata (never
+// negative).
 func chainDepth(meta map[string]any) int {
+	var depth int
 	switch d := meta[metaChainDepth].(type) {
 	case int:
-		return d
+		depth = d
 	case int64:
-		return int(d)
+		depth = int(d)
 	case float64:
-		return int(d)
+		depth = int(d)
 	}
-	return 0
+	return max(depth, 0)
 }
 
 // AlertReinjector converts fired alerts into synthetic events and feeds them
@@ -81,6 +102,7 @@ func (r *AlertReinjector) Reinject(alert *Alert) {
 			"event_count":   len(alert.Events),
 			metaIsSynthetic: true,
 			metaChainDepth:  depth + 1,
+			metaReinjected:  reinjected{depth: depth + 1},
 		},
 		SchemaVersion: schema.SchemaVersionCurrent,
 		ReceivedAt:    time.Now(),

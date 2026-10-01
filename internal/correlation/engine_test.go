@@ -54,6 +54,45 @@ func TestCondition_Match(t *testing.T) {
 			value:     3,
 			expected:  true,
 		},
+		// A missing field, or a non-number compared with a number, satisfies
+		// no comparison (it used to compare as the string "<nil>" / "abc",
+		// above every number).
+		{
+			name:      "gte missing field",
+			condition: Condition{Field: "metadata.value_eth", Operator: "gte", Value: float64(1000)},
+			value:     nil,
+			expected:  false,
+		},
+		{
+			name:      "gt missing field",
+			condition: Condition{Field: "metadata.value_eth", Operator: "gt", Value: float64(1000)},
+			value:     nil,
+			expected:  false,
+		},
+		{
+			name:      "lte missing field",
+			condition: Condition{Field: "metadata.health", Operator: "lte", Value: float64(1)},
+			value:     nil,
+			expected:  false,
+		},
+		{
+			name:      "gte non-numeric against number",
+			condition: Condition{Field: "metadata.value_eth", Operator: "gte", Value: float64(1000)},
+			value:     "unknown",
+			expected:  false,
+		},
+		{
+			name:      "gte numeric string",
+			condition: Condition{Field: "metadata.value_eth", Operator: "gte", Value: float64(1000)},
+			value:     "1500",
+			expected:  true,
+		},
+		{
+			name:      "gt strings compare lexically",
+			condition: Condition{Field: "metadata.version", Operator: "gt", Value: "v1"},
+			value:     "v2",
+			expected:  true,
+		},
 		{
 			name:      "contains match",
 			condition: Condition{Field: "action", Operator: "contains", Value: "auth"},

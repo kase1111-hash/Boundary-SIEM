@@ -261,6 +261,12 @@ func decodeRuleBody(body []byte, id string) (*Rule, error) {
 	if id != "" {
 		rule.ID = id
 	}
+	// Provenance is recorded by the server. The JSON wire format carries
+	// these fields (GET returns them and the dashboard sends them back), but
+	// a client must not be able to set them.
+	rule.CreatedBy, rule.UpdatedBy = "", ""
+	rule.CreatedAt, rule.UpdatedAt = time.Time{}, time.Time{}
+	rule.ContentHash = ""
 	if err := rule.Validate(); err != nil {
 		return nil, &ruleBodyError{code: "validation_error", err: err}
 	}
@@ -618,10 +624,20 @@ func (h *RuleHandler) writeRuleFileLocked(file string) {
 // JSON for .json files, otherwise YAML (one document per rule).
 func encodeRuleFile(name string, rules []*Rule) ([]byte, error) {
 	if filepath.Ext(name) == ".json" {
-		if len(rules) == 1 {
-			return json.MarshalIndent(rules[0], "", "  ")
+		// ContentHash is the hash of what the rule was loaded from. Written
+		// into the file it could never match the file's own hash, and
+		// LoadCustomRules would report every rewritten file as tampered
+		// with. (YAML files never carry it.)
+		stored := make([]*Rule, len(rules))
+		for i, rule := range rules {
+			c := *rule
+			c.ContentHash = ""
+			stored[i] = &c
 		}
-		return json.MarshalIndent(rules, "", "  ")
+		if len(stored) == 1 {
+			return json.MarshalIndent(stored[0], "", "  ")
+		}
+		return json.MarshalIndent(stored, "", "  ")
 	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
