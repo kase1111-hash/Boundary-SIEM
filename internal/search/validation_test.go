@@ -34,6 +34,9 @@ func TestHandlersRejectInvalidRequestsWith400(t *testing.T) {
 		{name: "bad end", method: http.MethodGet, path: "/v1/search?q=*&end=yesterday"},
 		{name: "bad start_time", method: http.MethodPost, path: "/v1/search", body: `{"query":"*","start_time":"1h"}`},
 		{name: "bad stats start", method: http.MethodGet, path: "/v1/stats?start=1h"},
+		{name: "inverted range", method: http.MethodGet, path: "/v1/search?q=*&start=2030-01-02&end=2030-01-01"},
+		{name: "inverted start_time/end_time", method: http.MethodPost, path: "/v1/search", body: `{"query":"*","start_time":"now-1h","end_time":"now-2h"}`},
+		{name: "inverted stats range", method: http.MethodGet, path: "/v1/stats?start=2030-01-02&end=2030-01-01"},
 	}
 	for _, hr := range tests {
 		t.Run(hr.name, func(t *testing.T) {
@@ -207,5 +210,48 @@ func TestParseTimeStringRejectsUnknownFormats(t *testing.T) {
 	}
 	if _, err := parseTimeString("now-7d"); err != nil {
 		t.Errorf("parseTimeString(now-7d) error = %v", err)
+	}
+}
+
+// E2E round 3: /v1/aggregations has no time range, and start_time/end_time
+// were silently ignored, so a client that meant to filter by time got
+// all-time numbers. Unknown request keys are refused before any SQL is sent.
+func TestAggregationRejectsUnknownFields(t *testing.T) {
+	exec, rec := newRecordingExecutor(t)
+	hr := handlerRequest{method: http.MethodPost, path: "/v1/aggregations",
+		body: `{"field":"action","type":"terms","start_time":"now-1h"}`}
+	w := serve(t, NewHandler(exec), hr, nil)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "start_time") {
+		t.Errorf("error does not name the unknown field: %s", w.Body.String())
+	}
+	if stmts := rec.recorded(); len(stmts) != 0 {
+		t.Errorf("invalid request reached the database: %v", stmts)
+	}
+}
+
+// E2E round 3: empty results were encoded as null instead of [].
+func TestEmptyResultsAreJSONArrays(t *testing.T) {
+	tests := []struct {
+		hr   handlerRequest
+		want string
+	}{
+		{handlerRequest{method: http.MethodGet, path: "/v1/search?q=action:none"}, `"results":[]`},
+		{handlerRequest{method: http.MethodPost, path: "/v1/aggregations", body: `{"field":"action","type":"terms"}`}, `"buckets":[]`},
+		{handlerRequest{method: http.MethodGet, path: "/v1/fields/action/values"}, `[]`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.hr.path, func(t *testing.T) {
+			exec, _ := newRecordingExecutor(t)
+			w := serve(t, NewHandler(exec), tt.hr, nil)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body %s", w.Code, w.Body.String())
+			}
+			if body := w.Body.String(); !strings.Contains(body, tt.want) || strings.Contains(body, "null") {
+				t.Errorf("body = %s, want %s and no null", body, tt.want)
+			}
+		})
 	}
 }

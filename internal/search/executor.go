@@ -233,7 +233,7 @@ func (e *Executor) Search(ctx context.Context, query *Query) (*SearchResponse, e
 	}
 	defer rows.Close()
 
-	var results []*SearchResult
+	results := []*SearchResult{}
 	for rows.Next() {
 		r, err := scanEvent(rows)
 		if err != nil {
@@ -335,7 +335,7 @@ func (e *Executor) Aggregate(ctx context.Context, query *Query, field string, ag
 	}
 	defer rows.Close()
 
-	result := &AggregationResult{}
+	result := &AggregationResult{Buckets: []AggregationBucket{}}
 
 	if singleValue {
 		// Single value aggregation
@@ -958,7 +958,7 @@ func (e *Executor) TimeHistogram(ctx context.Context, query *Query, interval str
 	}
 	defer rows.Close()
 
-	result := &AggregationResult{}
+	result := &AggregationResult{Buckets: []AggregationBucket{}}
 	for rows.Next() {
 		var bucket time.Time
 		var count int64
@@ -1017,7 +1017,7 @@ func (e *Executor) TopN(ctx context.Context, query *Query, field string, n int) 
 	}
 	defer rows.Close()
 
-	result := &AggregationResult{}
+	result := &AggregationResult{Buckets: []AggregationBucket{}}
 	for rows.Next() {
 		var key interface{}
 		var count int64
