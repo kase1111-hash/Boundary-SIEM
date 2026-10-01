@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -624,5 +625,194 @@ func TestAuditLogger_RotationWithImmutableLogs(t *testing.T) {
 	}
 	if err := al2.VerifyIntegrity(context.Background()); err != nil {
 		t.Errorf("VerifyIntegrity() after retention error = %v", err)
+	}
+}
+
+// TestAuditLogger_VerifyDuringWrite checks that integrity verification and
+// queries ignore the part of the active log file that a write still in
+// progress has produced so far. A concurrent reader can see such a partial
+// line; it is not tampering and must not raise a tamper alarm.
+func TestAuditLogger_VerifyDuringWrite(t *testing.T) {
+	config := testConfig(t)
+	al := reopenLogger(t, config)
+	ctx := context.Background()
+	for i := 0; i < 3; i++ {
+		mustLog(t, al, EventSystemStart, SeverityInfo, "Event")
+	}
+
+	// Simulate a write that has reached the file only partly: the bytes are
+	// on disk, but the logger has not finished (and counted) the write.
+	al.mu.RLock()
+	active := al.currentPath
+	al.mu.RUnlock()
+	f, err := os.OpenFile(active, os.O_APPEND|os.O_WRONLY, 0600)
+	if err != nil {
+		t.Fatalf("OpenFile() error = %v", err)
+	}
+	if _, err := f.WriteString(`{"id":"in-flight","sequence":4,"mess`); err != nil {
+		t.Fatalf("WriteString() error = %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	if err := al.VerifyIntegrity(ctx); err != nil {
+		t.Errorf("VerifyIntegrity() during a write error = %v, want nil", err)
+	}
+	if got, want := querySequences(t, al), wantSequences(3); fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("Query() sequences = %v, want %v", got, want)
+	}
+}
+
+// TestAuditLogger_VerifyRacingRetention removes log files after verification
+// listed them, as retention running during a verification does. Removing the
+// oldest files is not tampering; a file missing from the middle of the chain
+// still is.
+func TestAuditLogger_VerifyRacingRetention(t *testing.T) {
+	chain := []chainFile{
+		{name: "audit-2020-01-14.log", entries: 2, sealed: true},
+		{name: "audit-2020-01-15.log", entries: 2, sealed: true},
+		{name: "audit-2020-01-15-1579082400.log", entries: 2, sealed: true},
+		{name: "audit-2020-01-16.log", entries: 2},
+	}
+	tests := []struct {
+		name    string
+		remove  []int // indexes into chain of files removed after listing
+		wantErr error // nil: verification passes
+	}{
+		{name: "oldest file removed by retention", remove: []int{0}},
+		{name: "oldest files removed by retention", remove: []int{0, 1}},
+		{name: "file removed from the middle of the chain", remove: []int{1}, wantErr: ErrChainBroken},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := testConfig(t)
+			writeChain(t, config.LogPath, chain)
+			al := &AuditLogger{config: config, hmacKey: testHMACKey, logger: slog.Default()}
+
+			// Remove the files once, right after the first listing.
+			removed := false
+			al.verifyListHook = func() {
+				if removed {
+					return
+				}
+				removed = true
+				for _, i := range tt.remove {
+					path := filepath.Join(config.LogPath, chain[i].name)
+					for _, p := range []string{path, path + ".sha256"} {
+						if err := os.Remove(p); err != nil {
+							t.Errorf("Remove() error = %v", err)
+						}
+					}
+				}
+			}
+
+			err := al.VerifyIntegrity(context.Background())
+			switch {
+			case tt.wantErr == nil && err != nil:
+				t.Errorf("VerifyIntegrity() error = %v, want nil", err)
+			case tt.wantErr != nil && !errors.Is(err, tt.wantErr):
+				t.Errorf("VerifyIntegrity() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+// TestAuditLogger_RunVerification checks what the periodic integrity check
+// reports as tampering: a failed check is reported, but a check that Close
+// cancelled while it was running is not.
+func TestAuditLogger_RunVerification(t *testing.T) {
+	tests := []struct {
+		name       string
+		tamper     bool // corrupt a signature before the check
+		closing    bool // cancel the logger's context, as Close does
+		wantReport bool
+	}{
+		{name: "intact logs", wantReport: false},
+		{name: "tampered logs", tamper: true, wantReport: true},
+		{name: "check cancelled by Close", closing: true, wantReport: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			config := testConfig(t)
+			var reported []error
+			config.OnTamperDetected = func(_ *AuditEntry, err error) { reported = append(reported, err) }
+			config.KeyProvider = func() ([]byte, error) { return testHMACKey, nil }
+			writeChain(t, config.LogPath, []chainFile{
+				{name: "audit-2020-01-15.log", entries: 3, sealed: true},
+				{name: "audit-2020-01-16.log", entries: 3},
+			})
+			if tt.tamper {
+				path := filepath.Join(config.LogPath, "audit-2020-01-16.log")
+				data, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatalf("ReadFile() error = %v", err)
+				}
+				data = bytes.Replace(data, []byte(`"message":"crafted"`), []byte(`"message":"forged!"`), 1)
+				if err := os.WriteFile(path, data, 0600); err != nil {
+					t.Fatalf("WriteFile() error = %v", err)
+				}
+			}
+
+			al := reopenLogger(t, config)
+			if tt.closing {
+				al.cancel()
+			}
+			al.runVerification()
+
+			if got := len(reported) > 0; got != tt.wantReport {
+				t.Errorf("OnTamperDetected called = %v (errors %v), want %v", got, reported, tt.wantReport)
+			}
+			if got := al.Metrics().TamperDetections > 0; got != tt.wantReport {
+				t.Errorf("TamperDetections > 0 = %v, want %v", got, tt.wantReport)
+			}
+		})
+	}
+}
+
+// TestAuditLogger_LogRacingClose runs the write path of a Log call that
+// passed its closed check just before Close ran. The entry must be rejected:
+// Close has already closed and sealed the file, so writing would fail, or
+// (when the file is due for rotation) open a new file after Close that is
+// never sealed or closed.
+func TestAuditLogger_LogRacingClose(t *testing.T) {
+	config := testConfig(t)
+	config.MaxFileSize = 1 // every write rotates first
+	config.MaxFiles = 0
+	al, err := NewAuditLogger(config, nil)
+	if err != nil {
+		t.Fatalf("NewAuditLogger() error = %v", err)
+	}
+	mustLog(t, al, EventSystemStart, SeverityInfo, "before close")
+	mustFlushAndClose(t, al)
+
+	before, err := al.listLogFiles()
+	if err != nil {
+		t.Fatalf("listLogFiles() error = %v", err)
+	}
+	metrics := al.Metrics()
+
+	// Log checks closed before it takes the lock; call the locked part
+	// directly, as a Log that passed the check before Close would.
+	if err := al.logEntry(EventSystemStart, SeverityInfo, "after close", nil); !errors.Is(err, ErrLoggerClosed) {
+		t.Errorf("logEntry() after Close error = %v, want ErrLoggerClosed", err)
+	}
+	al.cleanupWG.Wait()
+
+	after, err := al.listLogFiles()
+	if err != nil {
+		t.Fatalf("listLogFiles() error = %v", err)
+	}
+	if fmt.Sprint(after) != fmt.Sprint(before) {
+		t.Errorf("log files after a write following Close = %v, want unchanged %v", after, before)
+	}
+	if got := al.Metrics(); got.Written != metrics.Written || got.CurrentSequence != metrics.CurrentSequence {
+		t.Errorf("Metrics() after rejected write = %+v, want Written %d and sequence %d unchanged",
+			got, metrics.Written, metrics.CurrentSequence)
+	}
+	if err := al.VerifyIntegrity(context.Background()); err != nil {
+		t.Errorf("VerifyIntegrity() error = %v", err)
 	}
 }

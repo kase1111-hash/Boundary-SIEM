@@ -285,6 +285,11 @@ type AuditLogger struct {
 	cleanupWG sync.WaitGroup
 	cleanupMu sync.Mutex
 
+	// verifyListHook, when non-nil, runs in VerifyIntegrity after the log
+	// files are listed. It is nil outside tests, which use it to remove
+	// files the way a concurrent retention cleanup would.
+	verifyListHook func()
+
 	// Immutable log support
 	immutableMgr *ImmutableManager
 
@@ -671,6 +676,13 @@ func (al *AuditLogger) logEntry(eventType EventType, severity Severity, message 
 	al.mu.Lock()
 	defer al.mu.Unlock()
 
+	// Log's closed check runs before the lock is taken, so Close may have
+	// closed and sealed the file in the meantime. Writing now would fail, or
+	// rotate into a new file that nothing ever seals or closes.
+	if al.closed.Load() {
+		return ErrLoggerClosed
+	}
+
 	al.sequence++
 
 	entry := &AuditEntry{
@@ -970,38 +982,83 @@ func (al *AuditLogger) verifyWorker() {
 		case <-al.ctx.Done():
 			return
 		case <-ticker.C:
-			if err := al.VerifyIntegrity(al.ctx); err != nil {
-				al.logger.Error("audit log integrity check failed", "error", err)
-				atomic.AddUint64(&al.tampering, 1)
-
-				// Log the tamper detection as an audit event
-				if logErr := al.Log(al.ctx, EventAuditTamper, SeverityAlert,
-					"Audit log tampering detected", map[string]interface{}{
-						"error": err.Error(),
-					}); logErr != nil {
-					al.logger.Error("failed to record audit tamper event", "error", logErr)
-				}
-
-				if al.config.OnTamperDetected != nil {
-					al.config.OnTamperDetected(nil, err)
-				}
-			}
+			al.runVerification()
 		}
 	}
 }
 
-// VerifyIntegrity verifies the integrity of all log files.
-func (al *AuditLogger) VerifyIntegrity(ctx context.Context) error {
-	files, err := al.listLogFiles()
-	if err != nil {
-		return err
+// runVerification runs one periodic integrity check and reports a failure as
+// tampering. A check cut short because Close cancelled it is not a failure.
+func (al *AuditLogger) runVerification() {
+	err := al.VerifyIntegrity(al.ctx)
+	if err == nil {
+		return
+	}
+	if ctxErr := al.ctx.Err(); ctxErr != nil && errors.Is(err, ctxErr) {
+		return
 	}
 
+	al.logger.Error("audit log integrity check failed", "error", err)
+	atomic.AddUint64(&al.tampering, 1)
+
+	// Log the tamper detection as an audit event
+	if logErr := al.Log(al.ctx, EventAuditTamper, SeverityAlert,
+		"Audit log tampering detected", map[string]interface{}{
+			"error": err.Error(),
+		}); logErr != nil {
+		al.logger.Error("failed to record audit tamper event", "error", logErr)
+	}
+
+	if al.config.OnTamperDetected != nil {
+		al.config.OnTamperDetected(nil, err)
+	}
+}
+
+// errLogFileVanished reports a listed log file that no longer exists, as
+// when retention removes the oldest files while they are being verified.
+var errLogFileVanished = errors.New("audit log file removed during verification")
+
+// verifyAttempts bounds how often VerifyIntegrity starts over because a
+// listed file was removed meanwhile.
+const verifyAttempts = 3
+
+// VerifyIntegrity verifies the integrity of all log files.
+func (al *AuditLogger) VerifyIntegrity(ctx context.Context) error {
+	// Retention can remove the oldest files after they were listed. Start
+	// over on a fresh listing then: a pass over the remaining files accepts a
+	// chain whose start was removed, but still reports a file missing from
+	// the middle as a broken chain.
+	var err error
+	for attempt := 0; attempt < verifyAttempts; attempt++ {
+		var files []string
+		files, err = al.listLogFiles()
+		if err != nil {
+			return err
+		}
+		if al.verifyListHook != nil {
+			al.verifyListHook()
+		}
+		err = al.verifyLogFiles(ctx, files)
+		if !errors.Is(err, errLogFileVanished) {
+			return err
+		}
+	}
+	return err
+}
+
+// verifyLogFiles verifies the hash chain, signatures and checksums of files,
+// which must be a listing of the log directory in rotation order. It returns
+// an error wrapping errLogFileVanished if one of them no longer exists.
+func (al *AuditLogger) verifyLogFiles(ctx context.Context, files []string) error {
 	genesisHash := computeGenesisHash()
+	active := al.activeExtent()
 
 	var lastEntry *AuditEntry
 	for _, file := range files {
-		entries, err := al.readLogFile(file)
+		entries, err := al.readLogFileUpTo(file, active.readLimit(file))
+		if errors.Is(err, fs.ErrNotExist) {
+			return fmt.Errorf("%w: %s", errLogFileVanished, file)
+		}
 		if err != nil {
 			return fmt.Errorf("failed to read %s: %w", file, err)
 		}
@@ -1043,6 +1100,9 @@ func (al *AuditLogger) VerifyIntegrity(ctx context.Context) error {
 		checksumPath := file + ".sha256"
 		if _, err := os.Stat(checksumPath); err == nil {
 			if err := al.verifyFileChecksum(file, checksumPath); err != nil {
+				if errors.Is(err, fs.ErrNotExist) {
+					return fmt.Errorf("%w: %s", errLogFileVanished, file)
+				}
 				return err
 			}
 		}
@@ -1057,18 +1117,56 @@ func (al *AuditLogger) VerifyIntegrity(ctx context.Context) error {
 	return nil
 }
 
+// logExtent is the file entries are being written to and its size after
+// the last completed write.
+type logExtent struct {
+	path string
+	size int64
+}
+
+// activeExtent returns the current logExtent. Readers take it after listing
+// the log files: a file that becomes active later is then not in their list,
+// and the file it names only grows past size.
+func (al *AuditLogger) activeExtent() logExtent {
+	al.mu.RLock()
+	defer al.mu.RUnlock()
+	return logExtent{path: al.currentPath, size: al.currentSize}
+}
+
+// readLimit returns how many bytes of a listed log file hold completed
+// entries, or -1 for all of them. Only the active file is limited: a reader
+// can see part of a write still in progress past its last completed entry,
+// and that is not corruption.
+func (e logExtent) readLimit(file string) int64 {
+	if e.path != "" && file == e.path {
+		return e.size
+	}
+	return -1
+}
+
 // readLogFile reads all entries from a log file. If the file holds malformed
 // data (such as a line torn by a crash mid-write), it returns the entries
 // before it together with an error.
 func (al *AuditLogger) readLogFile(path string) ([]*AuditEntry, error) {
+	return al.readLogFileUpTo(path, -1)
+}
+
+// readLogFileUpTo is readLogFile limited to the first limit bytes of the
+// file. A negative limit reads the whole file.
+func (al *AuditLogger) readLogFileUpTo(path string, limit int64) ([]*AuditEntry, error) {
 	f, err := os.Open(path) // #nosec G304 -- path is an audit-*.log match globbed inside the operator-configured LogPath, not external input
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
 
+	var r io.Reader = f
+	if limit >= 0 {
+		r = io.LimitReader(f, limit)
+	}
+
 	var entries []*AuditEntry
-	decoder := json.NewDecoder(f)
+	decoder := json.NewDecoder(r)
 
 	for {
 		var entry AuditEntry
@@ -1231,9 +1329,11 @@ func (al *AuditLogger) Query(ctx context.Context, opts QueryOptions) ([]*AuditEn
 		return nil, err
 	}
 
+	active := al.activeExtent()
+
 	var results []*AuditEntry
 	for _, file := range files {
-		entries, err := al.readLogFile(file)
+		entries, err := al.readLogFileUpTo(file, active.readLimit(file))
 		if err != nil {
 			// Still search the entries read before the unreadable part.
 			al.logger.Warn("failed to read audit log file", "path", file, "error", err)

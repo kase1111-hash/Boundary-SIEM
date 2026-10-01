@@ -600,7 +600,7 @@ func TestVerifier_GetInitialState(t *testing.T) {
 
 	state := v.GetInitialState()
 	if state == nil {
-		t.Error("GetInitialState should return non-nil")
+		t.Fatal("GetInitialState should return non-nil")
 	}
 	if state.CapturedAt.IsZero() {
 		t.Error("Initial state should have capture time")
