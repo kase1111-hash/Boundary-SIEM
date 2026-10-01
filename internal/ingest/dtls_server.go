@@ -17,6 +17,7 @@ import (
 	"boundary-siem/internal/ingest/cef"
 	"boundary-siem/internal/queue"
 	"boundary-siem/internal/schema"
+	"boundary-siem/internal/storage"
 
 	"github.com/pion/dtls/v3"
 )
@@ -113,6 +114,7 @@ type DTLSServer struct {
 	queue      *queue.RingBuffer
 	logger     *slog.Logger
 	rejects    *cef.RejectLogger
+	quarantine *Quarantiner
 
 	// For plain UDP fallback (insecure)
 	udpConn *net.UDPConn
@@ -200,6 +202,14 @@ func NewDTLSServer(
 		done:       make(chan struct{}),
 		conns:      make(map[net.Conn]struct{}),
 	}, nil
+}
+
+// WithQuarantine stores messages that fail parsing, normalization or
+// validation in the quarantine table through q (best effort; it never
+// blocks). Call it before Start.
+func (s *DTLSServer) WithQuarantine(q *Quarantiner) *DTLSServer {
+	s.quarantine = q
+	return s
 }
 
 // Start starts the DTLS server. The server runs until Stop is called or ctx
@@ -602,6 +612,7 @@ func (s *DTLSServer) processMessage(ctx context.Context, msg dtlsMessage) {
 		atomic.AddUint64(&s.errors, 1)
 		atomic.AddUint64(&s.parseErrors, 1)
 		s.rejects.Reject("parse", err, msg.sourceIP, raw)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeParseFailed, raw, msg.sourceIP, err)
 		return
 	}
 	atomic.AddUint64(&s.parsed, 1)
@@ -612,6 +623,7 @@ func (s *DTLSServer) processMessage(ctx context.Context, msg dtlsMessage) {
 		atomic.AddUint64(&s.errors, 1)
 		atomic.AddUint64(&s.validationErrors, 1)
 		s.rejects.Reject("normalize", err, msg.sourceIP, raw)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeValidationFailed, raw, msg.sourceIP, err)
 		return
 	}
 	atomic.AddUint64(&s.normalized, 1)
@@ -621,6 +633,7 @@ func (s *DTLSServer) processMessage(ctx context.Context, msg dtlsMessage) {
 		atomic.AddUint64(&s.errors, 1)
 		atomic.AddUint64(&s.validationErrors, 1)
 		s.rejects.Reject("validate", err, msg.sourceIP, raw)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeValidationFailed, raw, msg.sourceIP, err)
 		return
 	}
 

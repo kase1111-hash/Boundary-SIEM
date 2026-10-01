@@ -44,6 +44,9 @@ type Options struct {
 	Store EventStore
 	// Listener is the HTTP listener; by default :server.http_port.
 	Listener net.Listener
+	// Quarantine replaces the ClickHouse events_quarantine writer for
+	// rejected events when Store is set.
+	Quarantine ingest.QuarantineStore
 }
 
 // App is the assembled ingest service. Every accepted event flows
@@ -114,7 +117,7 @@ func New(cfg *config.Config, opts Options) (*App, error) {
 	})
 	a.queue = queue.NewRingBuffer(cfg.Queue.Size)
 
-	if err := a.initStorage(opts.Store); err != nil {
+	if err := a.initStorage(opts.Store, opts.Quarantine); err != nil {
 		a.closeStorage()
 		return nil, err
 	}
@@ -154,13 +157,20 @@ func nonEmpty(keys []string) []string {
 	return out
 }
 
+// quarantineBuffer is the number of rejected events waiting to be written
+// to events_quarantine; beyond it they are dropped (and counted).
+const quarantineBuffer = 1000
+
 // initStorage connects to ClickHouse (creating the database if needed),
 // runs the migrations and builds the batch writer and quarantine writer.
-func (a *App) initStorage(store EventStore) error {
+func (a *App) initStorage(store EventStore, quarantine ingest.QuarantineStore) error {
 	cfg := a.cfg
 	if store != nil {
 		a.store = store
 		a.storage = newStorageHealth(nil)
+		if quarantine != nil {
+			a.quarantine = ingest.NewQuarantiner(quarantine, quarantineBuffer)
+		}
 		return nil
 	}
 	if !cfg.Storage.Enabled {
@@ -215,7 +225,7 @@ func (a *App) initStorage(store EventStore) error {
 		MaxPending:    cfg.Storage.BatchWriter.MaxPending,
 		MaxRequeues:   cfg.Storage.BatchWriter.MaxRequeues,
 	}, storage.WithDeadLetter(quarantineWriter.DeadLetter))
-	a.quarantine = ingest.NewQuarantiner(quarantineWriter, 1000)
+	a.quarantine = ingest.NewQuarantiner(quarantineWriter, quarantineBuffer)
 	a.storage = newStorageHealth(client.Ping)
 
 	a.logger.Info("storage initialized")
@@ -385,6 +395,19 @@ func (a *App) initTransports() error {
 			return fmt.Errorf("CEF DTLS server: %w", err)
 		}
 		a.dtls = srv
+	}
+
+	// Rejected CEF messages go to events_quarantine, like rejected JSON.
+	if a.quarantine != nil {
+		if a.udp != nil {
+			a.udp.WithQuarantine(a.quarantine)
+		}
+		if a.tcp != nil {
+			a.tcp.WithQuarantine(a.quarantine)
+		}
+		if a.dtls != nil {
+			a.dtls.WithQuarantine(a.quarantine)
+		}
 	}
 
 	if cfg.Ingest.EVM.Enabled {

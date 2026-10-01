@@ -94,9 +94,9 @@ func (s *storageHealth) check(ctx context.Context, flushFailuresDelta uint64) {
 	s.status, s.message, s.checkedAt = status, message, time.Now()
 	s.mu.Unlock()
 
-	switch {
-	case status == previous:
-	case status == ingest.StatusUp:
+	switch status {
+	case previous:
+	case ingest.StatusUp:
 		slog.Info("storage health recovered", "previous", previous)
 	default:
 		slog.Warn("storage health changed", "status", status, "message", message, "error", err)

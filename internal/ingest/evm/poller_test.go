@@ -1,9 +1,14 @@
 package evm
 
 import (
+	"context"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
+
+	"boundary-siem/internal/queue"
 )
 
 func TestBlockTimestamp(t *testing.T) {
@@ -34,4 +39,55 @@ func TestBlockTimestamp(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestPoller_StopAbortsHungRPC is the regression test for shutdown waiting
+// on the EVM poller: an RPC endpoint that never answers held Stop for the
+// HTTP client timeout (30s per call), which delayed the queue drain past the
+// orchestrator's kill deadline.
+func TestPoller_StopAbortsHungRPC(t *testing.T) {
+	requested := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case requested <- struct{}{}:
+		default:
+		}
+		select {
+		case <-r.Context().Done():
+		case <-release:
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+
+	p := NewPoller(Config{
+		Enabled:      true,
+		PollInterval: 10 * time.Millisecond,
+		StartBlock:   "latest", // resolving it calls the hung endpoint
+		Chains:       []ChainConfig{{Name: "test", ChainID: 1, RPCURL: srv.URL, Enabled: true}},
+	}, queue.NewRingBuffer(10))
+	p.Start(context.Background())
+
+	select {
+	case <-requested:
+	case <-time.After(5 * time.Second):
+		t.Fatal("poller never called the RPC endpoint")
+	}
+
+	stopped := make(chan struct{})
+	start := time.Now()
+	go func() {
+		p.Stop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Stop did not return while an RPC call hung")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Errorf("Stop took %v with a hung RPC endpoint", elapsed)
+	}
+	p.Stop() // idempotent
 }

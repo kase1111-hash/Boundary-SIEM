@@ -16,6 +16,7 @@ import (
 	"boundary-siem/internal/ingest/cef"
 	"boundary-siem/internal/queue"
 	"boundary-siem/internal/schema"
+	"boundary-siem/internal/storage"
 )
 
 // TCPServerConfig holds configuration for the TCP server.
@@ -74,6 +75,7 @@ type TCPServer struct {
 	validator  *schema.Validator
 	queue      *queue.RingBuffer
 	rejects    *cef.RejectLogger
+	quarantine *Quarantiner
 
 	// tcpListener is the TCP listener under listener (which wraps it for
 	// TLS); the accept loop sets its deadline.
@@ -127,6 +129,14 @@ func NewTCPServer(
 		done:       make(chan struct{}),
 		conns:      make(map[net.Conn]struct{}),
 	}
+}
+
+// WithQuarantine stores messages that fail parsing, normalization or
+// validation in the quarantine table through q (best effort; it never
+// blocks). Call it before Start.
+func (s *TCPServer) WithQuarantine(q *Quarantiner) *TCPServer {
+	s.quarantine = q
+	return s
 }
 
 // Start starts the TCP server.
@@ -360,6 +370,7 @@ func (s *TCPServer) processMessage(ctx context.Context, message string, sourceIP
 		atomic.AddUint64(&s.errors, 1)
 		atomic.AddUint64(&s.parseErrors, 1)
 		s.rejects.Reject("parse", err, sourceIP, message)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeParseFailed, message, sourceIP, err)
 		return
 	}
 	atomic.AddUint64(&s.parsed, 1)
@@ -370,6 +381,7 @@ func (s *TCPServer) processMessage(ctx context.Context, message string, sourceIP
 		atomic.AddUint64(&s.errors, 1)
 		atomic.AddUint64(&s.validationErrors, 1)
 		s.rejects.Reject("normalize", err, sourceIP, message)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeValidationFailed, message, sourceIP, err)
 		return
 	}
 
@@ -378,6 +390,7 @@ func (s *TCPServer) processMessage(ctx context.Context, message string, sourceIP
 		atomic.AddUint64(&s.errors, 1)
 		atomic.AddUint64(&s.validationErrors, 1)
 		s.rejects.Reject("validate", err, sourceIP, message)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeValidationFailed, message, sourceIP, err)
 		return
 	}
 

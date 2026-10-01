@@ -76,7 +76,10 @@ func (q *Quarantiner) Submit(entries ...*storage.QuarantineEntry) {
 			continue
 		}
 		if len(e.RawEvent) > maxQuarantineRaw {
-			e.RawEvent = strings.ToValidUTF8(e.RawEvent[:maxQuarantineRaw], "")
+			// Copy: a substring (which ToValidUTF8 returns as is for valid
+			// UTF-8) would keep the whole rejected payload, up to
+			// max_payload_size, alive while the entry waits for storage.
+			e.RawEvent = strings.Clone(strings.ToValidUTF8(e.RawEvent[:maxQuarantineRaw], ""))
 		}
 		if q.closed {
 			q.dropped.Add(1)
@@ -173,4 +176,21 @@ type QuarantineMetrics struct {
 	Dropped uint64 `json:"dropped"`
 	// Failed counts entries whose write to the store failed.
 	Failed uint64 `json:"failed"`
+}
+
+// quarantineCEF stores a CEF message that a transport server rejected
+// (code is storage.QuarantineCodeParseFailed or
+// storage.QuarantineCodeValidationFailed). It does nothing without a
+// Quarantiner and never blocks.
+func quarantineCEF(q *Quarantiner, code, raw, sourceIP string, err error) {
+	if q == nil {
+		return
+	}
+	reason := ""
+	if err != nil {
+		reason = err.Error()
+	}
+	// The line terminator is framing, not part of the message.
+	raw = strings.TrimRight(raw, "\r\n")
+	q.Submit(storage.NewQuarantineEntry(raw, sourceIP, storage.QuarantineFormatCEF, code, reason))
 }

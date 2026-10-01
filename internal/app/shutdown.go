@@ -40,7 +40,8 @@ type ShutdownReport struct {
 //     the correlation engine;
 //  3. flush and close the batch writer and the quarantine writer;
 //  4. let the correlation engine finish, then stop it and alerting (alerts
-//     raised meanwhile are still persisted);
+//     raised meanwhile are still persisted unless storage hangs past the
+//     deadline, in which case their handling is aborted);
 //  5. close the ClickHouse connection.
 //
 // Every phase is bounded by its share of timeout. Events that cannot be
@@ -136,8 +137,9 @@ func (a *App) shutdown(timeout time.Duration) ShutdownReport {
 	}
 	waitEngineIdle(corrCtx, a.engine.Stats)
 	cancel()
-	a.engine.Stop()
-	a.escalation.Stop()
+	stopCtx, cancel := until(deadline)
+	a.stopAlerting(stopCtx)
+	cancel()
 
 	a.cancelRun()
 	a.bg.Wait()
@@ -161,14 +163,50 @@ func (a *App) shutdown(timeout time.Duration) ShutdownReport {
 	if a.store != nil {
 		bm := a.store.Metrics()
 		report.StoreDropped = bm.Failed - bm.DeadLettered
-		report.Lost = count(report.Undrained) + report.ConsumerErrors + report.StoreDropped
 		if report.StoreTimedOut {
 			report.StorePending = a.unsettledEvents()
-			report.Lost += count(report.StorePending)
+		}
+		// Every accepted event is in the events table, in events_quarantine
+		// or lost: still queued, inside a storage write that never returned
+		// (which the counters above cannot see), in a flush that did not
+		// finish, or refused or dropped by the writer.
+		if stored := bm.Written + bm.DeadLettered; report.Accepted > stored {
+			report.Lost = report.Accepted - stored
 		}
 	}
 	a.logReport(report, drainErr)
 	return report
+}
+
+// stopAbortGrace bounds how long stopAlerting waits for the correlation
+// engine and escalation to return once their context has been cancelled.
+const stopAbortGrace = 500 * time.Millisecond
+
+// stopAlerting stops the correlation engine and the escalation engine. Both
+// wait for their alert handlers, which persist alerts to ClickHouse with the
+// run context: against a frozen server such a call only returns when that
+// context is cancelled (or after the driver's 5 minute read timeout). So when
+// ctx is done first, the run context is cancelled to abort them, and
+// stopAlerting waits at most stopAbortGrace more.
+func (a *App) stopAlerting(ctx context.Context) {
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		a.engine.Stop()
+		a.escalation.Stop()
+	}()
+	select {
+	case <-stopped:
+		return
+	case <-ctx.Done():
+	}
+	a.logger.Error("correlation engine and alerting did not stop before the shutdown deadline; aborting in-flight alert handling (alerts being persisted may be lost)")
+	a.cancelRun()
+	select {
+	case <-stopped:
+	case <-time.After(stopAbortGrace):
+		a.logger.Error("correlation engine and alerting still running after abort")
+	}
 }
 
 // unsettledEvents returns the events handed to the storage writer that it
@@ -186,14 +224,6 @@ func (a *App) unsettledEvents() int {
 
 // storageCloseGrace bounds closing the ClickHouse connection pool.
 const storageCloseGrace = 500 * time.Millisecond
-
-// count converts a non-negative length to uint64.
-func count(n int) uint64 {
-	if n <= 0 {
-		return 0
-	}
-	return uint64(n)
-}
 
 // runWithin runs fn and waits for it until ctx is done. fn keeps running in
 // the background after a timeout; the process is about to exit.

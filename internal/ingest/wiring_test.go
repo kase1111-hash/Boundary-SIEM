@@ -176,6 +176,41 @@ func TestQuarantiner_BoundedAndTruncated(t *testing.T) {
 	}
 }
 
+// TestQuarantiner_TruncationReleasesPayload is the regression test for
+// truncated quarantine entries pinning the whole rejected payload: the
+// truncated raw event was a substring of the original, so every buffered
+// entry kept up to max_payload_size (10 MB) alive while storage was slow.
+func TestQuarantiner_TruncationReleasesPayload(t *testing.T) {
+	store := &gatedQuarantine{gate: make(chan struct{})}
+	const n = 64
+	qr := NewQuarantiner(store, n)
+	defer func() {
+		close(store.gate)
+		_ = qr.Close(context.Background())
+	}()
+
+	var before, after runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	for i := 0; i < n; i++ {
+		raw := strings.Repeat(string(rune('a'+i%26)), 1<<20) // a fresh 1 MiB payload
+		qr.Submit(storage.NewQuarantineEntry(raw, "", storage.QuarantineFormatJSON, storage.QuarantineCodeParseFailed))
+	}
+	runtime.GC()
+	runtime.ReadMemStats(&after)
+
+	if m := qr.Metrics(); m.Submitted != n {
+		t.Fatalf("metrics = %+v, want all %d entries buffered", m, n)
+	}
+	retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+	// n truncated copies take n x 64 KiB = 4 MiB; pinning the payloads
+	// would take n x 1 MiB = 64 MiB.
+	if limit := int64(4 * n * maxQuarantineRaw); retained > limit {
+		t.Errorf("%d buffered entries retain %d MiB, want at most %d MiB: truncation keeps the full payloads alive",
+			n, retained>>20, limit>>20)
+	}
+}
+
 func TestHandleEvents_QueueUnavailableIs503(t *testing.T) {
 	q := queue.NewRingBuffer(1)
 	h := NewHandler(schema.NewValidator(), q)

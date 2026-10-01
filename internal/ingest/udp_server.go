@@ -12,6 +12,7 @@ import (
 	"boundary-siem/internal/ingest/cef"
 	"boundary-siem/internal/queue"
 	"boundary-siem/internal/schema"
+	"boundary-siem/internal/storage"
 )
 
 // UDPServerConfig holds configuration for the UDP server.
@@ -55,6 +56,7 @@ type UDPServer struct {
 	validator  *schema.Validator
 	queue      *queue.RingBuffer
 	rejects    *cef.RejectLogger
+	quarantine *Quarantiner
 
 	wg   sync.WaitGroup
 	done chan struct{}
@@ -86,6 +88,14 @@ func NewUDPServer(
 		rejects:    cef.NewRejectLogger(nil, "udp", cef.DefaultRejectLogInterval),
 		done:       make(chan struct{}),
 	}
+}
+
+// WithQuarantine stores messages that fail parsing, normalization or
+// validation in the quarantine table through q (best effort; it never
+// blocks). Call it before Start.
+func (s *UDPServer) WithQuarantine(q *Quarantiner) *UDPServer {
+	s.quarantine = q
+	return s
 }
 
 // Start starts the UDP server.
@@ -208,6 +218,7 @@ func (s *UDPServer) processMessage(ctx context.Context, msg udpMessage) {
 		atomic.AddUint64(&s.errors, 1)
 		atomic.AddUint64(&s.parseErrors, 1)
 		s.rejects.Reject("parse", err, msg.sourceIP, raw)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeParseFailed, raw, msg.sourceIP, err)
 		return
 	}
 	atomic.AddUint64(&s.parsed, 1)
@@ -218,6 +229,7 @@ func (s *UDPServer) processMessage(ctx context.Context, msg udpMessage) {
 		atomic.AddUint64(&s.errors, 1)
 		atomic.AddUint64(&s.validationErrors, 1)
 		s.rejects.Reject("normalize", err, msg.sourceIP, raw)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeValidationFailed, raw, msg.sourceIP, err)
 		return
 	}
 	atomic.AddUint64(&s.normalized, 1)
@@ -227,6 +239,7 @@ func (s *UDPServer) processMessage(ctx context.Context, msg udpMessage) {
 		atomic.AddUint64(&s.errors, 1)
 		atomic.AddUint64(&s.validationErrors, 1)
 		s.rejects.Reject("validate", err, msg.sourceIP, raw)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeValidationFailed, raw, msg.sourceIP, err)
 		return
 	}
 

@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ import (
 	"github.com/gorilla/websocket"
 
 	"boundary-siem/internal/config"
+	"boundary-siem/internal/correlation"
 	"boundary-siem/internal/schema"
 	"boundary-siem/internal/storage"
 	"boundary-siem/internal/ws"
@@ -505,6 +507,67 @@ func TestShutdown_BoundedWhenStorageHangs(t *testing.T) {
 	if report.Lost == 0 {
 		t.Errorf("report = %+v, want the undelivered events counted as lost", report)
 	}
+	// Every event is lost, including the ones the consumer workers popped
+	// and are stuck writing (neither queued nor counted as consumed).
+	if report.Accepted != 100 || report.Lost != report.Accepted {
+		t.Errorf("report = %+v, want all 100 accepted events counted as lost", report)
+	}
+}
+
+// TestShutdown_BoundedWhenAlertHandlingHangs is the regression test for
+// shutdown waiting on alert handling: the alert manager persists every alert
+// to ClickHouse with the run context, which a frozen server holds until the
+// driver's 5 minute read timeout, and the correlation engine's Stop waited
+// for it before the run context was cancelled.
+func TestShutdown_BoundedWhenAlertHandlingHangs(t *testing.T) {
+	cfg := testConfig(t)
+	cfg.Server.ShutdownTimeout = 2 * time.Second
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, err := New(cfg, Options{Store: newMemStore(), Listener: ln})
+	if err != nil {
+		_ = ln.Close()
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	var once sync.Once
+	// Like persistAlert against a frozen ClickHouse: returns only when its
+	// context is cancelled.
+	a.engine.AddHandler(func(ctx context.Context, _ *correlation.Alert) error {
+		once.Do(func() { close(entered) })
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	if err := a.Start(); err != nil {
+		t.Fatal(err)
+	}
+
+	if code, body := apiRequest(t, a, http.MethodPost, "/v1/events", failedLogins(25, "192.0.2.77")); code != http.StatusOK {
+		t.Fatalf("POST = %d %s", code, body)
+	}
+	select {
+	case <-entered:
+	case <-time.After(15 * time.Second):
+		a.cancelRun()
+		a.Shutdown(cfg.Server.ShutdownTimeout)
+		t.Fatal("no alert reached the handler")
+	}
+
+	done := make(chan ShutdownReport, 1)
+	start := time.Now()
+	go func() { done <- a.Shutdown(cfg.Server.ShutdownTimeout) }()
+	select {
+	case <-done:
+	case <-time.After(cfg.Server.ShutdownTimeout + 3*time.Second):
+		a.cancelRun() // unblock the handler so the test can finish
+		<-done
+		t.Fatalf("shutdown blocked on a hung alert handler for %v (budget %v)", time.Since(start), cfg.Server.ShutdownTimeout)
+	}
+	if elapsed := time.Since(start); elapsed > cfg.Server.ShutdownTimeout+time.Second {
+		t.Errorf("shutdown took %v with a hung alert handler, budget %v", elapsed, cfg.Server.ShutdownTimeout)
+	}
 }
 
 // TestPipeline_CEFTCPReachesStorageAndCorrelation checks CEF events take
@@ -548,6 +611,97 @@ func TestPipeline_CEFTCPReachesStorageAndCorrelation(t *testing.T) {
 		if !strings.Contains(string(metrics), want) {
 			t.Errorf("/metrics missing %q", want)
 		}
+	}
+}
+
+// memQuarantine is an in-memory events_quarantine.
+type memQuarantine struct {
+	mu      sync.Mutex
+	entries []*storage.QuarantineEntry
+}
+
+func (m *memQuarantine) WriteBatch(_ context.Context, entries []*storage.QuarantineEntry) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.entries = append(m.entries, entries...)
+	return nil
+}
+
+func (m *memQuarantine) codes() map[string]string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]string, len(m.entries))
+	for _, e := range m.entries {
+		out[e.SourceFormat+"/"+e.ErrorCode] = e.RawEvent
+	}
+	return out
+}
+
+// TestPipeline_RejectedEventsQuarantined checks rejected events from every
+// transport reach events_quarantine: malformed and invalid JSON over HTTP,
+// and unparsable and invalid CEF over TCP.
+func TestPipeline_RejectedEventsQuarantined(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cefAddr := ln.Addr().String()
+	_ = ln.Close()
+
+	cfg := testConfig(t)
+	cfg.Ingest.CEF.TCP.Enabled = true
+	cfg.Ingest.CEF.TCP.Address = cefAddr
+	httpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	quarantine := &memQuarantine{}
+	a, err := New(cfg, Options{Store: newMemStore(), Listener: httpLn, Quarantine: quarantine})
+	if err != nil {
+		_ = httpLn.Close()
+		t.Fatal(err)
+	}
+	if err := a.Start(); err != nil {
+		a.Shutdown(5 * time.Second)
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { a.Shutdown(5 * time.Second) })
+
+	req, _ := http.NewRequest(http.MethodPost, "http://"+a.Addr()+"/v1/events", strings.NewReader(`{"events":[{`))
+	req.Header.Set("X-API-Key", testAPIKey)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("malformed JSON = %d, want 400", resp.StatusCode)
+	}
+	if code, body := apiRequest(t, a, http.MethodPost, "/v1/events", map[string]any{"action": "x.y"}); code != http.StatusBadRequest {
+		t.Fatalf("invalid event = %d %s, want 400", code, body)
+	}
+
+	conn, err := net.Dial("tcp", cefAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Write([]byte("NOT_A_CEF_MESSAGE\nCEF:0|Acme|Fw|1.0|100|Old|5|rt=1000000000000 src=203.0.113.9\n")); err != nil {
+		t.Fatal(err)
+	}
+	_ = conn.Close()
+
+	want := []string{"json/parse_failed", "json/validation_failed", "cef/parse_failed", "cef/validation_failed"}
+	waitFor(t, "rejected events quarantined", func() bool {
+		got := quarantine.codes()
+		for _, w := range want {
+			if _, ok := got[w]; !ok {
+				return false
+			}
+		}
+		return true
+	})
+	if raw := quarantine.codes()["cef/parse_failed"]; raw != "NOT_A_CEF_MESSAGE" {
+		t.Errorf("quarantined CEF raw = %q", raw)
 	}
 }
 

@@ -47,6 +47,12 @@ type Poller struct {
 	chains []chainState
 	stopCh chan struct{}
 	wg     sync.WaitGroup
+
+	// cancel aborts in-flight RPC calls on Stop, so Stop does not wait for
+	// a slow or hung endpoint (the HTTP client allows 30s per call).
+	mu       sync.Mutex
+	cancel   context.CancelFunc
+	stopOnce sync.Once
 }
 
 type chainState struct {
@@ -72,8 +78,13 @@ func NewPoller(cfg Config, q *queue.RingBuffer) *Poller {
 	}
 }
 
-// Start begins polling all configured chains.
+// Start begins polling all configured chains. Polling stops when ctx is
+// cancelled or Stop is called.
 func (p *Poller) Start(ctx context.Context) {
+	ctx, cancel := context.WithCancel(ctx)
+	p.mu.Lock()
+	p.cancel = cancel
+	p.mu.Unlock()
 	for i := range p.chains {
 		p.wg.Add(1)
 		go p.pollChain(ctx, i)
@@ -81,11 +92,20 @@ func (p *Poller) Start(ctx context.Context) {
 	slog.Info("EVM poller started", "chains", len(p.chains))
 }
 
-// Stop halts all polling goroutines.
+// Stop halts all polling goroutines. RPC calls in flight are aborted, so
+// Stop returns promptly even when an endpoint hangs. It is safe to call more
+// than once.
 func (p *Poller) Stop() {
-	close(p.stopCh)
-	p.wg.Wait()
-	slog.Info("EVM poller stopped")
+	p.stopOnce.Do(func() {
+		close(p.stopCh)
+		p.mu.Lock()
+		if p.cancel != nil {
+			p.cancel()
+		}
+		p.mu.Unlock()
+		p.wg.Wait()
+		slog.Info("EVM poller stopped")
+	})
 }
 
 func (p *Poller) pollChain(ctx context.Context, idx int) {
@@ -100,7 +120,9 @@ func (p *Poller) pollChain(ctx context.Context, idx int) {
 	// Resolve starting block
 	startBlock, err := p.resolveStartBlock(ctx, chain)
 	if err != nil {
-		slog.Error("failed to resolve start block", "chain", chain.config.Name, "error", err)
+		if ctx.Err() == nil {
+			slog.Error("failed to resolve start block", "chain", chain.config.Name, "error", err)
+		}
 		return
 	}
 	chain.lastBlock = startBlock
@@ -139,7 +161,9 @@ func (p *Poller) resolveStartBlock(ctx context.Context, chain *chainState) (uint
 func (p *Poller) poll(ctx context.Context, chain *chainState) {
 	latest, err := p.getBlockNumber(ctx, chain)
 	if err != nil {
-		slog.Warn("failed to get block number", "chain", chain.config.Name, "error", err)
+		if ctx.Err() == nil {
+			slog.Warn("failed to get block number", "chain", chain.config.Name, "error", err)
+		}
 		return
 	}
 
@@ -160,7 +184,9 @@ func (p *Poller) poll(ctx context.Context, chain *chainState) {
 	for blockNum := chain.lastBlock + 1; blockNum <= endBlock; blockNum++ {
 		block, err := p.getBlock(ctx, chain, blockNum)
 		if err != nil {
-			slog.Warn("failed to get block", "chain", chain.config.Name, "block", blockNum, "error", err)
+			if ctx.Err() == nil {
+				slog.Warn("failed to get block", "chain", chain.config.Name, "block", blockNum, "error", err)
+			}
 			return
 		}
 
