@@ -88,7 +88,9 @@ func TestFileProvider(t *testing.T) {
 	})
 
 	t.Run("delete secret", func(t *testing.T) {
-		provider.Set(ctx, "to_delete", "value")
+		if err := provider.Set(ctx, "to_delete", "value"); err != nil {
+			t.Fatalf("failed to set secret: %v", err)
+		}
 
 		err := provider.Delete(ctx, "to_delete")
 		if err != nil {
@@ -105,6 +107,51 @@ func TestFileProvider(t *testing.T) {
 		err := provider.HealthCheck(ctx)
 		if err != nil {
 			t.Errorf("health check failed: %v", err)
+		}
+	})
+
+	t.Run("health check with missing directory has no side effects", func(t *testing.T) {
+		missingDir := filepath.Join(t.TempDir(), "absent")
+		missing := NewFileProvider(missingDir, nil)
+
+		if err := missing.HealthCheck(ctx); err != nil {
+			t.Errorf("health check failed for missing directory: %v", err)
+		}
+		if _, err := os.Stat(missingDir); !os.IsNotExist(err) {
+			t.Errorf("health check must not create %s (stat error: %v)", missingDir, err)
+		}
+	})
+
+	t.Run("health check rejects non-directory", func(t *testing.T) {
+		filePath := filepath.Join(t.TempDir(), "not_a_dir")
+		if err := os.WriteFile(filePath, []byte("x"), 0600); err != nil {
+			t.Fatalf("failed to create file: %v", err)
+		}
+
+		if err := NewFileProvider(filePath, nil).HealthCheck(ctx); err == nil {
+			t.Error("expected health check to fail when base path is a file")
+		}
+	})
+
+	t.Run("empty key is rejected", func(t *testing.T) {
+		emptyDir := filepath.Join(t.TempDir(), "empty")
+		if err := os.Mkdir(emptyDir, 0700); err != nil {
+			t.Fatalf("failed to create directory: %v", err)
+		}
+		empty := NewFileProvider(emptyDir, nil)
+
+		if _, err := empty.Get(ctx, ""); err == nil {
+			t.Error("expected Get with empty key to fail")
+		}
+		if err := empty.Set(ctx, "", "value"); err == nil {
+			t.Error("expected Set with empty key to fail")
+		}
+		if err := empty.Delete(ctx, ""); err == nil {
+			t.Error("expected Delete with empty key to fail")
+		}
+		// Delete("") must not remove the base directory itself.
+		if _, err := os.Stat(emptyDir); err != nil {
+			t.Errorf("base directory was removed: %v", err)
 		}
 	})
 
@@ -134,6 +181,7 @@ func TestManager(t *testing.T) {
 		EnableVault: false,
 		EnableEnv:   true,
 		EnableFile:  true,
+		FileDir:     t.TempDir(),
 		CacheTTL:    100 * time.Millisecond,
 	}
 
@@ -208,7 +256,13 @@ func TestManager(t *testing.T) {
 		defer os.Unsetenv("BOUNDARY_CLEAR_TEST")
 
 		// Get and cache
-		manager.Get(ctx, "CLEAR_TEST")
+		value, err := manager.Get(ctx, "CLEAR_TEST")
+		if err != nil {
+			t.Fatalf("failed to get secret: %v", err)
+		}
+		if value != "value1" {
+			t.Fatalf("expected 'value1', got %q", value)
+		}
 
 		// Clear cache
 		manager.ClearCache()
@@ -217,7 +271,10 @@ func TestManager(t *testing.T) {
 		os.Setenv("BOUNDARY_CLEAR_TEST", "value2")
 
 		// Should get new value
-		value, _ := manager.Get(ctx, "CLEAR_TEST")
+		value, err = manager.Get(ctx, "CLEAR_TEST")
+		if err != nil {
+			t.Fatalf("failed to get secret: %v", err)
+		}
 		if value != "value2" {
 			t.Errorf("expected 'value2' after cache clear, got %q", value)
 		}
@@ -327,6 +384,7 @@ func TestProviderFallback(t *testing.T) {
 		EnableVault: false,
 		EnableEnv:   true,
 		EnableFile:  true,
+		FileDir:     tmpDir,
 		CacheTTL:    time.Minute,
 	}
 
@@ -334,21 +392,15 @@ func TestProviderFallback(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to create manager: %v", err)
 	}
-
-	// Override file provider to use temp dir
-	for i, p := range manager.providers {
-		if p.Name() == "file" {
-			manager.providers[i] = NewFileProvider(tmpDir, nil)
-		}
-	}
-
 	defer manager.Close()
 
 	ctx := context.Background()
 
 	// Set secret in file provider only
 	fileProvider := NewFileProvider(tmpDir, nil)
-	fileProvider.Set(ctx, "fallback_test", "file-value")
+	if err := fileProvider.Set(ctx, "fallback_test", "file-value"); err != nil {
+		t.Fatalf("failed to set secret: %v", err)
+	}
 
 	// Get should fall back to file provider
 	value, err := manager.Get(ctx, "fallback_test")
@@ -370,7 +422,9 @@ func TestFileProviderWithNewlines(t *testing.T) {
 
 	// Write secret with trailing newline (common in Docker/K8s)
 	secretPath := filepath.Join(tmpDir, "test_newline")
-	os.WriteFile(secretPath, []byte("value-with-newline\n"), 0600)
+	if err := os.WriteFile(secretPath, []byte("value-with-newline\n"), 0600); err != nil {
+		t.Fatalf("failed to write secret file: %v", err)
+	}
 
 	secret, err := provider.Get(ctx, "test_newline")
 	if err != nil {
@@ -380,6 +434,56 @@ func TestFileProviderWithNewlines(t *testing.T) {
 	// Should have newline trimmed
 	if secret.Value != "value-with-newline" {
 		t.Errorf("expected newline to be trimmed, got %q", secret.Value)
+	}
+}
+
+// TestNewManager_FileDir checks that Config.FileDir selects the directory the
+// file provider reads from, and that an empty FileDir falls back to
+// DefaultFileDir.
+func TestNewManager_FileDir(t *testing.T) {
+	customDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(customDir, "db_password"), []byte("from-custom-dir\n"), 0600); err != nil {
+		t.Fatalf("failed to write secret file: %v", err)
+	}
+
+	tests := []struct {
+		name    string
+		fileDir string
+		wantDir string
+	}{
+		{name: "custom directory", fileDir: customDir, wantDir: customDir},
+		{name: "empty uses default", fileDir: "", wantDir: DefaultFileDir},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			manager, err := NewManager(&Config{EnableFile: true, FileDir: tt.fileDir, CacheTTL: time.Minute})
+			if err != nil {
+				t.Fatalf("NewManager() error = %v", err)
+			}
+			defer manager.Close()
+
+			if len(manager.providers) != 1 {
+				t.Fatalf("providers = %d, want 1", len(manager.providers))
+			}
+			fp, ok := manager.providers[0].(*FileProvider)
+			if !ok {
+				t.Fatalf("provider = %T, want *FileProvider", manager.providers[0])
+			}
+			if fp.baseDir != tt.wantDir {
+				t.Errorf("file provider dir = %q, want %q", fp.baseDir, tt.wantDir)
+			}
+
+			if tt.fileDir == customDir {
+				value, err := manager.Get(context.Background(), "db/password")
+				if err != nil {
+					t.Fatalf("Get() error = %v", err)
+				}
+				if value != "from-custom-dir" {
+					t.Errorf("Get() = %q, want %q", value, "from-custom-dir")
+				}
+			}
+		})
 	}
 }
 
@@ -395,14 +499,19 @@ func BenchmarkManagerGet(b *testing.B) {
 		CacheTTL:    time.Minute,
 	}
 
-	manager, _ := NewManager(cfg)
+	manager, err := NewManager(cfg)
+	if err != nil {
+		b.Fatalf("failed to create manager: %v", err)
+	}
 	defer manager.Close()
 
 	ctx := context.Background()
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		manager.Get(ctx, "BENCH_SECRET")
+		if _, err := manager.Get(ctx, "BENCH_SECRET"); err != nil {
+			b.Fatalf("failed to get secret: %v", err)
+		}
 	}
 }
 
@@ -418,16 +527,23 @@ func BenchmarkManagerGetCached(b *testing.B) {
 		CacheTTL:    time.Hour, // Long TTL for benchmark
 	}
 
-	manager, _ := NewManager(cfg)
+	manager, err := NewManager(cfg)
+	if err != nil {
+		b.Fatalf("failed to create manager: %v", err)
+	}
 	defer manager.Close()
 
 	ctx := context.Background()
 
 	// Warm up cache
-	manager.Get(ctx, "BENCH_CACHED")
+	if _, err := manager.Get(ctx, "BENCH_CACHED"); err != nil {
+		b.Fatalf("failed to get secret: %v", err)
+	}
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		manager.Get(ctx, "BENCH_CACHED")
+		if _, err := manager.Get(ctx, "BENCH_CACHED"); err != nil {
+			b.Fatalf("failed to get secret: %v", err)
+		}
 	}
 }

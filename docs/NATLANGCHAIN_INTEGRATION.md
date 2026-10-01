@@ -1,5 +1,12 @@
 # NatLangChain Integration
 
+> **Status:** design document. The NatLangChain client, normalizer and the
+> NLC-001 to NLC-020 rules described here are not in the repository, and
+> `siem-ingest` does not poll NatLangChain nodes. NatLangChain events can be
+> sent to `POST /v1/events` (or as CEF), and several cross-system ecosystem
+> rules (`internal/detection/rules/ecosystem_rules.go`) match NatLangChain
+> event actions.
+
 This document describes the integration between Boundary-SIEM and NatLangChain, a blockchain protocol where natural language prose serves as the primary ledger substrate.
 
 ## Overview

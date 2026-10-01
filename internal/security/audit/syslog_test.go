@@ -2,12 +2,29 @@ package audit
 
 import (
 	"context"
+	"errors"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 )
+
+// waitFor polls cond until it returns true or timeout elapses, and reports
+// whether cond was satisfied. It keeps assertions on asynchronous forwarding
+// independent of scheduler timing.
+func waitFor(timeout time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for {
+		if cond() {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
 
 func TestDefaultSyslogConfig(t *testing.T) {
 	config := DefaultSyslogConfig()
@@ -111,7 +128,9 @@ func (s *testSyslogServer) handleConn(conn net.Conn) {
 		default:
 		}
 
-		conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		if err := conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			return // connection is no longer usable
+		}
 		n, err := conn.Read(buf)
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -216,17 +235,12 @@ func TestSyslogForwarder_Forward(t *testing.T) {
 	}
 
 	// Wait for message to be sent
-	time.Sleep(500 * time.Millisecond)
-
-	// Check metrics
-	metrics := sf.Metrics()
-	if metrics.Sent == 0 {
+	if !waitFor(5*time.Second, func() bool { return sf.Metrics().Sent > 0 }) {
 		t.Error("Expected at least one sent message")
 	}
 
 	// Check server received message
-	messages := server.Messages()
-	if len(messages) == 0 {
+	if !waitFor(5*time.Second, func() bool { return len(server.Messages()) > 0 }) {
 		t.Error("Server should have received a message")
 	}
 }
@@ -407,15 +421,16 @@ func TestSyslogForwarder_Metrics(t *testing.T) {
 			Severity:  SeverityInfo,
 			Message:   "Test",
 		}
-		sf.Forward(entry)
+		if err := sf.Forward(entry); err != nil {
+			t.Fatalf("Forward() error = %v", err)
+		}
 	}
 
-	time.Sleep(300 * time.Millisecond)
-
-	metrics := sf.Metrics()
-	if metrics.Sent == 0 {
+	if !waitFor(5*time.Second, func() bool { return sf.Metrics().Sent > 0 }) {
 		t.Error("Sent should be greater than 0")
 	}
+
+	metrics := sf.Metrics()
 	if metrics.Reconnects == 0 {
 		t.Error("Reconnects should be at least 1 (initial connection)")
 	}
@@ -424,12 +439,35 @@ func TestSyslogForwarder_Metrics(t *testing.T) {
 	}
 }
 
+// closeWithin closes sf and fails the test if Close does not return within
+// timeout.
+func closeWithin(t *testing.T, sf *SyslogForwarder, timeout time.Duration) {
+	t.Helper()
+
+	done := make(chan error, 1)
+	go func() { done <- sf.Close() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(timeout):
+		t.Fatalf("Close() did not return within %v", timeout)
+	}
+}
+
 func TestSyslogForwarder_BufferFull(t *testing.T) {
 	config := DefaultSyslogConfig()
 	config.Enabled = true
-	config.Addresses = []string{"127.0.0.1:99999"} // Invalid address
+	config.Addresses = []string{"127.0.0.1:99999"} // Invalid port: every dial fails
 	config.BufferSize = 5
 	config.ConnectionTimeout = 100 * time.Millisecond
+	// Never flush on the ticker and wait an hour between retries: once the
+	// send worker has taken a batch it stays parked in its first retry wait
+	// for the rest of the test and stops draining the buffer.
+	config.FlushInterval = time.Hour
+	config.RetryInterval = time.Hour
 
 	sf, err := NewSyslogForwarder(config)
 	if err != nil {
@@ -437,21 +475,106 @@ func TestSyslogForwarder_BufferFull(t *testing.T) {
 	}
 	defer sf.Close()
 
-	// Fill the buffer
-	for i := 0; i < 10; i++ {
+	// The worker removes at most syslogBatchSize entries from the buffer
+	// before it blocks, and the buffer holds BufferSize more, so at most
+	// maxAccepted entries can be accepted; every Forward beyond that must be
+	// rejected with ErrSyslogBufferFull regardless of scheduling.
+	maxAccepted := syslogBatchSize + config.BufferSize
+	const overflow = 10
+	total := maxAccepted + overflow
+
+	var accepted, dropped uint64
+	for i := 0; i < total; i++ {
 		entry := &AuditEntry{
 			ID:        "buffer-test",
+			Sequence:  uint64(i),
 			Timestamp: time.Now(),
 			Type:      EventSystemStart,
 			Severity:  SeverityInfo,
 			Message:   "Test",
 		}
-		sf.Forward(entry)
+		switch err := sf.Forward(entry); {
+		case err == nil:
+			accepted++
+		case errors.Is(err, ErrSyslogBufferFull):
+			dropped++
+		default:
+			t.Fatalf("Forward() unexpected error = %v", err)
+		}
 	}
 
+	if accepted < uint64(config.BufferSize) || accepted > uint64(maxAccepted) {
+		t.Errorf("accepted = %d, want between %d and %d", accepted, config.BufferSize, maxAccepted)
+	}
+	if dropped < overflow {
+		t.Errorf("dropped = %d, want at least %d", dropped, overflow)
+	}
+	if got := sf.Metrics().Dropped; got != dropped {
+		t.Errorf("Metrics().Dropped = %d, want %d (number of ErrSyslogBufferFull returns)", got, dropped)
+	}
+
+	// Close must not wait for the worker's retries against the unreachable
+	// server (previously ~buffered entries x MaxRetries x RetryInterval).
+	closeWithin(t, sf, 10*time.Second)
+
+	// Every accepted entry is accounted for as a send error on shutdown.
 	metrics := sf.Metrics()
-	if metrics.Dropped == 0 {
-		t.Error("Should have dropped some messages")
+	if metrics.Sent != 0 {
+		t.Errorf("Metrics().Sent = %d, want 0", metrics.Sent)
+	}
+	if metrics.Errors != accepted {
+		t.Errorf("Metrics().Errors = %d, want %d (all accepted entries undeliverable)", metrics.Errors, accepted)
+	}
+	if metrics.Dropped != dropped {
+		t.Errorf("Metrics().Dropped after Close = %d, want %d", metrics.Dropped, dropped)
+	}
+}
+
+func TestSyslogForwarder_CloseFlushesBuffered(t *testing.T) {
+	server := newTestSyslogServer(t)
+	defer server.Close()
+
+	config := DefaultSyslogConfig()
+	config.Enabled = true
+	config.Addresses = []string{server.Addr()}
+	config.FlushInterval = time.Hour // only Close flushes
+
+	sf, err := NewSyslogForwarder(config)
+	if err != nil {
+		t.Fatalf("NewSyslogForwarder() error = %v", err)
+	}
+	defer sf.Close()
+
+	if !sf.IsConnected() {
+		t.Fatal("Forwarder should be connected")
+	}
+
+	const n = 3
+	for i := 0; i < n; i++ {
+		entry := &AuditEntry{
+			ID:        "flush-on-close",
+			Sequence:  uint64(i + 1),
+			Timestamp: time.Now(),
+			Type:      EventSystemShutdown,
+			Severity:  SeverityInfo,
+			Message:   "Test",
+		}
+		if err := sf.Forward(entry); err != nil {
+			t.Fatalf("Forward() error = %v", err)
+		}
+	}
+
+	closeWithin(t, sf, 10*time.Second)
+
+	metrics := sf.Metrics()
+	if metrics.Sent != n {
+		t.Errorf("Metrics().Sent = %d, want %d", metrics.Sent, n)
+	}
+	if metrics.Errors != 0 {
+		t.Errorf("Metrics().Errors = %d, want 0", metrics.Errors)
+	}
+	if !waitFor(5*time.Second, func() bool { return len(server.Messages()) == n }) {
+		t.Errorf("server received %d messages, want %d", len(server.Messages()), n)
 	}
 }
 
@@ -487,6 +610,87 @@ func TestSyslogForwarder_Close(t *testing.T) {
 	err = sf.Forward(entry)
 	if err != ErrSyslogClosed {
 		t.Errorf("Forward after close should return ErrSyslogClosed, got %v", err)
+	}
+}
+
+// TestSyslogForwarder_ForwardRacingClose runs Close while a Forward has passed
+// its closed check but not yet enqueued. An entry Forward accepts must still
+// be delivered (or counted as an error) by Close's drain; it must never be
+// left behind in the buffer after Close returns.
+func TestSyslogForwarder_ForwardRacingClose(t *testing.T) {
+	server := newTestSyslogServer(t)
+	defer server.Close()
+
+	config := DefaultSyslogConfig()
+	config.Enabled = true
+	config.Addresses = []string{server.Addr()}
+	config.FlushInterval = time.Hour // only Close flushes
+
+	sf, err := NewSyslogForwarder(config)
+	if err != nil {
+		t.Fatalf("NewSyslogForwarder() error = %v", err)
+	}
+	if !sf.IsConnected() {
+		t.Fatal("Forwarder should be connected")
+	}
+
+	inWindow := make(chan struct{})
+	release := make(chan struct{})
+	sf.enqueueHook = func() {
+		close(inWindow)
+		<-release
+	}
+
+	forwardErr := make(chan error, 1)
+	go func() {
+		forwardErr <- sf.Forward(&AuditEntry{
+			ID:        "racing-close",
+			Sequence:  1,
+			Timestamp: time.Now(),
+			Type:      EventSystemShutdown,
+			Severity:  SeverityInfo,
+			Message:   "Test",
+		})
+	}()
+	<-inWindow
+
+	closeDone := make(chan error, 1)
+	go func() { closeDone <- sf.Close() }()
+
+	// Give Close the chance to finish while Forward is paused. A correct
+	// Close waits for the in-flight Forward instead.
+	select {
+	case err := <-closeDone:
+		closeDone <- err
+	case <-time.After(200 * time.Millisecond):
+	}
+	close(release)
+
+	fwdErr := <-forwardErr
+	select {
+	case err := <-closeDone:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Close() did not return")
+	}
+
+	metrics := sf.Metrics()
+	switch {
+	case fwdErr == nil:
+		if got := metrics.Sent + metrics.Errors; got != 1 {
+			t.Errorf("Forward() accepted the entry but Sent+Errors = %d after Close, want 1 (entry lost)", got)
+		}
+	case errors.Is(fwdErr, ErrSyslogClosed):
+		if got := metrics.Sent + metrics.Errors; got != 0 {
+			t.Errorf("Forward() rejected the entry but Sent+Errors = %d, want 0", got)
+		}
+	default:
+		t.Fatalf("Forward() unexpected error = %v", fwdErr)
+	}
+	if n := len(sf.buffer); n != 0 {
+		t.Errorf("%d entries left in the buffer after Close, want 0", n)
 	}
 }
 
@@ -554,20 +758,16 @@ func TestWithRemoteSyslog(t *testing.T) {
 		t.Fatalf("Log() error = %v", err)
 	}
 
-	time.Sleep(500 * time.Millisecond)
-
 	// Check syslog status
-	status := al.GetSyslogStatus()
-	if status == nil {
+	if al.GetSyslogStatus() == nil {
 		t.Fatal("GetSyslogStatus() returned nil")
 	}
-	if status.Sent == 0 {
+	if !waitFor(5*time.Second, func() bool { return al.GetSyslogStatus().Sent > 0 }) {
 		t.Error("Should have sent at least one message")
 	}
 
 	// Check server received message
-	messages := server.Messages()
-	if len(messages) == 0 {
+	if !waitFor(5*time.Second, func() bool { return len(server.Messages()) > 0 }) {
 		t.Error("Server should have received messages")
 	}
 }

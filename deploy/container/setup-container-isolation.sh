@@ -68,43 +68,15 @@ setup_docker() {
         log_warn "AppArmor not available, skipping profile installation"
     fi
 
-    # 2. Create Docker networks
-    log_info "Creating isolated Docker networks..."
+    # 2. Networks and volumes are created by docker compose
+    #    (deploy/container/docker-compose.yml: siem-internal 172.28.0.0/24,
+    #    siem-ingestion 172.28.1.0/24)
 
-    # Internal network (no external access)
-    docker network create \
-        --driver bridge \
-        --internal \
-        --subnet 172.28.0.0/24 \
-        --gateway 172.28.0.1 \
-        siem-internal 2>/dev/null || log_info "Network siem-internal already exists"
-
-    # Ingestion network
-    docker network create \
-        --driver bridge \
-        --subnet 172.28.1.0/24 \
-        --gateway 172.28.1.1 \
-        --opt "com.docker.network.bridge.enable_ip_masquerade=false" \
-        siem-ingestion 2>/dev/null || log_info "Network siem-ingestion already exists"
-
-    # Management network
-    docker network create \
-        --driver bridge \
-        --subnet 172.28.2.0/24 \
-        --gateway 172.28.2.1 \
-        siem-management 2>/dev/null || log_info "Network siem-management already exists"
-
-    # 3. Create volumes
-    log_info "Creating Docker volumes..."
-    docker volume create siem-data 2>/dev/null || true
-    docker volume create siem-logs 2>/dev/null || true
-    docker volume create siem-config 2>/dev/null || true
-
-    # 4. Set up iptables rules for network isolation
+    # 3. Set up iptables rules for network isolation
     log_info "Configuring iptables for network isolation..."
     setup_iptables_rules
 
-    # 5. Configure Docker daemon (if needed)
+    # 4. Configure Docker daemon (if needed)
     configure_docker_daemon
 
     log_info "Docker container isolation setup complete"
@@ -114,20 +86,16 @@ setup_iptables_rules() {
     # Create custom chain for SIEM traffic
     iptables -N SIEM-ISOLATION 2>/dev/null || iptables -F SIEM-ISOLATION
 
-    # Block direct internet access from internal network
-    iptables -A SIEM-ISOLATION -s 172.28.0.0/24 -d 0.0.0.0/0 -j DROP
+    # Internal network (siem <-> ClickHouse): no internet access
     iptables -A SIEM-ISOLATION -s 172.28.0.0/24 -d 172.28.0.0/24 -j ACCEPT
+    iptables -A SIEM-ISOLATION -s 172.28.0.0/24 -j DROP
 
-    # Allow ingestion network to receive from anywhere, but not initiate
-    iptables -A SIEM-ISOLATION -d 172.28.1.0/24 -p tcp --dport 5514 -j ACCEPT
+    # Ingestion network: HTTP API (8080/tcp) and CEF receivers
+    # (5515/tcp, 5516/udp DTLS, 5514/udp plain UDP when enabled)
+    iptables -A SIEM-ISOLATION -d 172.28.1.0/24 -p tcp --dport 8080 -j ACCEPT
+    iptables -A SIEM-ISOLATION -d 172.28.1.0/24 -p tcp --dport 5515 -j ACCEPT
+    iptables -A SIEM-ISOLATION -d 172.28.1.0/24 -p udp --dport 5516 -j ACCEPT
     iptables -A SIEM-ISOLATION -d 172.28.1.0/24 -p udp --dport 5514 -j ACCEPT
-    iptables -A SIEM-ISOLATION -d 172.28.1.0/24 -p udp --dport 5515 -j ACCEPT
-
-    # Allow management network access only from specific IPs
-    # (Configure MANAGEMENT_CIDR for your environment)
-    MANAGEMENT_CIDR="${MANAGEMENT_CIDR:-10.0.0.0/8}"
-    iptables -A SIEM-ISOLATION -s "${MANAGEMENT_CIDR}" -d 172.28.2.0/24 -p tcp --dport 8443 -j ACCEPT
-    iptables -A SIEM-ISOLATION -d 172.28.2.0/24 -j DROP
 
     # Insert chain into FORWARD
     iptables -C FORWARD -j SIEM-ISOLATION 2>/dev/null || \
@@ -294,14 +262,13 @@ verify_setup() {
 
     local errors=0
 
-    # Check Docker networks
+    # Check Docker networks (created by docker compose, project "boundary-siem")
     if command -v docker &> /dev/null; then
-        for net in siem-internal siem-ingestion siem-management; do
+        for net in boundary-siem_siem-internal boundary-siem_siem-ingestion; do
             if docker network inspect "$net" &> /dev/null; then
                 log_info "✓ Docker network '$net' exists"
             else
-                log_error "✗ Docker network '$net' missing"
-                ((errors++))
+                log_warn "○ Docker network '$net' missing (run: docker compose -f deploy/container/docker-compose.yml up -d)"
             fi
         done
     fi

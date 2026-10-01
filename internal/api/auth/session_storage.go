@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -77,7 +78,9 @@ func (m *MemorySessionStorage) cleanupLoop() {
 		case <-m.stopCleanup:
 			return
 		case <-ticker.C:
-			m.CleanupExpired(context.Background())
+			if err := m.CleanupExpired(context.Background()); err != nil {
+				slog.Warn("failed to clean up expired sessions", "error", err)
+			}
 		}
 	}
 }

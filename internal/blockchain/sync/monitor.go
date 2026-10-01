@@ -5,6 +5,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
+	"math/bits"
 	"sync"
 	"time"
 
@@ -237,7 +239,7 @@ func (m *Monitor) calculateDerivedMetrics(state *SyncState) {
 	// Calculate sync lag
 	if state.NetworkHeadSlot > state.HeadSlot {
 		state.SyncLagSlots = state.NetworkHeadSlot - state.HeadSlot
-		state.SyncLagSeconds = int64(state.SyncLagSlots * m.config.SecondsPerSlot)
+		state.SyncLagSeconds = m.slotsToSeconds(state.SyncLagSlots)
 	} else {
 		state.SyncLagSlots = 0
 		state.SyncLagSeconds = 0
@@ -267,14 +269,18 @@ func (m *Monitor) calculateDerivedMetrics(state *SyncState) {
 		oldState := m.stateHistory[len(m.stateHistory)-1]
 		timeDiff := state.Timestamp.Sub(oldState.Timestamp)
 		if timeDiff > 0 {
-			slotDiff := int64(state.HeadSlot) - int64(oldState.HeadSlot)
-			state.HeadUpdateRate = float64(slotDiff) / timeDiff.Seconds()
+			// Compute the (possibly negative) difference in float64 to avoid
+			// overflowing a uint64 -> int64 conversion.
+			slotDiff := float64(state.HeadSlot) - float64(oldState.HeadSlot)
+			state.HeadUpdateRate = slotDiff / timeDiff.Seconds()
 		}
 	}
 	m.mu.RUnlock()
 }
 
 // calculateMajorityHead finds the head slot that most peers agree on.
+// Ties are broken in favor of the highest slot so the result does not depend
+// on map iteration order.
 func calculateMajorityHead(peerHeads map[string]uint64) uint64 {
 	counts := make(map[uint64]int)
 	for _, head := range peerHeads {
@@ -284,7 +290,7 @@ func calculateMajorityHead(peerHeads map[string]uint64) uint64 {
 	var majorityHead uint64
 	var maxCount int
 	for head, count := range counts {
-		if count > maxCount {
+		if count > maxCount || (count == maxCount && head > majorityHead) {
 			maxCount = count
 			majorityHead = head
 		}
@@ -321,7 +327,7 @@ func (m *Monitor) checkSyncLag(ctx context.Context, state *SyncState) {
 			Title:    "CRITICAL: Node Severely Behind Network",
 			Description: fmt.Sprintf("Node is %d slots (%s) behind network head. Validator duties at risk!",
 				state.SyncLagSlots,
-				formatDuration(time.Duration(state.SyncLagSeconds)*time.Second)),
+				formatDuration(secondsToDuration(state.SyncLagSeconds))),
 			Timestamp: state.Timestamp,
 			State:     state,
 			Metadata: map[string]interface{}{
@@ -339,7 +345,7 @@ func (m *Monitor) checkSyncLag(ctx context.Context, state *SyncState) {
 			Title:    "Node Behind Network",
 			Description: fmt.Sprintf("Node is %d slots (%s) behind network head",
 				state.SyncLagSlots,
-				formatDuration(time.Duration(state.SyncLagSeconds)*time.Second)),
+				formatDuration(secondsToDuration(state.SyncLagSeconds))),
 			Timestamp: state.Timestamp,
 			State:     state,
 			Metadata: map[string]interface{}{
@@ -360,7 +366,7 @@ func (m *Monitor) checkFinality(ctx context.Context, state *SyncState) {
 			Title:    "Finality Delayed",
 			Description: fmt.Sprintf("No finality for %d epochs (%s). Network-wide issue or node isolated.",
 				state.FinalityDelay,
-				formatDuration(time.Duration(state.FinalityDelay*m.config.SlotsPerEpoch*m.config.SecondsPerSlot)*time.Second)),
+				formatDuration(m.slotsToDuration(state.FinalityDelay*m.config.SlotsPerEpoch))),
 			Timestamp: state.Timestamp,
 			State:     state,
 			Metadata: map[string]interface{}{
@@ -374,7 +380,7 @@ func (m *Monitor) checkFinality(ctx context.Context, state *SyncState) {
 	// Check justification
 	if state.JustifiedSlot > 0 && state.HeadSlot > state.JustifiedSlot {
 		justificationDelay := (state.HeadSlot - state.JustifiedSlot) / m.config.SlotsPerEpoch
-		if time.Duration(justificationDelay*m.config.SlotsPerEpoch*m.config.SecondsPerSlot)*time.Second > m.config.JustificationTimeout {
+		if m.slotsToDuration(justificationDelay*m.config.SlotsPerEpoch) > m.config.JustificationTimeout {
 			m.emitAlert(ctx, &Alert{
 				ID:          uuid.New(),
 				Type:        "sync-justification-delayed",
@@ -783,6 +789,35 @@ func (m *Monitor) NormalizeToEvent(alert *Alert, tenantID string) *schema.Event 
 		Severity: severity,
 		Metadata: metadata,
 	}
+}
+
+// slotsToSeconds converts a slot count to seconds. Slot numbers come from
+// the node and its peers, so the result saturates at math.MaxInt64 instead of
+// wrapping (which could turn a huge lag into a small or negative one).
+func (m *Monitor) slotsToSeconds(slots uint64) int64 {
+	hi, secs := bits.Mul64(slots, m.config.SecondsPerSlot)
+	if hi != 0 || secs > math.MaxInt64 {
+		return math.MaxInt64
+	}
+	return int64(secs)
+}
+
+// slotsToDuration converts a slot count to a duration, saturating at the
+// maximum representable duration instead of overflowing.
+func (m *Monitor) slotsToDuration(slots uint64) time.Duration {
+	return secondsToDuration(m.slotsToSeconds(slots))
+}
+
+// secondsToDuration converts whole seconds to a duration, saturating at the
+// representable range instead of overflowing.
+func secondsToDuration(secs int64) time.Duration {
+	switch {
+	case secs > int64(math.MaxInt64/time.Second):
+		return time.Duration(math.MaxInt64)
+	case secs < int64(math.MinInt64/time.Second):
+		return time.Duration(math.MinInt64)
+	}
+	return time.Duration(secs) * time.Second
 }
 
 // formatDuration formats a duration into human-readable format.

@@ -108,6 +108,10 @@ func NewCSRFProtection(config *CSRFConfig) *CSRFProtection {
 	if config.CookiePath == "" {
 		config.CookiePath = "/"
 	}
+	if config.CookieSameSite == 0 {
+		// An unset SameSite omits the attribute entirely; use the documented default.
+		config.CookieSameSite = http.SameSiteStrictMode
+	}
 	if len(config.SkipMethods) == 0 {
 		config.SkipMethods = []string{"GET", "HEAD", "OPTIONS"}
 	}
@@ -176,17 +180,27 @@ func (c *CSRFProtection) ensureToken(w http.ResponseWriter, r *http.Request) {
 
 // SetToken sets the CSRF token cookie.
 func (c *CSRFProtection) SetToken(w http.ResponseWriter, token string) {
-	cookie := &http.Cookie{
+	http.SetCookie(w, c.newCookie(token, 86400)) // 24 hours
+}
+
+// newCookie builds the CSRF cookie with the configured attributes.
+//
+// HttpOnly is false by default on purpose: the double-submit pattern needs
+// client-side JavaScript to read the token and echo it in the CSRF header.
+// The token is not a credential; it authorizes nothing without the HttpOnly
+// session cookie. Secure and SameSite come from CSRFConfig, which defaults to
+// Secure=true and SameSite=Strict (an unset SameSite is filled with Strict).
+func (c *CSRFProtection) newCookie(value string, maxAge int) *http.Cookie {
+	return &http.Cookie{ // #nosec G124 -- double-submit CSRF cookie must be JS-readable (HttpOnly=false); Secure/SameSite are config-driven with Secure=true, SameSite=Strict defaults
 		Name:     c.config.CookieName,
-		Value:    token,
+		Value:    value,
 		Path:     c.config.CookiePath,
 		Domain:   c.config.CookieDomain,
 		HttpOnly: c.config.CookieHTTPOnly,
 		Secure:   c.config.CookieSecure,
 		SameSite: c.config.CookieSameSite,
-		MaxAge:   86400, // 24 hours
+		MaxAge:   maxAge,
 	}
-	http.SetCookie(w, cookie)
 }
 
 // ValidateToken validates the CSRF token from the request.
@@ -312,17 +326,7 @@ func (c *CSRFProtection) GetToken(r *http.Request) (string, error) {
 
 // ClearToken removes the CSRF token cookie.
 func (c *CSRFProtection) ClearToken(w http.ResponseWriter) {
-	cookie := &http.Cookie{
-		Name:     c.config.CookieName,
-		Value:    "",
-		Path:     c.config.CookiePath,
-		Domain:   c.config.CookieDomain,
-		HttpOnly: c.config.CookieHTTPOnly,
-		Secure:   c.config.CookieSecure,
-		SameSite: c.config.CookieSameSite,
-		MaxAge:   -1, // Delete immediately
-	}
-	http.SetCookie(w, cookie)
+	http.SetCookie(w, c.newCookie("", -1)) // Delete immediately
 }
 
 // ProtectedHandler wraps a handler with CSRF protection.

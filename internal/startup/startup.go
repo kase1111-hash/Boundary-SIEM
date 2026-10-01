@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"time"
 
 	"boundary-siem/internal/config"
@@ -229,7 +230,7 @@ func (d *Diagnostics) checkConfiguration() {
 		configPath = "configs/config.yaml"
 	}
 
-	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+	if _, err := os.Stat(configPath); os.IsNotExist(err) { // #nosec G703 -- SIEM_CONFIG_PATH is set by the operator launching the process and may legitimately point anywhere; it is only stat'ed to report existence
 		d.addResult(DiagnosticResult{
 			Name:    "config_file",
 			Status:  StatusWarning,
@@ -261,74 +262,109 @@ func (d *Diagnostics) checkConfiguration() {
 	}
 }
 
+// portCheck is one listener whose address is probed before startup.
+type portCheck struct {
+	name    string
+	network string // "tcp" or "udp", the protocol the listener uses
+	address string // the address the listener binds, e.g. ":5515" or "10.0.0.1:5515"
+	port    int
+}
+
 func (d *Diagnostics) checkPorts() {
 	d.logger.Info("checking network ports")
 
-	ports := []struct {
+	// The HTTP server binds ":<http_port>" (see internal/app).
+	checks := []portCheck{{
+		name:    "HTTP API",
+		network: "tcp",
+		address: fmt.Sprintf(":%d", d.cfg.Server.HTTPPort),
+		port:    d.cfg.Server.HTTPPort,
+	}}
+
+	// CEF listeners bind their configured address with their own protocol:
+	// plain UDP and DTLS are UDP, CEF TCP is TCP. Probing a UDP port with a
+	// TCP bind would miss a UDP port that is taken and fail on an unrelated
+	// TCP listener with the same number.
+	cef := d.cfg.Ingest.CEF
+	listeners := []struct {
 		name    string
-		port    int
+		network string
 		enabled bool
+		address string
 	}{
-		{"HTTP API", d.cfg.Server.HTTPPort, true},
+		{"CEF UDP", "udp", cef.UDP.Enabled, cef.UDP.Address},
+		{"CEF TCP", "tcp", cef.TCP.Enabled, cef.TCP.Address},
+		{"CEF DTLS", "udp", cef.DTLS.Enabled, cef.DTLS.Address},
 	}
-
-	// Add CEF ports if enabled
-	if d.cfg.Ingest.CEF.UDP.Enabled {
-		// Parse port from address
-		_, portStr, _ := net.SplitHostPort(d.cfg.Ingest.CEF.UDP.Address)
-		var port int
-		fmt.Sscanf(portStr, "%d", &port)
-		if port > 0 {
-			ports = append(ports, struct {
-				name    string
-				port    int
-				enabled bool
-			}{"CEF UDP", port, true})
-		}
-	}
-
-	if d.cfg.Ingest.CEF.TCP.Enabled {
-		_, portStr, _ := net.SplitHostPort(d.cfg.Ingest.CEF.TCP.Address)
-		var port int
-		fmt.Sscanf(portStr, "%d", &port)
-		if port > 0 {
-			ports = append(ports, struct {
-				name    string
-				port    int
-				enabled bool
-			}{"CEF TCP", port, true})
-		}
-	}
-
-	for _, p := range ports {
-		if !p.enabled {
-			d.addResult(DiagnosticResult{
-				Name:    fmt.Sprintf("port_%s", p.name),
-				Status:  StatusSkipped,
-				Message: "Service disabled",
-			})
+	for _, l := range listeners {
+		if !l.enabled {
 			continue
 		}
-
-		// Try to bind to the port briefly
-		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", p.port))
-		if err != nil {
-			d.addResult(DiagnosticResult{
-				Name:    fmt.Sprintf("port_%s", p.name),
-				Status:  StatusError,
-				Message: fmt.Sprintf("Port %d is not available: %s", p.port, err),
-				Details: map[string]string{"port": fmt.Sprintf("%d", p.port)},
-			})
-		} else {
-			listener.Close()
-			d.addResult(DiagnosticResult{
-				Name:    fmt.Sprintf("port_%s", p.name),
-				Status:  StatusOK,
-				Message: fmt.Sprintf("Port %d is available", p.port),
-				Details: map[string]string{"port": fmt.Sprintf("%d", p.port)},
-			})
+		if port, ok := d.parseListenPort(l.name, l.address); ok {
+			checks = append(checks, portCheck{name: l.name, network: l.network, address: l.address, port: port})
 		}
 	}
+
+	for _, c := range checks {
+		d.addResult(probePort(c))
+	}
+}
+
+// probePort binds c.address with c.network briefly and reports whether the
+// listener will be able to bind it.
+func probePort(c portCheck) DiagnosticResult {
+	details := map[string]string{
+		"port":     strconv.Itoa(c.port),
+		"protocol": c.network,
+		"address":  c.address,
+	}
+
+	var err error
+	if c.network == "udp" {
+		var pc net.PacketConn
+		if pc, err = net.ListenPacket("udp", c.address); err == nil {
+			_ = pc.Close()
+		}
+	} else {
+		var ln net.Listener
+		if ln, err = net.Listen("tcp", c.address); err == nil {
+			_ = ln.Close()
+		}
+	}
+
+	if err != nil {
+		return DiagnosticResult{
+			Name:    fmt.Sprintf("port_%s", c.name),
+			Status:  StatusError,
+			Message: fmt.Sprintf("Port %d/%s is not available: %s", c.port, c.network, err),
+			Details: details,
+		}
+	}
+	return DiagnosticResult{
+		Name:    fmt.Sprintf("port_%s", c.name),
+		Status:  StatusOK,
+		Message: fmt.Sprintf("Port %d/%s is available", c.port, c.network),
+		Details: details,
+	}
+}
+
+// parseListenPort extracts a positive port number from a listen address such
+// as ":514" or "0.0.0.0:514". Unparseable addresses are logged and reported
+// as not ok so the port check is skipped for that listener.
+func (d *Diagnostics) parseListenPort(name, address string) (int, bool) {
+	_, portStr, err := net.SplitHostPort(address)
+	if err != nil {
+		d.logger.Warn("cannot parse listen address, skipping port check",
+			"listener", name, "address", address, "error", err)
+		return 0, false
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		d.logger.Warn("cannot parse listen port, skipping port check",
+			"listener", name, "address", address, "error", err)
+		return 0, false
+	}
+	return port, port > 0
 }
 
 func (d *Diagnostics) checkSecurityConfiguration() {
@@ -530,7 +566,7 @@ func (d *Diagnostics) checkStorage(ctx context.Context) {
 			Details: map[string]string{"host": host},
 		})
 	} else {
-		conn.Close()
+		_ = conn.Close()
 		d.addResult(DiagnosticResult{
 			Name:    "clickhouse_connectivity",
 			Status:  StatusOK,

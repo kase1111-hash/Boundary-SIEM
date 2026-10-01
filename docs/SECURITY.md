@@ -2,6 +2,13 @@
 
 This document provides comprehensive documentation for the security features implemented in Boundary SIEM.
 
+> **Status:** sections 1-3 and 5 (audit logging, immutable logs, syslog
+> forwarding, TPM key storage) describe Go packages under
+> `internal/security/` that `siem-ingest` does not use yet; they are not
+> configured by `configs/config.yaml`. What the running service enforces is
+> API-key authentication (`X-API-Key`), per-IP rate limiting, CORS, TLS for
+> CEF TCP and DTLS, and the container and host policies in section 4.
+
 ## Overview
 
 Boundary SIEM implements defense-in-depth security controls across multiple layers:
@@ -53,7 +60,7 @@ logger, err := audit.NewAuditLogger(config)
   "event_type": "authentication",
   "actor": "user@example.com",
   "action": "login",
-  "resource": "/api/v1/events",
+  "resource": "/v1/events",
   "outcome": "success",
   "metadata": {},
   "prev_hash": "sha256:abc123...",
@@ -186,13 +193,12 @@ CEF:0|Boundary|SIEM|1.0|AUTH|Authentication|3|src=10.0.0.1 dst=api.example.com o
 ### Docker Isolation
 
 #### Networks
-Three isolated networks with different access levels:
+Two isolated networks (`deploy/container/docker-compose.yml`):
 
 | Network | Subnet | Purpose | External Access |
 |---------|--------|---------|-----------------|
-| siem-internal | 172.28.0.0/24 | Inter-service communication | None |
-| siem-ingestion | 172.28.1.0/24 | Log ingestion | Inbound only |
-| siem-management | 172.28.2.0/24 | Admin API | VPN/bastion only |
+| siem-internal | 172.28.0.0/24 | siem-ingest <-> ClickHouse | None |
+| siem-ingestion | 172.28.1.0/24 | HTTP API (8080) and CEF (5515/tcp) | Published ports |
 
 #### Seccomp Profile
 Restricts available syscalls to a minimal set:
@@ -215,7 +221,8 @@ profile boundary-siem flags=(attach_disconnected,mediate_deleted) {
   /etc/** r,
   /usr/share/** r,
 
-  # Writable data directories
+  # Writable data directories (/app is the image's working directory)
+  /app/data/** rwk,
   /var/log/boundary-siem/** rw,
   /var/lib/boundary-siem/** rw,
 
@@ -264,12 +271,13 @@ Policy enforcement for:
 ### Deployment
 
 ```bash
-# Docker
-cd deploy/container
-sudo ./setup-container-isolation.sh docker
-docker-compose up -d
+# Docker (from the repository root)
+sudo deploy/container/setup-container-isolation.sh docker
+export SIEM_API_KEY=... CLICKHOUSE_PASSWORD=...
+docker compose -f deploy/container/docker-compose.yml up -d --build
 
 # Kubernetes
+kubectl apply -f deploy/kubernetes/siem.yaml
 kubectl apply -f deploy/container/pod-security-policy.yaml
 kubectl apply -f deploy/container/network-policy.yaml
 ```
@@ -509,8 +517,8 @@ nc -zv siem.example.com 514
 # Test TLS
 openssl s_client -connect siem.example.com:6514
 
-# Check buffer status
-curl localhost:8080/metrics | grep syslog_buffer
+# siem-ingest does not forward to syslog yet; check its ingest metrics instead
+curl -s localhost:8080/metrics | grep siem_cef_
 ```
 
 ---

@@ -1,4 +1,4 @@
-.PHONY: all build test run clean lint fmt deps security security-report ci
+.PHONY: all build build-ingest build-tui build-rules test test-unit test-coverage run run-tui clean lint fmt deps docker-build security security-report ci help
 
 # Go parameters
 GOCMD=go
@@ -12,6 +12,7 @@ GOMOD=$(GOCMD) mod
 # Binary names
 BINARY_INGEST=siem-ingest
 BINARY_TUI=boundary-siem
+BINARY_RULES=siem-rules
 
 # Directories
 CMD_DIR=./cmd
@@ -28,8 +29,8 @@ deps:
 	$(GOMOD) download
 	$(GOMOD) tidy
 
-## build: Build all binaries
-build: build-ingest build-tui
+## build: Build all binaries (server, TUI, rule validator)
+build: build-ingest build-tui build-rules
 
 ## build-ingest: Build the ingest service
 build-ingest:
@@ -41,7 +42,12 @@ build-tui:
 	mkdir -p $(BIN_DIR)
 	$(GOBUILD) $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY_TUI) $(CMD_DIR)/boundary-siem
 
-## run: Run the ingest service
+## build-rules: Build the rule validator CLI
+build-rules:
+	mkdir -p $(BIN_DIR)
+	$(GOBUILD) $(BUILD_FLAGS) -o $(BIN_DIR)/$(BINARY_RULES) $(CMD_DIR)/siem-rules
+
+## run: Run the ingest service (from the repository root; config paths are relative)
 run:
 	$(GORUN) $(CMD_DIR)/siem-ingest/main.go
 
@@ -82,9 +88,9 @@ clean:
 	rm -f coverage.out coverage.html
 	rm -f security-report.json security-report.html
 
-## docker-build: Build Docker image
+## docker-build: Build the siem-ingest Docker image
 docker-build:
-	docker build -t boundary-siem/ingest:latest -f Dockerfile.ingest .
+	docker build -t boundary-siem:latest -f deploy/container/Dockerfile .
 
 ## security: Run security scanners (gosec)
 security:

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -48,9 +49,28 @@ func chdirTemp(t *testing.T) string {
 		t.Fatalf("os.Chdir(%q): %v", tmpDir, err)
 	}
 	t.Cleanup(func() {
-		os.Chdir(origDir)
+		if err := os.Chdir(origDir); err != nil {
+			t.Errorf("restore working directory %q: %v", origDir, err)
+		}
 	})
 	return tmpDir
+}
+
+// mustMkdirAll creates dir (and parents) with the given permissions,
+// failing the test on error.
+func mustMkdirAll(t *testing.T, dir string, perm os.FileMode) {
+	t.Helper()
+	if err := os.MkdirAll(dir, perm); err != nil {
+		t.Fatalf("os.MkdirAll(%q): %v", dir, err)
+	}
+}
+
+// mustWriteFile writes data to path, failing the test on error.
+func mustWriteFile(t *testing.T, path string, data []byte, perm os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, data, perm); err != nil {
+		t.Fatalf("os.WriteFile(%q): %v", path, err)
+	}
 }
 
 // findResult searches a slice of DiagnosticResults for one whose Name
@@ -427,7 +447,9 @@ func TestPrintBanner(t *testing.T) {
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
 	output := buf.String()
 
 	// Check that the version string appears.
@@ -458,7 +480,9 @@ func TestPrintBanner_EmptyVersion(t *testing.T) {
 	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
 	output := buf.String()
 
 	if !strings.Contains(output, "Version:") {
@@ -530,7 +554,7 @@ func TestCheckDirectories_CreatesAutoCreateDirs(t *testing.T) {
 
 	// Pre-create the "configs" required directory so the check does not
 	// report an error for it.
-	os.MkdirAll(filepath.Join(tmpDir, "configs"), 0750)
+	mustMkdirAll(t, filepath.Join(tmpDir, "configs"), 0750)
 
 	d, _, _ := newTestDiagnostics()
 	d.checkDirectories()
@@ -580,9 +604,9 @@ func TestCheckDirectories_ExistingDirIsFile(t *testing.T) {
 	tmpDir := chdirTemp(t)
 
 	// Create "data" as a regular file instead of a directory.
-	os.WriteFile(filepath.Join(tmpDir, "data"), []byte("not a dir"), 0644)
+	mustWriteFile(t, filepath.Join(tmpDir, "data"), []byte("not a dir"), 0644)
 	// Create configs so we don't get an unrelated error.
-	os.MkdirAll(filepath.Join(tmpDir, "configs"), 0750)
+	mustMkdirAll(t, filepath.Join(tmpDir, "configs"), 0750)
 
 	d, _, _ := newTestDiagnostics()
 	d.checkDirectories()
@@ -604,7 +628,7 @@ func TestCheckDirectories_AllPreExisting(t *testing.T) {
 
 	// Pre-create every directory with correct permissions.
 	for _, dir := range []string{"data", "data/events", "logs", "certs", "configs"} {
-		os.MkdirAll(filepath.Join(tmpDir, dir), 0750)
+		mustMkdirAll(t, filepath.Join(tmpDir, dir), 0750)
 	}
 
 	d, _, _ := newTestDiagnostics()
@@ -648,8 +672,8 @@ func TestCheckConfiguration_ConfigFileExists(t *testing.T) {
 	tmpDir := chdirTemp(t)
 
 	// Create a config file.
-	os.MkdirAll(filepath.Join(tmpDir, "configs"), 0750)
-	os.WriteFile(filepath.Join(tmpDir, "configs", "config.yaml"), []byte("server:\n  http_port: 8080\n"), 0644)
+	mustMkdirAll(t, filepath.Join(tmpDir, "configs"), 0750)
+	mustWriteFile(t, filepath.Join(tmpDir, "configs", "config.yaml"), []byte("server:\n  http_port: 8080\n"), 0644)
 
 	origEnv := os.Getenv("SIEM_CONFIG_PATH")
 	os.Setenv("SIEM_CONFIG_PATH", "")
@@ -671,7 +695,7 @@ func TestCheckConfiguration_CustomEnvPath(t *testing.T) {
 	tmpDir := chdirTemp(t)
 
 	customPath := filepath.Join(tmpDir, "custom.yaml")
-	os.WriteFile(customPath, []byte("server:\n  http_port: 9090\n"), 0644)
+	mustWriteFile(t, customPath, []byte("server:\n  http_port: 9090\n"), 0644)
 
 	origEnv := os.Getenv("SIEM_CONFIG_PATH")
 	os.Setenv("SIEM_CONFIG_PATH", customPath)
@@ -892,8 +916,8 @@ func TestCheckSecurityConfiguration_TCPEnabledTLSValidCerts(t *testing.T) {
 	tmpDir := t.TempDir()
 	certFile := filepath.Join(tmpDir, "cert.pem")
 	keyFile := filepath.Join(tmpDir, "key.pem")
-	os.WriteFile(certFile, []byte("dummy cert"), 0644)
-	os.WriteFile(keyFile, []byte("dummy key"), 0644)
+	mustWriteFile(t, certFile, []byte("dummy cert"), 0644)
+	mustWriteFile(t, keyFile, []byte("dummy key"), 0644)
 
 	d, cfg, _ := newTestDiagnostics()
 	cfg.Ingest.CEF.TCP.Enabled = true
@@ -1213,13 +1237,148 @@ func TestCheckPorts_CEFPortsEnabled(t *testing.T) {
 	}
 }
 
+func TestCheckPorts_InvalidCEFAddressSkipped(t *testing.T) {
+	d, cfg, logBuf := newTestDiagnostics()
+	cfg.Server.HTTPPort = 49156
+	cfg.Ingest.CEF.UDP.Enabled = true
+	cfg.Ingest.CEF.UDP.Address = "missing-port"
+	cfg.Ingest.CEF.TCP.Enabled = true
+	cfg.Ingest.CEF.TCP.Address = ":not-a-number"
+
+	d.checkPorts()
+
+	if r := findResult(d.results, "port_CEF UDP"); r != nil {
+		t.Errorf("unexpected 'port_CEF UDP' result for unparseable address: %+v", r)
+	}
+	if r := findResult(d.results, "port_CEF TCP"); r != nil {
+		t.Errorf("unexpected 'port_CEF TCP' result for unparseable port: %+v", r)
+	}
+	logOutput := logBuf.String()
+	if !strings.Contains(logOutput, "cannot parse listen address") {
+		t.Error("expected a warning about the unparseable UDP listen address")
+	}
+	if !strings.Contains(logOutput, "cannot parse listen port") {
+		t.Error("expected a warning about the unparseable TCP listen port")
+	}
+}
+
+// freeUDPPort returns a UDP port on 127.0.0.1 that was free a moment ago.
+func freeUDPPort(t *testing.T) int {
+	t.Helper()
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket: %v", err)
+	}
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+	_ = pc.Close()
+	return port
+}
+
+func TestCheckPorts_UDPPortInUseIsReported(t *testing.T) {
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("ListenPacket: %v", err)
+	}
+	defer pc.Close()
+	port := pc.LocalAddr().(*net.UDPAddr).Port
+
+	d, cfg, _ := newTestDiagnostics()
+	cfg.Server.HTTPPort = 0
+	cfg.Ingest.CEF.TCP.Enabled = false
+	cfg.Ingest.CEF.UDP.Enabled = true
+	cfg.Ingest.CEF.UDP.Address = fmt.Sprintf("127.0.0.1:%d", port)
+
+	d.checkPorts()
+
+	r := findResult(d.results, "port_CEF UDP")
+	if r == nil {
+		t.Fatal("missing 'port_CEF UDP' result")
+	}
+	if r.Status != StatusError {
+		t.Errorf("UDP port %d is bound but status = %v (%s), want StatusError", port, r.Status, r.Message)
+	}
+	if r.Details["protocol"] != "udp" {
+		t.Errorf("protocol detail = %q, want udp", r.Details["protocol"])
+	}
+}
+
+func TestCheckPorts_TCPListenerDoesNotBlockUDPPort(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	d, cfg, _ := newTestDiagnostics()
+	cfg.Server.HTTPPort = 0
+	cfg.Ingest.CEF.TCP.Enabled = false
+	cfg.Ingest.CEF.UDP.Enabled = true
+	cfg.Ingest.CEF.UDP.Address = fmt.Sprintf("127.0.0.1:%d", port)
+
+	d.checkPorts()
+
+	r := findResult(d.results, "port_CEF UDP")
+	if r == nil {
+		t.Fatal("missing 'port_CEF UDP' result")
+	}
+	if r.Status != StatusOK {
+		t.Errorf("only TCP %d is bound, UDP status = %v (%s), want StatusOK", port, r.Status, r.Message)
+	}
+}
+
+func TestCheckPorts_TCPPortInUseIsReported(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("Listen: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	d, cfg, _ := newTestDiagnostics()
+	cfg.Server.HTTPPort = 0
+	cfg.Ingest.CEF.TCP.Enabled = true
+	cfg.Ingest.CEF.TCP.Address = fmt.Sprintf("127.0.0.1:%d", port)
+
+	d.checkPorts()
+
+	r := findResult(d.results, "port_CEF TCP")
+	if r == nil {
+		t.Fatal("missing 'port_CEF TCP' result")
+	}
+	if r.Status != StatusError {
+		t.Errorf("TCP port %d is bound but status = %v (%s), want StatusError", port, r.Status, r.Message)
+	}
+	if r.Details["address"] != cfg.Ingest.CEF.TCP.Address {
+		t.Errorf("address detail = %q, want %q", r.Details["address"], cfg.Ingest.CEF.TCP.Address)
+	}
+}
+
+func TestCheckPorts_DTLSCheckedAsUDP(t *testing.T) {
+	d, cfg, _ := newTestDiagnostics()
+	cfg.Server.HTTPPort = 0
+	cfg.Ingest.CEF.TCP.Enabled = false
+	cfg.Ingest.CEF.DTLS.Enabled = true
+	cfg.Ingest.CEF.DTLS.Address = fmt.Sprintf("127.0.0.1:%d", freeUDPPort(t))
+
+	d.checkPorts()
+
+	r := findResult(d.results, "port_CEF DTLS")
+	if r == nil {
+		t.Fatal("missing 'port_CEF DTLS' result")
+	}
+	if r.Status != StatusOK || r.Details["protocol"] != "udp" {
+		t.Errorf("port_CEF DTLS = %v protocol %q (%s), want StatusOK over udp", r.Status, r.Details["protocol"], r.Message)
+	}
+}
+
 // ---------- RunAll (integration) ----------
 
 func TestRunAll_StorageDisabled(t *testing.T) {
 	tmpDir := chdirTemp(t)
 
 	// Pre-create the required "configs" directory.
-	os.MkdirAll(filepath.Join(tmpDir, "configs"), 0750)
+	mustMkdirAll(t, filepath.Join(tmpDir, "configs"), 0750)
 
 	origEnv := os.Getenv("SIEM_CONFIG_PATH")
 	os.Setenv("SIEM_CONFIG_PATH", "")
@@ -1257,7 +1416,7 @@ func TestRunAll_StorageDisabled(t *testing.T) {
 
 func TestRunAll_ContextCancelled(t *testing.T) {
 	tmpDir := chdirTemp(t)
-	os.MkdirAll(filepath.Join(tmpDir, "configs"), 0750)
+	mustMkdirAll(t, filepath.Join(tmpDir, "configs"), 0750)
 
 	origEnv := os.Getenv("SIEM_CONFIG_PATH")
 	os.Setenv("SIEM_CONFIG_PATH", "")
@@ -1331,17 +1490,28 @@ func TestEnsureDirectories_ReadOnlyParent(t *testing.T) {
 
 	tmpDir := t.TempDir()
 	readonlyDir := filepath.Join(tmpDir, "readonly")
-	os.MkdirAll(readonlyDir, 0500)
+	mustMkdirAll(t, readonlyDir, 0500)
 	t.Cleanup(func() {
-		os.Chmod(readonlyDir, 0750) // restore so cleanup works
+		// Restore write permission so t.TempDir cleanup can remove it.
+		if err := os.Chmod(readonlyDir, 0750); err != nil {
+			t.Errorf("restore permissions on %q: %v", readonlyDir, err)
+		}
 	})
 
-	origDir, _ := os.Getwd()
-	os.Chdir(readonlyDir)
-	t.Cleanup(func() { os.Chdir(origDir) })
+	origDir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd: %v", err)
+	}
+	if err := os.Chdir(readonlyDir); err != nil {
+		t.Fatalf("os.Chdir(%q): %v", readonlyDir, err)
+	}
+	t.Cleanup(func() {
+		if err := os.Chdir(origDir); err != nil {
+			t.Errorf("restore working directory %q: %v", origDir, err)
+		}
+	})
 
-	err := EnsureDirectories()
-	if err == nil {
+	if err := EnsureDirectories(); err == nil {
 		t.Error("expected error when creating directories in read-only parent, got nil")
 	}
 }

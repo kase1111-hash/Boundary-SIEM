@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"sync"
 	"time"
 )
@@ -51,6 +52,10 @@ type Config struct {
 // saltSize is the size of the random salt used for key derivation.
 const saltSize = 16
 
+// maxKeyVersion is the largest key version that fits in the one-byte version
+// field of the ciphertext header.
+const maxKeyVersion = math.MaxUint8
+
 // legacySalt is the static salt used in older versions for backward compatibility.
 var legacySalt = []byte("boundary-siem-encryption-v1")
 
@@ -88,6 +93,10 @@ func NewEngine(cfg *Config) (*Engine, error) {
 		return nil, fmt.Errorf("%w: master key is required when encryption is enabled", ErrInvalidKey)
 	}
 
+	if err := validateKeyVersion(cfg.KeyVersion); err != nil {
+		return nil, err
+	}
+
 	// Generate random salt for key derivation
 	salt := make([]byte, saltSize)
 	if _, err := io.ReadFull(rand.Reader, salt); err != nil {
@@ -122,6 +131,16 @@ func NewEngine(cfg *Config) (*Engine, error) {
 	}, nil
 }
 
+// validateKeyVersion rejects key versions that cannot be stored in the
+// ciphertext header. A truncated version would make ciphertexts point at the
+// wrong key after rotation and become undecryptable.
+func validateKeyVersion(version int) error {
+	if version < 0 || version > maxKeyVersion {
+		return fmt.Errorf("%w: key version %d out of range [0, %d]", ErrInvalidKey, version, maxKeyVersion)
+	}
+	return nil
+}
+
 // deriveKey derives a 32-byte encryption key from the master key using
 // iterated HMAC-SHA256 (100,000 rounds) with the provided salt.
 // This provides proper key stretching without requiring external dependencies.
@@ -143,15 +162,29 @@ func (e *Engine) Enabled() bool {
 // Encrypt encrypts plaintext using AES-256-GCM.
 // Returns base64-encoded ciphertext with embedded nonce and key version.
 func (e *Engine) Encrypt(plaintext []byte) (string, error) {
+	ciphertext, _, err := e.encryptVersioned(plaintext)
+	return ciphertext, err
+}
+
+// encryptVersioned encrypts plaintext and returns the key version it used.
+// The version is read under the same lock as the encryption, so it always
+// matches the version embedded in the ciphertext header even if RotateKey
+// runs concurrently.
+func (e *Engine) encryptVersioned(plaintext []byte) (string, int, error) {
 	if !e.enabled {
-		// If encryption is disabled, return plaintext as base64
-		return base64.StdEncoding.EncodeToString(plaintext), nil
+		// If encryption is disabled, return plaintext as base64. The key
+		// version of a disabled engine is never modified.
+		return base64.StdEncoding.EncodeToString(plaintext), e.keyVersion, nil
 	}
 
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 
-	return e.encryptLocked(plaintext)
+	ciphertext, err := e.encryptLocked(plaintext)
+	if err != nil {
+		return "", 0, err
+	}
+	return ciphertext, e.keyVersion, nil
 }
 
 // encryptLocked performs encryption. Caller must hold at least a read lock.
@@ -187,8 +220,8 @@ func (e *Engine) encryptLocked(plaintext []byte) (string, error) {
 	// Format: [version:1byte][saltLen:1byte][salt][nonce][ciphertext]
 	// Salt is embedded so decryption can re-derive the correct key.
 	data := make([]byte, 1+1+len(e.salt)+len(nonce)+len(ciphertext))
-	data[0] = byte(e.keyVersion)
-	data[1] = byte(len(e.salt))
+	data[0] = byte(e.keyVersion) // #nosec G115 -- keyVersion is limited to [0, maxKeyVersion] by NewEngine and RotateKey
+	data[1] = byte(len(e.salt))  // #nosec G115 -- salt is always saltSize (16) bytes
 	copy(data[2:], e.salt)
 	copy(data[2+len(e.salt):], nonce)
 	copy(data[2+len(e.salt)+len(nonce):], ciphertext)
@@ -336,12 +369,16 @@ func (e *Engine) RotateKey(newMasterKey []byte, newVersion int) error {
 		return fmt.Errorf("%w: new master key is required", ErrInvalidKey)
 	}
 
-	if newVersion <= e.keyVersion {
-		return fmt.Errorf("new version (%d) must be greater than current version (%d)", newVersion, e.keyVersion)
+	if err := validateKeyVersion(newVersion); err != nil {
+		return err
 	}
 
 	e.mu.Lock()
 	defer e.mu.Unlock()
+
+	if newVersion <= e.keyVersion {
+		return fmt.Errorf("new version (%d) must be greater than current version (%d)", newVersion, e.keyVersion)
+	}
 
 	// Store current key as old key for backward compatibility
 	e.oldKeys[e.keyVersion] = e.masterKey
@@ -468,15 +505,17 @@ type EncryptedField struct {
 }
 
 // EncryptField encrypts a field and returns metadata.
+// KeyVersion is taken together with the encryption, so it always names the
+// key recorded in the ciphertext even when RotateKey runs concurrently.
 func (e *Engine) EncryptField(plaintext string) (*EncryptedField, error) {
-	ciphertext, err := e.EncryptString(plaintext)
+	ciphertext, keyVersion, err := e.encryptVersioned([]byte(plaintext))
 	if err != nil {
 		return nil, err
 	}
 
 	return &EncryptedField{
 		Ciphertext:  ciphertext,
-		KeyVersion:  e.keyVersion,
+		KeyVersion:  keyVersion,
 		Algorithm:   "AES-256-GCM",
 		EncryptedAt: int64(time.Now().Unix()),
 	}, nil

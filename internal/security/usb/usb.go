@@ -388,18 +388,16 @@ func (m *Monitor) readDevice(sysPath string) (*Device, error) {
 		FirstSeen: time.Now(),
 	}
 
-	// Read vendor ID
-	if vid, err := m.readSysfsHex(sysPath, "idVendor"); err == nil {
+	// Read vendor ID, product ID and device class. ParseUint's bitSize
+	// rejects malformed values that would not fit the target field instead
+	// of silently truncating them.
+	if vid, err := strconv.ParseUint(m.readSysfsString(sysPath, "idVendor"), 16, 16); err == nil {
 		device.VendorID = uint16(vid)
 	}
-
-	// Read product ID
-	if pid, err := m.readSysfsHex(sysPath, "idProduct"); err == nil {
+	if pid, err := strconv.ParseUint(m.readSysfsString(sysPath, "idProduct"), 16, 16); err == nil {
 		device.ProductID = uint16(pid)
 	}
-
-	// Read device class
-	if class, err := m.readSysfsHex(sysPath, "bDeviceClass"); err == nil {
+	if class, err := strconv.ParseUint(m.readSysfsString(sysPath, "bDeviceClass"), 16, 8); err == nil {
 		device.DeviceClass = DeviceClass(class)
 	}
 
@@ -434,31 +432,34 @@ func (m *Monitor) readDevice(sysPath string) (*Device, error) {
 	return device, nil
 }
 
-// readSysfsHex reads a hex value from sysfs.
-func (m *Monitor) readSysfsHex(basePath, attr string) (uint64, error) {
-	data, err := os.ReadFile(filepath.Join(basePath, attr))
-	if err != nil {
-		return 0, err
-	}
-	return strconv.ParseUint(strings.TrimSpace(string(data)), 16, 64)
-}
-
 // readSysfsInt reads an integer from sysfs.
 func (m *Monitor) readSysfsInt(basePath, attr string) (int, error) {
-	data, err := os.ReadFile(filepath.Join(basePath, attr))
+	data, err := m.readSysfsAttr(basePath, attr)
 	if err != nil {
 		return 0, err
 	}
-	return strconv.Atoi(strings.TrimSpace(string(data)))
+	return strconv.Atoi(data)
 }
 
-// readSysfsString reads a string from sysfs.
+// readSysfsString reads a string from sysfs, returning "" if it is unreadable.
 func (m *Monitor) readSysfsString(basePath, attr string) string {
-	data, err := os.ReadFile(filepath.Join(basePath, attr))
+	data, err := m.readSysfsAttr(basePath, attr)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(data))
+	return data
+}
+
+// readSysfsAttr reads a device attribute from sysfs with surrounding
+// whitespace trimmed. basePath is always a device directory found by
+// enumerating the configured sysfs root (see enumerate/checkForChanges) and
+// attr is a constant attribute name.
+func (m *Monitor) readSysfsAttr(basePath, attr string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(basePath, attr)) // #nosec G304 -- basePath is a device entry enumerated from the configured sysfs root and attr is a constant attribute name
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(data)), nil
 }
 
 // assessThreat calculates the threat level for a device.
@@ -671,8 +672,10 @@ func (m *Monitor) checkPolicy(device *Device) (PolicyAction, string) {
 
 // blockDevice deauthorizes a USB device.
 func (m *Monitor) blockDevice(device *Device) {
+	// The mode only applies if the file is created, which never happens for
+	// a real sysfs attribute; 0600 keeps any file created in its place private.
 	authPath := filepath.Join(device.SysPath, "authorized")
-	if err := os.WriteFile(authPath, []byte("0"), 0644); err != nil {
+	if err := os.WriteFile(authPath, []byte("0"), 0600); err != nil {
 		m.logger.Error("failed to block device",
 			"path", device.SysPath,
 			"error", err,
@@ -696,7 +699,7 @@ func (m *Monitor) AuthorizeDevice(sysPath string) error {
 	}
 
 	authPath := filepath.Join(sysPath, "authorized")
-	if err := os.WriteFile(authPath, []byte("1"), 0644); err != nil {
+	if err := os.WriteFile(authPath, []byte("1"), 0600); err != nil {
 		return fmt.Errorf("failed to authorize device: %w", err)
 	}
 
@@ -758,6 +761,14 @@ func newNetlinkSocket() (*netlinkSocket, error) {
 		return nil, fmt.Errorf("failed to bind netlink socket: %w", err)
 	}
 
+	// Bound each read so netlinkLoop can notice cancellation; without the
+	// timeout a read could block forever and the loop would never exit.
+	tv := syscall.Timeval{Sec: 1, Usec: 0}
+	if err := syscall.SetsockoptTimeval(fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv); err != nil {
+		syscall.Close(fd)
+		return nil, fmt.Errorf("failed to set netlink socket read timeout: %w", err)
+	}
+
 	return &netlinkSocket{fd: fd}, nil
 }
 
@@ -777,10 +788,7 @@ func (m *Monitor) netlinkLoop() {
 		default:
 		}
 
-		// Set read deadline
-		tv := syscall.Timeval{Sec: 1, Usec: 0}
-		syscall.SetsockoptTimeval(m.netlink.fd, syscall.SOL_SOCKET, syscall.SO_RCVTIMEO, &tv)
-
+		// The socket's SO_RCVTIMEO (set in newNetlinkSocket) bounds this read.
 		n, err := syscall.Read(m.netlink.fd, buf)
 		if err != nil {
 			if err == syscall.EAGAIN || err == syscall.EWOULDBLOCK {

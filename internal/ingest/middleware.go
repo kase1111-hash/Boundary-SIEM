@@ -1,17 +1,46 @@
 package ingest
 
 import (
+	"bufio"
+	"crypto/subtle"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"time"
 
 	"boundary-siem/internal/config"
+	"boundary-siem/internal/identity"
+	"boundary-siem/internal/middleware"
 )
 
-// WithMiddleware wraps the handler with middleware.
-func WithMiddleware(handler http.Handler, cfg *config.Config) http.Handler {
+// Paths served without API-key authentication. /health, /ready and
+// /metrics are probes; the WebSocket endpoints authenticate in-band (the
+// first message carries the key) because browsers cannot set headers on a
+// WebSocket handshake.
+var publicPaths = map[string]bool{
+	"/health":    true,
+	"/ready":     true,
+	"/metrics":   true,
+	"/ws":        true,
+	"/ws/events": true,
+}
+
+// isAPIPath reports whether path belongs to the data API, which always
+// requires authentication when it is enabled.
+func isAPIPath(path string) bool {
+	return path == "/v1" || strings.HasPrefix(path, "/v1/") ||
+		path == "/api" || strings.HasPrefix(path, "/api/")
+}
+
+// WithMiddleware wraps the handler with recovery, logging, authentication,
+// rate limiting, CORS and the security headers (security_headers: CSP,
+// X-Frame-Options, HSTS, ...), as configured. It returns the wrapped handler
+// and a function that releases the middleware's background resources (the
+// rate limiter's cleanup goroutine); call it on shutdown. It is safe to call
+// more than once.
+func WithMiddleware(handler http.Handler, cfg *config.Config) (http.Handler, func()) {
 	// Apply middleware in reverse order (last applied runs first)
 	h := handler
 
@@ -23,20 +52,30 @@ func WithMiddleware(handler http.Handler, cfg *config.Config) http.Handler {
 
 	// API key authentication (if enabled)
 	if cfg.Auth.Enabled {
-		h = authMiddleware(h, cfg.Auth)
+		h = authMiddleware(h, cfg.Auth, cfg.Server.WebDir != "")
 	}
 
 	// Rate limiting (if enabled) - after auth so authenticated requests are also limited
+	stop := func() {}
 	if cfg.RateLimit.Enabled {
-		h = rateLimitMiddleware(h, cfg.RateLimit)
+		limiter := middleware.NewRateLimiter(cfg.RateLimit, slog.Default())
+		h = limiter.Middleware()(h)
+		stop = limiter.Stop
 	}
 
-	// CORS middleware (if enabled) - must be outermost to handle preflight OPTIONS
+	// CORS middleware (if enabled) - outside auth and rate limiting to
+	// handle preflight OPTIONS
 	if cfg.CORS.Enabled {
 		h = corsMiddleware(h, cfg.CORS)
 	}
 
-	return h
+	// Security headers - outermost, so every response carries them: the
+	// dashboard, the API, auth errors and preflights. (They were configured
+	// and reported as enabled at startup but never applied, so the
+	// dashboard could be framed.)
+	h = middleware.NewSecurityHeadersMiddleware(cfg, slog.Default())(h)
+
+	return h, stop
 }
 
 // loggingMiddleware logs HTTP requests.
@@ -61,34 +100,71 @@ func loggingMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// authMiddleware checks for valid API key.
-func authMiddleware(next http.Handler, authCfg config.AuthConfig) http.Handler {
-	// Build a set of valid API keys for O(1) lookup
-	validKeys := make(map[string]bool)
-	for _, key := range authCfg.APIKeys {
-		validKeys[key] = true
+// validAPIKey reports whether key is one of keys. Every key is compared in
+// constant time so the comparison does not leak how much of a key matched.
+func validAPIKey(key string, keys []string) bool {
+	return apiKeyIndex(key, keys) >= 0
+}
+
+// apiKeyIndex returns the index of key in keys, or -1. Every key is compared
+// in constant time, as in validAPIKey.
+func apiKeyIndex(key string, keys []string) int {
+	index := -1
+	for i, k := range keys {
+		match := subtle.ConstantTimeCompare([]byte(key), []byte(k))
+		index = subtle.ConstantTimeSelect(match, i, index)
 	}
+	return index
+}
+
+// ValidAPIKey reports whether key is a configured API key, using the same
+// constant-time comparison as the HTTP middleware. An empty key is never
+// valid.
+func ValidAPIKey(key string, keys []string) bool {
+	return key != "" && validAPIKey(key, keys)
+}
+
+// authMiddleware checks for valid API key.
+func authMiddleware(next http.Handler, authCfg config.AuthConfig, webUI bool) http.Handler {
+	header := authCfg.APIKeyHeader
+	if header == "" {
+		header = "X-API-Key"
+	}
+	keys := append([]string(nil), authCfg.APIKeys...)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Skip auth for health and metrics endpoints
-		if r.URL.Path == "/health" || r.URL.Path == "/metrics" {
+		path := r.URL.Path
+		if publicPaths[path] ||
+			// The dashboard's static files hold no data; the dashboard
+			// asks for an API key and sends it with its API calls.
+			(webUI && !isAPIPath(path) && (r.Method == http.MethodGet || r.Method == http.MethodHead)) {
 			next.ServeHTTP(w, r)
 			return
 		}
 
-		apiKey := r.Header.Get(authCfg.APIKeyHeader)
+		apiKey := r.Header.Get(header)
 		if apiKey == "" {
-			http.Error(w, `{"success":false,"error":"missing API key"}`, http.StatusUnauthorized)
+			writeAuthError(w, "missing API key")
 			return
 		}
 
-		if !validKeys[apiKey] {
-			http.Error(w, `{"success":false,"error":"invalid API key"}`, http.StatusUnauthorized)
+		index := apiKeyIndex(apiKey, keys)
+		if index < 0 {
+			writeAuthError(w, "invalid API key")
 			return
 		}
 
-		next.ServeHTTP(w, r)
+		// Handlers record which key acted (identity.Caller), e.g. on alert
+		// actions, whatever user name the request claims.
+		next.ServeHTTP(w, r.WithContext(identity.WithCaller(r.Context(), identity.APIKeyCaller(index))))
 	})
+}
+
+func writeAuthError(w http.ResponseWriter, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(http.StatusUnauthorized)
+	fmt.Fprintf(w, `{"success":false,"error":%q}`+"\n", message)
 }
 
 // recoveryMiddleware recovers from panics.
@@ -96,6 +172,9 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
 			if err := recover(); err != nil {
+				if err == http.ErrAbortHandler {
+					panic(err)
+				}
 				slog.Error("panic recovered", "error", err, "path", r.URL.Path)
 				http.Error(w, `{"success":false,"error":"internal server error"}`, http.StatusInternalServerError)
 			}
@@ -105,7 +184,9 @@ func recoveryMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// responseWriter wraps http.ResponseWriter to capture the status code.
+// responseWriter wraps http.ResponseWriter to capture the status code. It
+// passes Hijack and Flush through, so WebSocket upgrades and streaming work
+// behind the logging middleware.
 type responseWriter struct {
 	http.ResponseWriter
 	statusCode int
@@ -114,6 +195,31 @@ type responseWriter struct {
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)
+}
+
+// Unwrap lets http.ResponseController reach the underlying writer.
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
+// Hijack implements http.Hijacker for WebSocket upgrades.
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hj, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("response writer %T does not support hijacking", rw.ResponseWriter)
+	}
+	conn, brw, err := hj.Hijack()
+	if err == nil {
+		rw.statusCode = http.StatusSwitchingProtocols
+	}
+	return conn, brw, err
+}
+
+// Flush implements http.Flusher.
+func (rw *responseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 // corsMiddleware handles CORS preflight and adds CORS headers to responses.

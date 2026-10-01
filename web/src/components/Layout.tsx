@@ -1,7 +1,11 @@
-import React from "react";
+import React, { useCallback, useEffect, useRef } from "react";
 import { NavLink, Outlet } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { ConnectionStatus } from "./ConnectionStatus";
+import { ApiKeyControl } from "./ApiKeyDialog";
 import { useWebSocket } from "../hooks/useWebSocket";
+import { KEY_NEEDED_REASON, useAuthReady } from "../hooks/useAuthReady";
+import type { EventStats, WSServerMessage } from "../types/api";
 
 const navItems = [
   { to: "/", label: "Dashboard" },
@@ -10,8 +14,50 @@ const navItems = [
   { to: "/rules", label: "Rules" },
 ];
 
+// Coalesce bursts of alert notifications into one refetch.
+const ALERT_REFRESH_DELAY_MS = 1000;
+
 export const Layout: React.FC = () => {
-  const { status } = useWebSocket({ enabled: true });
+  const queryClient = useQueryClient();
+  const alertRefreshRef = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(
+    () => () => {
+      if (alertRefreshRef.current) clearTimeout(alertRefreshRef.current);
+    },
+    [],
+  );
+
+  const handleMessage = useCallback(
+    (raw: unknown) => {
+      const msg = raw as WSServerMessage;
+      switch (msg?.type) {
+        case "alert":
+          if (!alertRefreshRef.current) {
+            alertRefreshRef.current = setTimeout(() => {
+              alertRefreshRef.current = undefined;
+              queryClient.invalidateQueries({ queryKey: ["alerts"] });
+              queryClient.invalidateQueries({ queryKey: ["alert"] });
+              queryClient.invalidateQueries({ queryKey: ["recent-alerts"] });
+              queryClient.invalidateQueries({ queryKey: ["alert-stats"] });
+            }, ALERT_REFRESH_DELAY_MS);
+          }
+          break;
+        case "stats":
+          queryClient.setQueryData<EventStats>(["event-stats"], msg.data);
+          break;
+        default:
+          // "event" frames are accepted but not rendered yet
+          break;
+      }
+    },
+    [queryClient],
+  );
+
+  // Pages (and their data requests) wait until an API key is known or the
+  // server needs none.
+  const ready = useAuthReady();
+  const { status } = useWebSocket({ enabled: ready, onMessage: handleMessage });
 
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
@@ -38,11 +84,21 @@ export const Layout: React.FC = () => {
               ))}
             </nav>
           </div>
-          <ConnectionStatus status={status} />
+          <div className="flex items-center gap-4">
+            <ApiKeyControl />
+            <ConnectionStatus status={status} />
+          </div>
         </div>
       </header>
       <main className="flex-1 p-6 overflow-auto">
-        <Outlet />
+        {ready ? (
+          <Outlet />
+        ) : (
+          <div className="text-center py-12 text-gray-400" role="status">
+            {KEY_NEEDED_REASON}. Use <span className="text-gray-300">Set API key</span>{" "}
+            above to continue.
+          </div>
+        )}
       </main>
     </div>
   );

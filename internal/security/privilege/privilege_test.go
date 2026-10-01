@@ -269,7 +269,9 @@ func TestVerifier_GetHistory(t *testing.T) {
 
 	// Perform several verifications
 	for i := 0; i < 5; i++ {
-		v.Verify(ctx, "test_op")
+		if err := v.Verify(ctx, "test_op"); err != nil {
+			t.Fatalf("Verify(test_op) failed: %v", err)
+		}
 	}
 
 	history := v.GetHistory(3)
@@ -286,7 +288,9 @@ func TestVerifier_GetHistory_MoreThanAvailable(t *testing.T) {
 	v, _ := NewVerifier(config, nil)
 
 	ctx := context.Background()
-	v.Verify(ctx, "test_op")
+	if err := v.Verify(ctx, "test_op"); err != nil {
+		t.Fatalf("Verify(test_op) failed: %v", err)
+	}
 
 	history := v.GetHistory(100)
 	if len(history) != 1 {
@@ -315,8 +319,14 @@ func TestVerifier_GetFailures(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	v.Verify(ctx, "test_success") // No requirement - should succeed
-	v.Verify(ctx, "fail_op")      // Root required - should fail
+	// No requirement - should succeed
+	if err := v.Verify(ctx, "test_success"); err != nil {
+		t.Fatalf("Verify(test_success) failed: %v", err)
+	}
+	// Root required - should fail
+	if err := v.Verify(ctx, "fail_op"); !errors.Is(err, ErrVerificationFailed) {
+		t.Fatalf("Verify(fail_op) error = %v, want ErrVerificationFailed", err)
+	}
 
 	failures := v.GetFailures()
 	if len(failures) == 0 {
@@ -363,7 +373,9 @@ func TestVerifier_OnViolation(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	v.Verify(ctx, "violation_test")
+	if err := v.Verify(ctx, "violation_test"); !errors.Is(err, ErrVerificationFailed) {
+		t.Errorf("Verify(violation_test) error = %v, want ErrVerificationFailed", err)
+	}
 
 	if !called {
 		t.Error("OnViolation callback should have been called")
@@ -570,7 +582,10 @@ func TestVerifier_HistoryEviction(t *testing.T) {
 
 	// Add 5 entries - oldest 2 should be evicted
 	for i := 0; i < 5; i++ {
-		v.Verify(ctx, "op_"+string(rune('a'+i)))
+		op := "op_" + string(rune('a'+i))
+		if err := v.Verify(ctx, op); err != nil {
+			t.Fatalf("Verify(%s) failed: %v", op, err)
+		}
 		time.Sleep(time.Millisecond) // Ensure different timestamps
 	}
 
@@ -585,7 +600,7 @@ func TestVerifier_GetInitialState(t *testing.T) {
 
 	state := v.GetInitialState()
 	if state == nil {
-		t.Error("GetInitialState should return non-nil")
+		t.Fatal("GetInitialState should return non-nil")
 	}
 	if state.CapturedAt.IsZero() {
 		t.Error("Initial state should have capture time")

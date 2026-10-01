@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS events_critical (
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (tenant_id, timestamp, event_id)
-TTL timestamp + INTERVAL 365 DAY DELETE
+TTL toDateTime(timestamp) + INTERVAL 365 DAY DELETE
 SETTINGS index_granularity = 8192;
 
 -- Materialized view to automatically copy high-severity events

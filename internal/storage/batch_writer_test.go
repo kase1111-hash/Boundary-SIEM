@@ -2,7 +2,9 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -426,24 +428,473 @@ func TestBatchWriterFlushFailureUpdatesMetrics(t *testing.T) {
 	}
 	client := newMockClient(conn)
 	bw := NewBatchWriter(client, cfg)
-	defer bw.Close()
 
 	// Write enough events to trigger a flush. The flush will fail because
 	// PrepareBatch always returns an error.
 	for i := 0; i < batchSize; i++ {
+		err := bw.Write(newTestEvent())
+		if i < batchSize-1 {
+			if err != nil {
+				t.Fatalf("Write() #%d error = %v, want nil below batch size", i+1, err)
+			}
+			continue
+		}
 		// The last Write triggers flushLocked which will fail.
-		bw.Write(newTestEvent())
+		if !errors.Is(err, ErrBatchInsertFailed) {
+			t.Fatalf("Write() triggering the failing flush error = %v, want ErrBatchInsertFailed", err)
+		}
 	}
 
+	// The failed batch is requeued rather than discarded. This test used to
+	// expect Failed == batchSize here, i.e. the batch silently dropped (H31).
 	metrics := bw.Metrics()
-	if metrics.Failed != uint64(batchSize) {
-		t.Errorf("Failed = %d, want %d", metrics.Failed, batchSize)
+	if metrics.Failed != 0 {
+		t.Errorf("Failed = %d, want 0 (batch requeued)", metrics.Failed)
+	}
+	if metrics.Pending != batchSize || metrics.Requeued != uint64(batchSize) {
+		t.Errorf("Pending = %d, Requeued = %d, want %d requeued events", metrics.Pending, metrics.Requeued, batchSize)
 	}
 	if metrics.Written != 0 {
 		t.Errorf("Written = %d, want 0 (all inserts failed)", metrics.Written)
 	}
 	if metrics.Batches != 0 {
 		t.Errorf("Batches = %d, want 0 (no successful batches)", metrics.Batches)
+	}
+
+	// Close gives up on events that still cannot be written, and says so.
+	if err := bw.Close(); !errors.Is(err, ErrBatchInsertFailed) {
+		t.Fatalf("Close() error = %v, want ErrBatchInsertFailed", err)
+	}
+	metrics = bw.Metrics()
+	if metrics.Failed != uint64(batchSize) || metrics.Pending != 0 {
+		t.Errorf("after Close: Failed = %d, Pending = %d, want %d, 0", metrics.Failed, metrics.Pending, batchSize)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Failure handling (H30, H31)
+// ---------------------------------------------------------------------------
+
+// sinkConn is a driver.Conn whose batches record the event IDs they carry.
+// sendErr decides whether a Send fails; successful sends add their IDs to
+// written.
+type sinkConn struct {
+	mockConn
+
+	mu        sync.Mutex
+	written   []uuid.UUID
+	sends     int
+	sendErr   func(send int) error
+	sendBlock chan struct{} // if set, Send waits for it to close
+	sending   chan struct{} // if set, receives a value when Send starts
+}
+
+func (c *sinkConn) PrepareBatch(context.Context, string, ...driver.PrepareBatchOption) (driver.Batch, error) {
+	return &sinkBatch{conn: c}, nil
+}
+
+func (c *sinkConn) writtenIDs() []uuid.UUID {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]uuid.UUID(nil), c.written...)
+}
+
+type sinkBatch struct {
+	mockBatch
+	conn *sinkConn
+	ids  []uuid.UUID
+}
+
+func (b *sinkBatch) Append(v ...any) error {
+	b.ids = append(b.ids, v[0].(uuid.UUID))
+	return nil
+}
+
+func (b *sinkBatch) Send() error {
+	if b.conn.sending != nil {
+		b.conn.sending <- struct{}{}
+	}
+	if b.conn.sendBlock != nil {
+		<-b.conn.sendBlock
+	}
+	b.conn.mu.Lock()
+	defer b.conn.mu.Unlock()
+	b.conn.sends++
+	if b.conn.sendErr != nil {
+		if err := b.conn.sendErr(b.conn.sends); err != nil {
+			return err
+		}
+	}
+	b.conn.written = append(b.conn.written, b.ids...)
+	return nil
+}
+
+// Regression (H30): flushLocked releases the mutex while inserting, and Close
+// returned as soon as it saw an empty buffer, so main closed the ClickHouse
+// client under a running timer flush and that batch was lost.
+func TestBatchWriterCloseWaitsForInflightFlush(t *testing.T) {
+	conn := &sinkConn{
+		sendBlock: make(chan struct{}),
+		sending:   make(chan struct{}, 1),
+	}
+	bw := NewBatchWriter(newMockClient(conn), BatchWriterConfig{
+		BatchSize:     100,
+		FlushInterval: 5 * time.Millisecond,
+		RetryDelay:    time.Millisecond,
+	})
+
+	if err := bw.Write(newTestEvent()); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+
+	// Wait until the timer flush is inside Send.
+	select {
+	case <-conn.sending:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timer flush never started")
+	}
+
+	closed := make(chan error, 1)
+	go func() { closed <- bw.Close() }()
+
+	select {
+	case err := <-closed:
+		t.Fatalf("Close() returned (err=%v) while a flush was still in flight; written=%d", err, len(conn.writtenIDs()))
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(conn.sendBlock)
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Close() did not return after the in-flight flush finished")
+	}
+
+	if got := len(conn.writtenIDs()); got != 1 {
+		t.Errorf("written events = %d, want 1", got)
+	}
+	if m := bw.Metrics(); m.Written != 1 || m.Failed != 0 {
+		t.Errorf("metrics = %+v, want Written 1, Failed 0", m)
+	}
+}
+
+// Regression (H31): once MaxRetries were exhausted the whole batch was
+// dropped, so a brief ClickHouse outage lost every batch flushed during it.
+func TestBatchWriterRequeuesFailedBatch(t *testing.T) {
+	var outage atomic.Bool
+	outage.Store(true)
+	conn := &sinkConn{sendErr: func(int) error {
+		if outage.Load() {
+			return errors.New("connection refused")
+		}
+		return nil
+	}}
+	bw := NewBatchWriter(newMockClient(conn), BatchWriterConfig{
+		BatchSize:     3,
+		FlushInterval: time.Hour,
+		MaxRetries:    1,
+		RetryDelay:    time.Millisecond,
+	})
+	defer bw.Close()
+
+	var sent []uuid.UUID
+	for i := 0; i < 3; i++ {
+		ev := newTestEvent()
+		sent = append(sent, ev.EventID)
+		err := bw.Write(ev)
+		if i == 2 && !errors.Is(err, ErrBatchInsertFailed) {
+			t.Fatalf("Write() triggering the failing flush error = %v, want ErrBatchInsertFailed", err)
+		}
+	}
+
+	m := bw.Metrics()
+	if m.Failed != 0 || m.Pending != 3 {
+		t.Fatalf("after failed flush: Failed = %d, Pending = %d, want 0 failed and 3 pending", m.Failed, m.Pending)
+	}
+
+	// ClickHouse is back: the next flush writes the requeued events.
+	outage.Store(false)
+	if err := bw.Flush(); err != nil {
+		t.Fatalf("Flush() error = %v", err)
+	}
+	if got := conn.writtenIDs(); len(got) != 3 || got[0] != sent[0] || got[2] != sent[2] {
+		t.Errorf("written = %v, want %v in order", got, sent)
+	}
+	if m := bw.Metrics(); m.Written != 3 || m.Failed != 0 || m.Pending != 0 {
+		t.Errorf("metrics = %+v, want Written 3, Failed 0, Pending 0", m)
+	}
+}
+
+// Review regression: with a negative max_retries the retry loop never ran, so
+// insertBatchWithRetries returned a nil error, and the requeue logic took that
+// as success: every batch was discarded unwritten, with no error and no
+// metric. The insert must always be attempted at least once.
+func TestBatchWriterNegativeMaxRetriesStillInserts(t *testing.T) {
+	var outage atomic.Bool
+	conn := &sinkConn{sendErr: func(int) error {
+		if outage.Load() {
+			return errors.New("connection refused")
+		}
+		return nil
+	}}
+	bw := NewBatchWriter(newMockClient(conn), BatchWriterConfig{
+		BatchSize:     2,
+		FlushInterval: time.Hour,
+		MaxRetries:    -1,
+		RetryDelay:    time.Millisecond,
+	})
+
+	for i := 0; i < 2; i++ {
+		if err := bw.Write(newTestEvent()); err != nil {
+			t.Fatalf("Write() error = %v", err)
+		}
+	}
+	if got := len(conn.writtenIDs()); got != 2 {
+		t.Fatalf("written = %d events, want 2", got)
+	}
+
+	// A failing insert is reported and requeued, not taken for a success.
+	outage.Store(true)
+	for i := 0; i < 2; i++ {
+		err := bw.Write(newTestEvent())
+		if i == 1 && !errors.Is(err, ErrBatchInsertFailed) {
+			t.Fatalf("Write() triggering the failing flush error = %v, want ErrBatchInsertFailed", err)
+		}
+	}
+	if m := bw.Metrics(); m.Written != 2 || m.Pending != 2 || m.Requeued != 2 {
+		t.Errorf("metrics = %+v, want Written 2, Pending 2, Requeued 2", m)
+	}
+
+	outage.Store(false)
+	if err := bw.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if m := bw.Metrics(); m.Written != 4 || m.Failed != 0 || m.Pending != 0 {
+		t.Errorf("metrics after Close = %+v, want Written 4", m)
+	}
+}
+
+// Requeued events go before events written while the failing insert ran.
+func TestBatchWriterRequeuePreservesOrder(t *testing.T) {
+	conn := &sinkConn{sendErr: func(send int) error {
+		if send == 1 {
+			return errors.New("boom")
+		}
+		return nil
+	}}
+	bw := NewBatchWriter(newMockClient(conn), BatchWriterConfig{BatchSize: 100, FlushInterval: time.Hour})
+	defer bw.Close()
+
+	var sent []uuid.UUID
+	write := func() {
+		ev := newTestEvent()
+		sent = append(sent, ev.EventID)
+		if err := bw.Write(ev); err != nil {
+			t.Fatalf("Write() error = %v", err)
+		}
+	}
+	write()
+	write()
+	if err := bw.Flush(); !errors.Is(err, ErrBatchInsertFailed) {
+		t.Fatalf("first Flush() error = %v, want ErrBatchInsertFailed", err)
+	}
+	write()
+	if err := bw.Flush(); err != nil {
+		t.Fatalf("second Flush() error = %v", err)
+	}
+
+	got := conn.writtenIDs()
+	if len(got) != 3 {
+		t.Fatalf("written %d events, want 3", len(got))
+	}
+	for i := range sent {
+		if got[i] != sent[i] {
+			t.Errorf("written[%d] = %v, want %v", i, got[i], sent[i])
+		}
+	}
+}
+
+func TestBatchWriterDeadLettersAfterMaxRequeues(t *testing.T) {
+	conn := &sinkConn{sendErr: func(int) error { return errors.New("table is read-only") }}
+
+	var mu sync.Mutex
+	var dead []*schema.Event
+	var causes []error
+	dlq := func(_ context.Context, events []*schema.Event, cause error) error {
+		mu.Lock()
+		defer mu.Unlock()
+		dead = append(dead, events...)
+		causes = append(causes, cause)
+		return nil
+	}
+
+	bw := NewBatchWriter(newMockClient(conn), BatchWriterConfig{
+		BatchSize:     2,
+		FlushInterval: time.Hour,
+		MaxRetries:    0,
+		MaxRequeues:   1,
+	}, WithDeadLetter(dlq))
+	defer bw.Close()
+
+	for i := 0; i < 2; i++ {
+		_ = bw.Write(newTestEvent())
+	}
+	// First failed flush requeues, the second exceeds MaxRequeues.
+	if err := bw.Flush(); !errors.Is(err, ErrBatchInsertFailed) || !strings.Contains(err.Error(), "2 dead-lettered") {
+		t.Fatalf("Flush() error = %v, want ErrBatchInsertFailed reporting 2 dead-lettered", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(dead) != 2 {
+		t.Fatalf("dead-lettered %d events, want 2", len(dead))
+	}
+	if len(causes) != 1 || !strings.Contains(causes[0].Error(), "table is read-only") {
+		t.Errorf("dead-letter causes = %v", causes)
+	}
+	if m := bw.Metrics(); m.Failed != 2 || m.DeadLettered != 2 || m.Pending != 0 || m.Requeued != 2 {
+		t.Errorf("metrics = %+v, want Failed 2, DeadLettered 2, Pending 0, Requeued 2", m)
+	}
+}
+
+func TestBatchWriterCloseReportsUnwritableEvents(t *testing.T) {
+	tests := []struct {
+		name      string
+		dlqErr    error
+		wantInErr string
+		wantDead  uint64
+	}{
+		{name: "no dead-letter handler", wantInErr: "2 dropped"},
+		{name: "dead-letter accepts", wantInErr: "2 dead-lettered", wantDead: 2},
+		{name: "dead-letter fails", dlqErr: errors.New("quarantine down"), wantInErr: "2 dropped"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn := &sinkConn{sendErr: func(int) error { return errors.New("connection refused") }}
+			var opts []BatchWriterOption
+			if tt.name != "no dead-letter handler" {
+				opts = append(opts, WithDeadLetter(func(context.Context, []*schema.Event, error) error { return tt.dlqErr }))
+			}
+			bw := NewBatchWriter(newMockClient(conn), BatchWriterConfig{BatchSize: 10, FlushInterval: time.Hour}, opts...)
+
+			_ = bw.Write(newTestEvent())
+			_ = bw.Write(newTestEvent())
+
+			err := bw.Close()
+			if !errors.Is(err, ErrBatchInsertFailed) || !strings.Contains(err.Error(), tt.wantInErr) {
+				t.Fatalf("Close() error = %v, want ErrBatchInsertFailed mentioning %q", err, tt.wantInErr)
+			}
+			if m := bw.Metrics(); m.Failed != 2 || m.DeadLettered != tt.wantDead || m.Pending != 0 {
+				t.Errorf("metrics = %+v, want Failed 2, DeadLettered %d, Pending 0", m, tt.wantDead)
+			}
+			if err := bw.Close(); err != nil {
+				t.Errorf("second Close() error = %v, want nil", err)
+			}
+			if err := bw.Write(newTestEvent()); !errors.Is(err, ErrWriterClosed) {
+				t.Errorf("Write() after Close error = %v, want ErrWriterClosed", err)
+			}
+		})
+	}
+}
+
+func TestBatchWriterMaxPendingBoundsMemory(t *testing.T) {
+	conn := &sinkConn{sendErr: func(int) error { return errors.New("connection refused") }}
+	var dead atomic.Int64
+	bw := NewBatchWriter(newMockClient(conn), BatchWriterConfig{
+		BatchSize:     3,
+		FlushInterval: time.Hour,
+		MaxPending:    5,
+		MaxRequeues:   1000,
+	}, WithDeadLetter(func(_ context.Context, events []*schema.Event, _ error) error {
+		dead.Add(int64(len(events)))
+		return nil
+	}))
+	defer bw.Close()
+
+	const total = 20
+	for i := 0; i < total; i++ {
+		_ = bw.Write(newTestEvent())
+		if p := bw.Metrics().Pending; p > 5 {
+			t.Fatalf("Pending = %d after %d writes, exceeds MaxPending 5", p, i+1)
+		}
+	}
+	m := bw.Metrics()
+	if int(m.Failed)+m.Pending != total || int64(m.Failed) != dead.Load() {
+		t.Errorf("metrics = %+v, dead-lettered %d: every event must be pending or dead-lettered", m, dead.Load())
+	}
+}
+
+// Every event ends up exactly once in ClickHouse or in the dead-letter
+// handler, whatever the interleaving of writers, timer flushes and failures.
+func TestBatchWriterConcurrentWritesWithFailuresLoseNothing(t *testing.T) {
+	conn := &sinkConn{sendErr: func(send int) error {
+		if send%3 != 0 {
+			return errors.New("intermittent")
+		}
+		return nil
+	}}
+	var mu sync.Mutex
+	var dead []uuid.UUID
+	bw := NewBatchWriter(newMockClient(conn), BatchWriterConfig{
+		BatchSize:     7,
+		FlushInterval: time.Millisecond,
+		MaxRetries:    1,
+		RetryDelay:    time.Microsecond,
+		MaxPending:    40,
+		MaxRequeues:   2,
+	}, WithDeadLetter(func(_ context.Context, events []*schema.Event, _ error) error {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, ev := range events {
+			dead = append(dead, ev.EventID)
+		}
+		return nil
+	}))
+
+	const writers, perWriter = 8, 150
+	var wg sync.WaitGroup
+	var sentMu sync.Mutex
+	sent := map[uuid.UUID]bool{}
+	for w := 0; w < writers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i := 0; i < perWriter; i++ {
+				ev := newTestEvent()
+				sentMu.Lock()
+				sent[ev.EventID] = true
+				sentMu.Unlock()
+				_ = bw.Write(ev) // errors report requeues; nothing is lost
+			}
+		}()
+	}
+	wg.Wait()
+	_ = bw.Close()
+
+	seen := map[uuid.UUID]int{}
+	for _, id := range conn.writtenIDs() {
+		seen[id]++
+	}
+	mu.Lock()
+	for _, id := range dead {
+		seen[id]++
+	}
+	mu.Unlock()
+
+	for id := range sent {
+		if seen[id] != 1 {
+			t.Errorf("event %v stored %d times, want exactly once", id, seen[id])
+		}
+	}
+	if len(seen) != len(sent) {
+		t.Errorf("stored %d distinct events, sent %d", len(seen), len(sent))
+	}
+	m := bw.Metrics()
+	if int(m.Written+m.Failed) != writers*perWriter || m.Failed != m.DeadLettered || m.Pending != 0 {
+		t.Errorf("metrics = %+v, want Written+Failed = %d, all failures dead-lettered", m, writers*perWriter)
 	}
 }
 
@@ -567,7 +1018,9 @@ func TestBatchWriterConcurrentWriteWithFlush(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := 0; i < eventsPerGoroutine; i++ {
-				bw.Write(newTestEvent())
+				if err := bw.Write(newTestEvent()); err != nil {
+					t.Errorf("Write() error = %v", err)
+				}
 			}
 		}()
 	}
@@ -580,5 +1033,26 @@ func TestBatchWriterConcurrentWriteWithFlush(t *testing.T) {
 	if accounted != totalEvents {
 		t.Errorf("Written(%d) + Pending(%d) + Failed(%d) = %d, want %d",
 			metrics.Written, metrics.Pending, metrics.Failed, accounted, totalEvents)
+	}
+}
+
+func TestSeverityToUInt8(t *testing.T) {
+	tests := []struct {
+		severity int
+		want     uint8
+	}{
+		{severity: 1, want: 1},
+		{severity: 10, want: 10},
+		{severity: 0, want: 0},
+		{severity: 255, want: 255},
+		{severity: 256, want: 255},
+		{severity: 1 << 20, want: 255},
+		{severity: -1, want: 0},
+	}
+
+	for _, tt := range tests {
+		if got := severityToUInt8(tt.severity); got != tt.want {
+			t.Errorf("severityToUInt8(%d) = %d, want %d", tt.severity, got, tt.want)
+		}
 	}
 }

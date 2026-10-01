@@ -43,10 +43,14 @@ func NewValidator() *Validator {
 func NewValidatorWithConfig(cfg ValidatorConfig) *Validator {
 	v := validator.New()
 
-	// Register custom validation for action format
-	v.RegisterValidation("action_format", func(fl validator.FieldLevel) bool {
+	// Register custom validation for action format. RegisterValidation only
+	// fails for an empty tag or nil function, so an error here is a programming
+	// bug; fail fast like regexp.MustCompile rather than validate without it.
+	if err := v.RegisterValidation("action_format", func(fl validator.FieldLevel) bool {
 		return actionPattern.MatchString(fl.Field().String())
-	})
+	}); err != nil {
+		panic(fmt.Sprintf("schema: registering action_format validation: %v", err))
+	}
 
 	return &Validator{
 		validate:  v,

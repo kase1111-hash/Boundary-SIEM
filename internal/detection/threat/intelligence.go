@@ -133,7 +133,6 @@ type IntelService struct {
 	// Statistics
 	totalScreenings int64
 	positiveMatches int64
-	lastUpdateTime  time.Time
 
 	stopCh chan struct{}
 	wg     sync.WaitGroup
@@ -467,7 +466,7 @@ func (s *IntelService) checkChainalysis(ctx context.Context, address string) ([]
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("Chainalysis API returned %d", resp.StatusCode)
+		return nil, fmt.Errorf("unexpected status %d from Chainalysis API", resp.StatusCode)
 	}
 
 	var result struct {

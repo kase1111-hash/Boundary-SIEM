@@ -390,9 +390,7 @@ func (m *Monitor) decodeParams(event *DecodedEvent, sig *EventSignature) {
 
 func (m *Monitor) decodeTopicValue(topic, paramName string) interface{} {
 	// Remove 0x prefix
-	if strings.HasPrefix(topic, "0x") {
-		topic = topic[2:]
-	}
+	topic = strings.TrimPrefix(topic, "0x")
 
 	// Address type
 	if strings.Contains(paramName, "owner") || strings.Contains(paramName, "spender") ||
@@ -834,8 +832,6 @@ func GetContractLabel(address string) string {
 
 // HexToBytes converts a hex string to bytes.
 func HexToBytes(hexStr string) ([]byte, error) {
-	if strings.HasPrefix(hexStr, "0x") {
-		hexStr = hexStr[2:]
-	}
+	hexStr = strings.TrimPrefix(hexStr, "0x")
 	return hex.DecodeString(hexStr)
 }

@@ -603,7 +603,7 @@ blockchain_health:
 
 These 8 feature categories transform Boundary SIEM from a **security-focused** tool into a **comprehensive operational health platform** for blockchain infrastructure. The combination of:
 
-- ✅ Existing security monitoring (143 rules, MEV, slashing)
+- ✅ Existing security monitoring (130 built-in rules, MEV, slashing)
 - ✅ Proposed degradation protection (8 new monitors)
 
 ...provides **defense in depth** against both malicious attacks AND operational degradation.

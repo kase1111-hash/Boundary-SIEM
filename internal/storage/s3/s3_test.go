@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"log/slog"
+	"math"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
@@ -432,5 +434,35 @@ func TestMetrics(t *testing.T) {
 	}
 	if archiverMetrics.BatchesCreated != 5 {
 		t.Errorf("expected 5 batches, got %d", archiverMetrics.BatchesCreated)
+	}
+}
+
+func TestRestoreRejectsOutOfRangeDays(t *testing.T) {
+	// Validation happens before any API call, so no S3 client is needed.
+	c := &Client{config: DefaultConfig()}
+
+	for _, days := range []int{0, -1, math.MaxInt32 + 1} {
+		err := c.Restore(context.Background(), &RestoreInput{Key: "k", Days: days})
+		if err == nil || !strings.Contains(err.Error(), "invalid restore days") {
+			t.Errorf("Restore(Days=%d) error = %v, want invalid restore days error", days, err)
+		}
+	}
+}
+
+func TestPoolGetWrapsWithoutNegativeIndex(t *testing.T) {
+	p := &Pool{clients: []*Client{{}, {}, {}}}
+
+	// Start just below the counter's wrap point; indexing must stay in range.
+	p.current.Store(math.MaxUint64 - 2)
+	seen := make(map[*Client]bool)
+	for i := 0; i < 6; i++ {
+		c := p.Get()
+		if c == nil {
+			t.Fatalf("Get() #%d returned nil", i+1)
+		}
+		seen[c] = true
+	}
+	if len(seen) != len(p.clients) {
+		t.Errorf("Get() visited %d distinct clients, want %d", len(seen), len(p.clients))
 	}
 }

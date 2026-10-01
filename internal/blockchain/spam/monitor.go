@@ -216,12 +216,14 @@ func (m *Monitor) CollectMetrics() *StorageMetrics {
 		if len(m.storageHistory) >= 2 {
 			oldest := m.storageHistory[0]
 			newest := m.storageHistory[len(m.storageHistory)-1]
-			bytesGrowth := int64(newest) - int64(oldest)
+			// Compute the (possibly negative) growth in float64 to avoid
+			// overflowing a uint64 -> int64 conversion.
+			bytesGrowth := float64(newest) - float64(oldest)
 
 			// Assume samples are taken at check interval
 			timeDiff := time.Duration(len(m.storageHistory)-1) * m.config.CheckInterval
 			if timeDiff > 0 {
-				gbPerDay := float64(bytesGrowth) / (1024 * 1024 * 1024) / timeDiff.Hours() * 24
+				gbPerDay := bytesGrowth / (1024 * 1024 * 1024) / timeDiff.Hours() * 24
 				metrics.StorageGrowthRate = gbPerDay
 
 				// Calculate days to limit

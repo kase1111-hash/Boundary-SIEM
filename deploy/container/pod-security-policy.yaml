@@ -53,8 +53,8 @@ spec:
     # Storage limits
     requests.storage: "100Gi"
     persistentvolumeclaims: "10"
-    # Prevent privileged containers
-    count/pods.spec.containers.securityContext.privileged: "0"
+    # Privileged containers are rejected by the "restricted" Pod Security
+    # Standard on the namespace and by the Gatekeeper constraints below.
 ---
 # =============================================================================
 # LimitRange - Default resource limits

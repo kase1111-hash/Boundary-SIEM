@@ -5,9 +5,14 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"os"
+	"path/filepath"
+	"regexp"
+	"strconv"
 	"time"
 
+	"boundary-siem/internal/alerting"
 	"boundary-siem/internal/encryption"
 	"boundary-siem/internal/secrets"
 
@@ -30,6 +35,45 @@ type Config struct {
 	Secrets         SecretsConfig           `yaml:"secrets"`
 	Encryption      EncryptionConfig        `yaml:"encryption"`
 	SecurityHeaders SecurityHeadersConfig   `yaml:"security_headers"`
+	Alerting        AlertingConfig          `yaml:"alerting"`
+	WebSocket       WebSocketConfig         `yaml:"websocket"`
+}
+
+// AlertingConfig holds alert management and notification settings.
+type AlertingConfig struct {
+	// Notifications lists the notification channels. With no channel
+	// configured a log channel named "default" is registered, which is the
+	// channel the built-in escalation policies notify. Secret fields (url,
+	// headers, routing_key, bot_token, chat_id, email.username and
+	// email.password) may reference environment variables as ${NAME}.
+	Notifications alerting.NotificationsConfig `yaml:"notifications"`
+
+	// DedupWindow is how long after the last occurrence of an alert a
+	// recurrence of its rule and group is merged into it, while the alert is
+	// not resolved.
+	DedupWindow time.Duration `yaml:"dedup_window"`
+	// RetentionPeriod is how long resolved alerts stay in memory.
+	RetentionPeriod time.Duration `yaml:"retention_period"`
+	// MaxAlerts bounds the number of alerts the manager tracks.
+	MaxAlerts int `yaml:"max_alerts"`
+	// EscalationInterval is how often escalation policies are evaluated.
+	EscalationInterval time.Duration `yaml:"escalation_interval"`
+}
+
+// WebSocketConfig holds settings for the /ws/events live stream.
+type WebSocketConfig struct {
+	Enabled bool `yaml:"enabled"`
+	// MaxClients caps concurrent connections (including ones still
+	// authenticating). Further upgrade requests get 503.
+	MaxClients int `yaml:"max_clients"`
+	// SendQueueSize is the number of messages buffered per client. A client
+	// whose queue is full is disconnected rather than slowing the server.
+	SendQueueSize int `yaml:"send_queue_size"`
+	// WriteTimeout bounds every write to a client.
+	WriteTimeout time.Duration `yaml:"write_timeout"`
+	// StatsInterval is how often event statistics are pushed to clients when
+	// storage is enabled. Zero disables stats messages.
+	StatsInterval time.Duration `yaml:"stats_interval"`
 }
 
 // RateLimitConfig holds rate limiting settings.
@@ -89,6 +133,13 @@ type BatchWriterConfig struct {
 	FlushInterval time.Duration `yaml:"flush_interval"`
 	MaxRetries    int           `yaml:"max_retries"`
 	RetryDelay    time.Duration `yaml:"retry_delay"`
+	// MaxPending bounds the events buffered in memory, including events put
+	// back after a failed flush. Zero means 10 x batch_size.
+	MaxPending int `yaml:"max_pending"`
+	// MaxRequeues is how many failed flushes an event survives before it is
+	// dead-lettered to events_quarantine. Zero means 3; a negative value
+	// gives up after the first failed flush.
+	MaxRequeues int `yaml:"max_requeues"`
 }
 
 // ConsumerConfig holds consumer settings.
@@ -104,8 +155,19 @@ type CorrelationEngineConfig struct {
 	StateCleanupFreq time.Duration `yaml:"state_cleanup_freq"` // How often to clean expired state
 	WorkerCount      int           `yaml:"worker_count"`       // Number of correlation workers
 	DedupWindow      time.Duration `yaml:"dedup_window"`       // Alert deduplication window
-	EventChannelSize int           `yaml:"event_channel_size"` // Event channel buffer size
+	EventChannelSize int           `yaml:"event_channel_size"` // Event channel buffer size (also the consumer -> engine buffer)
 	AlertChannelSize int           `yaml:"alert_channel_size"` // Alert channel buffer size
+	// RecurrenceInterval is the minimum time between two recurrences of a
+	// rule and group that the engine sends to the alert manager; firings
+	// within DedupWindow of the group's last new alert are recurrences.
+	RecurrenceInterval time.Duration `yaml:"recurrence_interval"`
+
+	// RulesDir holds custom rules and the enabled/disabled overrides of the
+	// built-in rules. The rules API writes to it.
+	RulesDir string `yaml:"rules_dir"`
+	// SeedRulesDir holds rule files (the shipped rules/ directory) copied
+	// into RulesDir the first time it is used. Empty disables seeding.
+	SeedRulesDir string `yaml:"seed_rules_dir"`
 }
 
 // ServerConfig holds HTTP server configuration.
@@ -113,6 +175,13 @@ type ServerConfig struct {
 	HTTPPort     int           `yaml:"http_port"`
 	ReadTimeout  time.Duration `yaml:"read_timeout"`
 	WriteTimeout time.Duration `yaml:"write_timeout"`
+	// ShutdownTimeout bounds graceful shutdown as a whole: stopping the
+	// listeners, draining the event queue, flushing storage and stopping the
+	// correlation engine. Keep it below the orchestrator's grace period
+	// (Docker sends SIGKILL 10s after SIGTERM by default).
+	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
+	// WebDir, when set, is a built web dashboard (web/dist) served at "/".
+	WebDir string `yaml:"web_dir"`
 }
 
 // IngestConfig holds ingestion settings.
@@ -171,7 +240,8 @@ type CEFDTLSConfig struct {
 	MaxMessageSize    int           `yaml:"max_message_size"`
 	ConnectionTimeout time.Duration `yaml:"connection_timeout"`
 	IdleTimeout       time.Duration `yaml:"idle_timeout"`
-	AllowInsecure     bool          `yaml:"allow_insecure"` // Allow fallback to plain UDP (NOT RECOMMENDED)
+	MaxConnections    int           `yaml:"max_connections"` // Concurrent DTLS connections, including handshakes
+	AllowInsecure     bool          `yaml:"allow_insecure"`  // Allow fallback to plain UDP (NOT RECOMMENDED)
 }
 
 // CEFTCPConfig holds TCP server settings for CEF.
@@ -331,9 +401,10 @@ type SecurityHeadersConfig struct {
 func DefaultConfig() *Config {
 	return &Config{
 		Server: ServerConfig{
-			HTTPPort:     8080,
-			ReadTimeout:  30 * time.Second,
-			WriteTimeout: 30 * time.Second,
+			HTTPPort:        8080,
+			ReadTimeout:     30 * time.Second,
+			WriteTimeout:    30 * time.Second,
+			ShutdownTimeout: 8 * time.Second,
 		},
 		Ingest: IngestConfig{
 			MaxBatchSize:   1000,
@@ -353,6 +424,7 @@ func DefaultConfig() *Config {
 					MaxMessageSize:    65535,
 					ConnectionTimeout: 30 * time.Second,
 					IdleTimeout:       5 * time.Minute,
+					MaxConnections:    1000,
 					AllowInsecure:     false,
 					RequireClientCert: false,
 				},
@@ -390,7 +462,7 @@ func DefaultConfig() *Config {
 			MaxFuture:   5 * time.Minute,
 			StrictMode:  false, // Disabled by default - enable for production
 		},
-		Auth: AuthConfig{
+		Auth: AuthConfig{ // #nosec G101 -- "X-API-Key" is the HTTP header name that carries API keys, not a credential; no default keys or passwords are shipped
 			APIKeyHeader: "X-API-Key",
 			Enabled:      false, // Disabled by default for development
 		},
@@ -416,13 +488,13 @@ func DefaultConfig() *Config {
 			MaxAge:           86400, // 24 hours preflight cache
 		},
 		RateLimit: RateLimitConfig{
-			Enabled:       true,                            // Rate limiting enabled by default
-			RequestsPerIP: 1000,                            // 1000 requests per IP per window
-			WindowSize:    time.Minute,                     // 1 minute window
-			BurstSize:     50,                              // Allow 50 extra requests burst
-			CleanupPeriod: 5 * time.Minute,                 // Clean old entries every 5 minutes
-			ExemptPaths:   []string{"/health", "/metrics"}, // Health/metrics exempt
-			TrustProxy:    false,                           // Don't trust X-Forwarded-For by default
+			Enabled:       true,                                      // Rate limiting enabled by default
+			RequestsPerIP: 1000,                                      // 1000 requests per IP per window
+			WindowSize:    time.Minute,                               // 1 minute window
+			BurstSize:     50,                                        // Allow 50 extra requests burst
+			CleanupPeriod: 5 * time.Minute,                           // Clean old entries every 5 minutes
+			ExemptPaths:   []string{"/health", "/ready", "/metrics"}, // Health/readiness/metrics exempt
+			TrustProxy:    false,                                     // Don't trust X-Forwarded-For by default
 		},
 		Logging: LoggingConfig{
 			Level:  "info",
@@ -460,12 +532,15 @@ func DefaultConfig() *Config {
 			ShutdownWait: 30 * time.Second,
 		},
 		Correlation: CorrelationEngineConfig{
-			MaxStateEntries:  100000,
-			StateCleanupFreq: 30 * time.Second,
-			WorkerCount:      4,
-			DedupWindow:      15 * time.Minute,
-			EventChannelSize: 10000,
-			AlertChannelSize: 1000,
+			MaxStateEntries:    100000,
+			StateCleanupFreq:   30 * time.Second,
+			WorkerCount:        4,
+			DedupWindow:        15 * time.Minute,
+			EventChannelSize:   10000,
+			AlertChannelSize:   1000,
+			RecurrenceInterval: 10 * time.Second,
+			RulesDir:           "data/rules",
+			SeedRulesDir:       "rules",
 		},
 		Secrets: SecretsConfig{
 			EnableVault:    false,                  // Vault disabled by default
@@ -519,31 +594,56 @@ func DefaultConfig() *Config {
 			CrossOriginResourcePolicyValue:   "same-origin",                                                  // Same origin only
 			CustomHeaders:                    make(map[string]string),                                        // No custom headers by default
 		},
+		Alerting: AlertingConfig{
+			DedupWindow:        15 * time.Minute,
+			RetentionPeriod:    30 * 24 * time.Hour,
+			MaxAlerts:          100000,
+			EscalationInterval: time.Minute,
+		},
+		WebSocket: WebSocketConfig{
+			Enabled:       true,
+			MaxClients:    100,
+			SendQueueSize: 64,
+			WriteTimeout:  10 * time.Second,
+			StatsInterval: 30 * time.Second,
+		},
 	}
 }
 
 // Load loads configuration from a file or returns defaults.
 func Load() (*Config, error) {
+	return LoadFrom("")
+}
+
+// LoadFrom loads configuration like Load, from the file at configPath; ""
+// means $SIEM_CONFIG_PATH, or configs/config.yaml when that is unset. A file
+// named by configPath must exist; the others are optional (the defaults and
+// environment overrides apply without them).
+func LoadFrom(configPath string) (*Config, error) {
 	cfg := DefaultConfig()
 
-	// Check for config file path in environment
-	configPath := os.Getenv("SIEM_CONFIG_PATH")
+	required := configPath != ""
+	if configPath == "" {
+		configPath = os.Getenv("SIEM_CONFIG_PATH")
+	}
 	if configPath == "" {
 		configPath = "configs/config.yaml"
 	}
 
 	// Try to load from file
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			// File doesn't exist, use defaults
-			return cfg, nil
+	data, err := os.ReadFile(filepath.Clean(configPath)) // #nosec G703 -- the path comes from the operator launching the process (-config or SIEM_CONFIG_PATH) and may legitimately point anywhere (e.g. /etc/boundary-siem); it is not request-derived
+	switch {
+	case err == nil:
+		if err := yaml.Unmarshal(data, cfg); err != nil {
+			return nil, fmt.Errorf("failed to parse config file: %w", err)
 		}
+	case os.IsNotExist(err) && required:
 		return nil, fmt.Errorf("failed to read config file: %w", err)
-	}
-
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config file: %w", err)
+	case os.IsNotExist(err):
+		// No config file: run on the defaults. Environment overrides still
+		// apply, so env-only deployments (containers) can be configured.
+	default:
+		return nil, fmt.Errorf("failed to read config file: %w", err)
 	}
 
 	// Override with environment variables
@@ -554,9 +654,7 @@ func Load() (*Config, error) {
 
 // applyEnvOverrides applies environment variable overrides.
 func (c *Config) applyEnvOverrides() {
-	if port := os.Getenv("SIEM_HTTP_PORT"); port != "" {
-		fmt.Sscanf(port, "%d", &c.Server.HTTPPort)
-	}
+	envInt("SIEM_HTTP_PORT", &c.Server.HTTPPort)
 
 	if level := os.Getenv("SIEM_LOG_LEVEL"); level != "" {
 		c.Logging.Level = level
@@ -567,10 +665,10 @@ func (c *Config) applyEnvOverrides() {
 		c.Auth.Enabled = true
 	}
 
-	// Storage settings
-	if enabled := os.Getenv("SIEM_STORAGE_ENABLED"); enabled == "true" {
-		c.Storage.Enabled = true
-	}
+	// Storage settings. Every SIEM_*_ENABLED override takes true or false
+	// (1/0, ...): several used to honour only one value, so for example
+	// SIEM_STORAGE_ENABLED=false left storage on.
+	envBool("SIEM_STORAGE_ENABLED", &c.Storage.Enabled)
 
 	if host := os.Getenv("CLICKHOUSE_HOST"); host != "" {
 		c.Storage.ClickHouse.Hosts = []string{host}
@@ -589,31 +687,20 @@ func (c *Config) applyEnvOverrides() {
 	}
 
 	// CORS settings
-	if enabled := os.Getenv("SIEM_CORS_ENABLED"); enabled == "false" {
-		c.CORS.Enabled = false
-	}
+	envBool("SIEM_CORS_ENABLED", &c.CORS.Enabled)
 
 	if origins := os.Getenv("SIEM_CORS_ORIGINS"); origins != "" {
 		c.CORS.AllowedOrigins = splitAndTrim(origins, ",")
 	}
 
 	// Rate limit settings
-	if enabled := os.Getenv("SIEM_RATELIMIT_ENABLED"); enabled == "false" {
-		c.RateLimit.Enabled = false
-	}
+	envBool("SIEM_RATELIMIT_ENABLED", &c.RateLimit.Enabled)
 
-	if rps := os.Getenv("SIEM_RATELIMIT_RPS"); rps != "" {
-		fmt.Sscanf(rps, "%d", &c.RateLimit.RequestsPerIP)
-	}
-
-	if burst := os.Getenv("SIEM_RATELIMIT_BURST"); burst != "" {
-		fmt.Sscanf(burst, "%d", &c.RateLimit.BurstSize)
-	}
+	envInt("SIEM_RATELIMIT_RPS", &c.RateLimit.RequestsPerIP)
+	envInt("SIEM_RATELIMIT_BURST", &c.RateLimit.BurstSize)
 
 	// Secrets management settings
-	if enabled := os.Getenv("SIEM_SECRETS_VAULT_ENABLED"); enabled == "true" {
-		c.Secrets.EnableVault = true
-	}
+	envBool("SIEM_SECRETS_VAULT_ENABLED", &c.Secrets.EnableVault)
 
 	if addr := os.Getenv("VAULT_ADDR"); addr != "" {
 		c.Secrets.VaultAddress = addr
@@ -627,18 +714,14 @@ func (c *Config) applyEnvOverrides() {
 		c.Secrets.VaultPath = path
 	}
 
-	if enabled := os.Getenv("SIEM_SECRETS_FILE_ENABLED"); enabled == "true" {
-		c.Secrets.EnableFile = true
-	}
+	envBool("SIEM_SECRETS_FILE_ENABLED", &c.Secrets.EnableFile)
 
 	if dir := os.Getenv("SIEM_SECRETS_DIR"); dir != "" {
 		c.Secrets.FileSecretsDir = dir
 	}
 
 	// Encryption settings
-	if enabled := os.Getenv("SIEM_ENCRYPTION_ENABLED"); enabled == "true" {
-		c.Encryption.Enabled = true
-	}
+	envBool("SIEM_ENCRYPTION_ENABLED", &c.Encryption.Enabled)
 
 	if keySource := os.Getenv("SIEM_ENCRYPTION_KEY_SOURCE"); keySource != "" {
 		c.Encryption.KeySource = keySource
@@ -648,29 +731,147 @@ func (c *Config) applyEnvOverrides() {
 		c.Encryption.KeyName = keyName
 	}
 
-	if version := os.Getenv("SIEM_ENCRYPTION_KEY_VERSION"); version != "" {
-		fmt.Sscanf(version, "%d", &c.Encryption.KeyVersion)
-	}
+	envInt("SIEM_ENCRYPTION_KEY_VERSION", &c.Encryption.KeyVersion)
 
 	// Security headers settings
-	if enabled := os.Getenv("SIEM_SECURITY_HEADERS_ENABLED"); enabled == "false" {
-		c.SecurityHeaders.Enabled = false
-	}
-
-	if enabled := os.Getenv("SIEM_HSTS_ENABLED"); enabled == "false" {
-		c.SecurityHeaders.HSTSEnabled = false
-	}
-
-	if maxAge := os.Getenv("SIEM_HSTS_MAX_AGE"); maxAge != "" {
-		fmt.Sscanf(maxAge, "%d", &c.SecurityHeaders.HSTSMaxAge)
-	}
-
-	if enabled := os.Getenv("SIEM_CSP_ENABLED"); enabled == "false" {
-		c.SecurityHeaders.CSPEnabled = false
-	}
+	envBool("SIEM_SECURITY_HEADERS_ENABLED", &c.SecurityHeaders.Enabled)
+	envBool("SIEM_HSTS_ENABLED", &c.SecurityHeaders.HSTSEnabled)
+	envInt("SIEM_HSTS_MAX_AGE", &c.SecurityHeaders.HSTSMaxAge)
+	envBool("SIEM_CSP_ENABLED", &c.SecurityHeaders.CSPEnabled)
 
 	if frameOptions := os.Getenv("SIEM_FRAME_OPTIONS"); frameOptions != "" {
 		c.SecurityHeaders.FrameOptionsValue = frameOptions
+	}
+
+	// Service wiring
+	if dir := os.Getenv("SIEM_RULES_DIR"); dir != "" {
+		c.Correlation.RulesDir = dir
+	}
+
+	if dir := os.Getenv("SIEM_SEED_RULES_DIR"); dir != "" {
+		c.Correlation.SeedRulesDir = dir
+	}
+
+	if dir := os.Getenv("SIEM_WEB_DIR"); dir != "" {
+		c.Server.WebDir = dir
+	}
+
+	envDuration("SIEM_SHUTDOWN_TIMEOUT", &c.Server.ShutdownTimeout)
+
+	// CEF listeners, so an environment-only deployment can move or disable
+	// them (the TCP listener was otherwise always on :5515).
+	envBool("SIEM_CEF_UDP_ENABLED", &c.Ingest.CEF.UDP.Enabled)
+	envString("SIEM_CEF_UDP_ADDRESS", &c.Ingest.CEF.UDP.Address)
+	envBool("SIEM_CEF_TCP_ENABLED", &c.Ingest.CEF.TCP.Enabled)
+	envString("SIEM_CEF_TCP_ADDRESS", &c.Ingest.CEF.TCP.Address)
+	envBool("SIEM_CEF_DTLS_ENABLED", &c.Ingest.CEF.DTLS.Enabled)
+	envString("SIEM_CEF_DTLS_ADDRESS", &c.Ingest.CEF.DTLS.Address)
+	// The certificates, so TLS and DTLS can be enabled without a config
+	// file (SIEM_CEF_DTLS_ENABLED=true used to fail with "DTLS requires
+	// certificate and key").
+	envString("SIEM_CEF_DTLS_CERT_FILE", &c.Ingest.CEF.DTLS.CertFile)
+	envString("SIEM_CEF_DTLS_KEY_FILE", &c.Ingest.CEF.DTLS.KeyFile)
+	envString("SIEM_CEF_DTLS_CA_FILE", &c.Ingest.CEF.DTLS.CAFile)
+	envBool("SIEM_CEF_DTLS_REQUIRE_CLIENT_CERT", &c.Ingest.CEF.DTLS.RequireClientCert)
+	envBool("SIEM_CEF_TCP_TLS_ENABLED", &c.Ingest.CEF.TCP.TLSEnabled)
+	envString("SIEM_CEF_TCP_TLS_CERT_FILE", &c.Ingest.CEF.TCP.TLSCertFile)
+	envString("SIEM_CEF_TCP_TLS_KEY_FILE", &c.Ingest.CEF.TCP.TLSKeyFile)
+
+	c.expandAlertingSecrets()
+}
+
+// envRef matches a ${NAME} environment variable reference.
+var envRef = regexp.MustCompile(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}`)
+
+// expandEnvRefs replaces every ${NAME} in s with the value of the environment
+// variable NAME. Other "$" characters are left alone, so URLs and tokens
+// that contain "$" are not mangled.
+func expandEnvRefs(s string) string {
+	if s == "" {
+		return s
+	}
+	return envRef.ReplaceAllStringFunc(s, func(ref string) string {
+		return os.Getenv(envRef.FindStringSubmatch(ref)[1])
+	})
+}
+
+// expandAlertingSecrets resolves ${NAME} references in the secret fields of
+// the notification channels, so credentials can come from the environment
+// (or a secrets manager that exports them) instead of the config file.
+func (c *Config) expandAlertingSecrets() {
+	for i := range c.Alerting.Notifications.Channels {
+		ch := &c.Alerting.Notifications.Channels[i]
+		ch.URL = expandEnvRefs(ch.URL)
+		ch.RoutingKey = expandEnvRefs(ch.RoutingKey)
+		ch.BotToken = expandEnvRefs(ch.BotToken)
+		ch.ChatID = expandEnvRefs(ch.ChatID)
+		for k, v := range ch.Headers {
+			ch.Headers[k] = expandEnvRefs(v)
+		}
+		if ch.Email != nil {
+			ch.Email.Username = expandEnvRefs(ch.Email.Username)
+			ch.Email.Password = expandEnvRefs(ch.Email.Password)
+		}
+	}
+}
+
+// envDuration sets *dst from the duration environment variable name (for
+// example "8s") when it is set. Invalid or non-positive values are logged and
+// leave *dst unchanged.
+func envDuration(name string, dst *time.Duration) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return
+	}
+	d, err := time.ParseDuration(trimSpace(raw))
+	if err != nil || d <= 0 {
+		slog.Warn("ignoring invalid duration environment override",
+			"variable", name, "value", raw, "error", err)
+		return
+	}
+	*dst = d
+}
+
+// envInt sets *dst from the integer environment variable name when it is set.
+// Values that are not valid integers are logged and leave *dst unchanged, so a
+// typo in an override falls back to the configured value instead of a
+// partially parsed one.
+func envInt(name string, dst *int) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return
+	}
+	n, err := strconv.Atoi(trimSpace(raw))
+	if err != nil {
+		slog.Warn("ignoring invalid integer environment override",
+			"variable", name, "value", raw, "error", err)
+		return
+	}
+	*dst = n
+}
+
+// envBool sets *dst from the boolean environment variable name (true/false,
+// 1/0, ...) when it is set. Other values are logged and leave *dst
+// unchanged.
+func envBool(name string, dst *bool) {
+	raw := os.Getenv(name)
+	if raw == "" {
+		return
+	}
+	b, err := strconv.ParseBool(trimSpace(raw))
+	if err != nil {
+		slog.Warn("ignoring invalid boolean environment override",
+			"variable", name, "value", raw, "error", err)
+		return
+	}
+	*dst = b
+}
+
+// envString sets *dst from the environment variable name when it is set to
+// something other than blanks.
+func envString(name string, dst *string) {
+	if v := trimSpace(os.Getenv(name)); v != "" {
+		*dst = v
 	}
 }
 
@@ -770,6 +971,10 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("max_batch_size must be positive")
 	}
 
+	if c.Server.ShutdownTimeout <= 0 {
+		return fmt.Errorf("server.shutdown_timeout must be positive")
+	}
+
 	// Validate admin password strength if provided
 	if c.Auth.DefaultAdminPassword != "" {
 		if err := ValidatePasswordStrength(c.Auth.DefaultAdminPassword); err != nil {
@@ -831,6 +1036,7 @@ func (c *Config) NewSecretsManager() (*secrets.Manager, error) {
 		VaultAddress: c.Secrets.VaultAddress,
 		VaultToken:   c.Secrets.VaultToken,
 		VaultPath:    c.Secrets.VaultPath,
+		FileDir:      c.Secrets.FileSecretsDir,
 		CacheTTL:     c.Secrets.CacheTTL,
 	}
 
@@ -922,7 +1128,7 @@ func (c *Config) NewEncryptionEngine(ctx context.Context) (*encryption.Engine, e
 			keyPath = "/etc/boundary-siem/encryption.key"
 		}
 
-		keyData, err := os.ReadFile(keyPath)
+		keyData, err := os.ReadFile(filepath.Clean(keyPath))
 		if err != nil {
 			return nil, fmt.Errorf("failed to read encryption key file %s: %w", keyPath, err)
 		}

@@ -1,0 +1,13 @@
+id: dep
+name: dangling dep
+type: threshold
+severity: 5
+depends_on: [does-not-exist]
+threshold:
+  count: 1
+window: 1m
+conditions:
+  match:
+    - field: action
+      operator: eq
+      value: x

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +30,18 @@ type Alert struct {
 	MITRE       *MITREMapping  `json:"mitre,omitempty"`
 	Metadata    map[string]any `json:"metadata,omitempty"`
 	Status      AlertStatus    `json:"status"`
+	// Recurrence marks a further firing of the rule for the same group
+	// within the dedup window of the group's last alert (see EngineConfig).
+	// Its Events are only the events that no earlier alert of the group
+	// reported. The alert manager merges it into the open alert of the rule
+	// and group, or raises a new alert when that one has been resolved.
+	// Recurrences are not re-injected for rule chaining.
+	Recurrence bool `json:"recurrence,omitempty"`
+
+	// trigger is the event whose arrival made the rule fire. AlertReinjector
+	// copies its actor and metadata into the re-injected alert.fired event,
+	// so that chains can correlate their stages by entity (see ChainDef).
+	trigger *schema.Event
 }
 
 // EventRef references an event that contributed to the alert.
@@ -51,39 +64,60 @@ const (
 type AlertHandler func(context.Context, *Alert) error
 
 // EngineConfig configures the correlation engine.
+//
+// Every firing of a rule reports only the events that no earlier alert of the
+// rule and group reported, so no event is counted twice. Within DedupWindow
+// of the last new alert of a rule and group, a further firing is not a new
+// alert but a recurrence of it (Alert.Recurrence). A rule and group sends at
+// most one alert or recurrence per RecurrenceInterval; firings in between are
+// batched into the next recurrence, so an ongoing attack produces a bounded
+// stream of recurrences whatever its event rate.
 type EngineConfig struct {
-	MaxStateEntries  int           // Maximum entries per rule state
-	StateCleanupFreq time.Duration // How often to clean expired state
-	WorkerCount      int           // Number of correlation workers
-	DedupWindow      time.Duration // Alert deduplication window (0 = use rule window)
-	EventChannelSize int           // Event channel buffer size
-	AlertChannelSize int           // Alert channel buffer size
+	MaxStateEntries    int           // Maximum entries per rule state
+	StateCleanupFreq   time.Duration // How often to clean expired state
+	WorkerCount        int           // Number of correlation workers
+	DedupWindow        time.Duration // Alert deduplication window (0 = use rule window)
+	RecurrenceInterval time.Duration // Minimum time between recurrences of a rule and group
+	EventChannelSize   int           // Event channel buffer size
+	AlertChannelSize   int           // Alert channel buffer size
 }
+
+// DefaultRecurrenceInterval is the default EngineConfig.RecurrenceInterval.
+const DefaultRecurrenceInterval = 10 * time.Second
 
 // DefaultEngineConfig returns default engine configuration.
 func DefaultEngineConfig() EngineConfig {
 	return EngineConfig{
-		MaxStateEntries:  100000,
-		StateCleanupFreq: 30 * time.Second,
-		WorkerCount:      4,
-		DedupWindow:      0, // Use per-rule window by default
-		EventChannelSize: 10000,
-		AlertChannelSize: 1000,
+		MaxStateEntries:    100000,
+		StateCleanupFreq:   30 * time.Second,
+		WorkerCount:        4,
+		DedupWindow:        0, // Use per-rule window by default
+		RecurrenceInterval: DefaultRecurrenceInterval,
+		EventChannelSize:   10000,
+		AlertChannelSize:   1000,
 	}
 }
 
+// defaultGroupKey is the group key of rules without GroupBy.
+const defaultGroupKey = "default"
+
 // Engine processes events and evaluates correlation rules.
+//
+// Windows are sliding and measured in processing time: an event counts for
+// Rule.Window after the engine receives it, whatever its own Timestamp says,
+// so late or clock-skewed events still correlate.
 type Engine struct {
-	config   EngineConfig
-	rules    map[string]*Rule
-	states   map[string]*RuleState
-	handlers []AlertHandler
-	baseline *BaselineEngine
-	mu       sync.RWMutex
-	eventCh  chan *schema.Event
-	alertCh  chan *Alert
-	stopCh   chan struct{}
-	wg       sync.WaitGroup
+	config    EngineConfig
+	rules     map[string]*Rule
+	consumers map[string]bool // rule ID -> rule evaluates re-injected alert.fired events
+	states    map[string]*RuleState
+	handlers  []AlertHandler
+	baseline  *BaselineEngine
+	mu        sync.RWMutex
+	eventCh   chan *schema.Event
+	alertCh   chan *Alert
+	stopCh    chan struct{}
+	wg        sync.WaitGroup
 }
 
 // RuleState maintains correlation state for a rule.
@@ -91,41 +125,133 @@ type RuleState struct {
 	mu       sync.Mutex
 	windows  map[string]*Window // Keyed by group key
 	rule     *Rule
-	lastFire map[string]time.Time // For dedup
+	lastFire map[string]time.Time // last new alert per group (DedupWindow)
+	lastSent map[string]time.Time // last alert or recurrence sent per group
+	pending  map[string]*pendingRecurrence
 }
 
-// Window tracks events in a time window.
+func newRuleState(rule *Rule) *RuleState {
+	return &RuleState{
+		windows:  make(map[string]*Window),
+		rule:     rule,
+		lastFire: make(map[string]time.Time),
+		lastSent: make(map[string]time.Time),
+		pending:  make(map[string]*pendingRecurrence),
+	}
+}
+
+// pendingRecurrence collects the firings of a rule and group that wait for
+// RecurrenceInterval to pass before they are sent as one recurrence.
+type pendingRecurrence struct {
+	events  []EventRef
+	depth   int           // deepest chain depth among the events
+	trigger *schema.Event // the event of the latest firing
+}
+
+// Window tracks events in a sliding time window.
 type Window struct {
 	Events    []*schema.Event
-	StartTime time.Time
+	StartTime time.Time // creation, or start of the current absence period
+	LastSeen  time.Time // arrival of the most recent event
 	Count     int
 	Sum       float64
 	// Sequence tracking
 	StepIndex int
 	Steps     map[int]bool
+	SeqStart  time.Time // when the first step of the current sequence matched
 	// Absence tracking
 	AbsenceSeen    bool
 	AbsenceChecked time.Time
+
+	arrivals []time.Time // arrival time of each entry of Events
+	// reported is how many leading entries of Events an alert of this group
+	// already included; later alerts include only the entries after them.
+	reported int
 }
 
-// NewEngine creates a new correlation engine.
-func NewEngine(config EngineConfig) *Engine {
-	eventChSize := config.EventChannelSize
-	if eventChSize <= 0 {
-		eventChSize = 10000
+func newWindow(now time.Time) *Window {
+	return &Window{
+		Events:    make([]*schema.Event, 0, 16),
+		StartTime: now,
+		LastSeen:  now,
+		Steps:     make(map[int]bool),
 	}
-	alertChSize := config.AlertChannelSize
-	if alertChSize <= 0 {
-		alertChSize = 1000
+}
+
+// trim drops events that arrived more than span before now.
+func (w *Window) trim(now time.Time, span time.Duration) {
+	cutoff := now.Add(-span)
+	drop := 0
+	for drop < len(w.arrivals) && !w.arrivals[drop].After(cutoff) {
+		drop++
+	}
+	if drop > 0 {
+		w.Events = append(w.Events[:0], w.Events[drop:]...)
+		w.arrivals = append(w.arrivals[:0], w.arrivals[drop:]...)
+		w.reported = max(w.reported-drop, 0)
+	}
+	w.Count = len(w.Events)
+}
+
+// takeUnreported returns the events that no alert has reported yet and marks
+// them reported.
+func (w *Window) takeUnreported() []*schema.Event {
+	events := w.Events[w.reported:]
+	w.reported = len(w.Events)
+	return events
+}
+
+func (w *Window) add(event *schema.Event, now time.Time) {
+	w.Events = append(w.Events, event)
+	w.arrivals = append(w.arrivals, now)
+	w.Count = len(w.Events)
+	w.LastSeen = now
+}
+
+func (w *Window) clearEvents() {
+	w.Events = w.Events[:0]
+	w.arrivals = w.arrivals[:0]
+	w.Count = 0
+	w.reported = 0
+}
+
+func (w *Window) resetSequence() {
+	w.StepIndex = 0
+	w.Steps = make(map[int]bool)
+	w.SeqStart = time.Time{}
+}
+
+// NewEngine creates a new correlation engine. Zero or negative sizes, counts
+// and frequencies in config are replaced by DefaultEngineConfig values.
+func NewEngine(config EngineConfig) *Engine {
+	defaults := DefaultEngineConfig()
+	if config.EventChannelSize <= 0 {
+		config.EventChannelSize = defaults.EventChannelSize
+	}
+	if config.AlertChannelSize <= 0 {
+		config.AlertChannelSize = defaults.AlertChannelSize
+	}
+	if config.MaxStateEntries <= 0 {
+		config.MaxStateEntries = defaults.MaxStateEntries
+	}
+	if config.StateCleanupFreq <= 0 {
+		config.StateCleanupFreq = defaults.StateCleanupFreq
+	}
+	if config.WorkerCount <= 0 {
+		config.WorkerCount = defaults.WorkerCount
+	}
+	if config.RecurrenceInterval <= 0 {
+		config.RecurrenceInterval = defaults.RecurrenceInterval
 	}
 	return &Engine{
-		config:   config,
-		rules:    make(map[string]*Rule),
-		states:   make(map[string]*RuleState),
-		baseline: NewBaselineEngine(),
-		eventCh:  make(chan *schema.Event, eventChSize),
-		alertCh:  make(chan *Alert, alertChSize),
-		stopCh:   make(chan struct{}),
+		config:    config,
+		rules:     make(map[string]*Rule),
+		consumers: make(map[string]bool),
+		states:    make(map[string]*RuleState),
+		baseline:  NewBaselineEngine(),
+		eventCh:   make(chan *schema.Event, config.EventChannelSize),
+		alertCh:   make(chan *Alert, config.AlertChannelSize),
+		stopCh:    make(chan struct{}),
 	}
 }
 
@@ -134,21 +260,25 @@ func (e *Engine) Baseline() *BaselineEngine {
 	return e.baseline
 }
 
-// AddRule adds a correlation rule.
+// AddRule adds a correlation rule, replacing any rule with the same ID (and
+// its correlation state).
 func (e *Engine) AddRule(rule *Rule) error {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-
 	if err := rule.Validate(); err != nil {
 		return err
 	}
 
-	e.rules[rule.ID] = rule
-	e.states[rule.ID] = &RuleState{
-		windows:  make(map[string]*Window),
-		rule:     rule,
-		lastFire: make(map[string]time.Time),
+	now := time.Now()
+	state := newRuleState(rule)
+	if rule.Type == RuleTypeAbsence && len(rule.GroupBy) == 0 {
+		// The expected event is due within one window from now.
+		state.windows[defaultGroupKey] = newWindow(now)
 	}
+
+	e.mu.Lock()
+	e.rules[rule.ID] = rule
+	e.consumers[rule.ID] = rule.consumesAlerts()
+	e.states[rule.ID] = state
+	e.mu.Unlock()
 
 	slog.Info("added correlation rule", "rule_id", rule.ID, "type", rule.Type)
 	return nil
@@ -160,7 +290,52 @@ func (e *Engine) RemoveRule(ruleID string) {
 	defer e.mu.Unlock()
 
 	delete(e.rules, ruleID)
+	delete(e.consumers, ruleID)
 	delete(e.states, ruleID)
+}
+
+// SetRuleEnabled enables or disables a loaded rule and returns the updated
+// rule. Rules are shared with running workers and API readers, so the rule is
+// replaced by an updated copy instead of being modified in place; its
+// correlation state is kept, except that enabling an absence rule starts a
+// new period for every group (no event reached the rule while it was
+// disabled, so that time must not count as an absence).
+func (e *Engine) SetRuleEnabled(ruleID string, enabled bool) (*Rule, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	rule, ok := e.rules[ruleID]
+	if !ok {
+		return nil, false
+	}
+	if rule.Enabled == enabled {
+		return rule, true
+	}
+	updated := *rule
+	updated.Enabled = enabled
+	e.rules[ruleID] = &updated
+	if state := e.states[ruleID]; state != nil {
+		state.mu.Lock()
+		state.rule = &updated
+		if enabled && updated.Type == RuleTypeAbsence {
+			now := time.Now()
+			for _, window := range state.windows {
+				window.StartTime = now
+				window.AbsenceSeen = false
+				window.clearEvents()
+			}
+		}
+		state.mu.Unlock()
+	}
+	return &updated, true
+}
+
+// CheckDependencies reports every loaded rule that builds on a rule which is
+// not loaded (depends_on entries and kill-chain stages, see
+// ReferencedRuleIDs). Call it once all rules are registered: such rules can
+// never fire.
+func (e *Engine) CheckDependencies() error {
+	return ValidateDependencies(e.GetRules(), nil)
 }
 
 // AddHandler adds an alert handler.
@@ -212,6 +387,10 @@ func (e *Engine) Start(ctx context.Context) {
 	e.wg.Add(1)
 	go e.absenceChecker(ctx)
 
+	// Start the sender of collected recurrences
+	e.wg.Add(1)
+	go e.recurrenceFlusher(ctx)
+
 	slog.Info("correlation engine started", "workers", e.config.WorkerCount)
 }
 
@@ -237,21 +416,49 @@ func (e *Engine) worker(ctx context.Context, id int) {
 	}
 }
 
+// isSynthetic reports whether event is an alert re-injected by
+// AlertReinjector. An ingested event's own is_synthetic metadata does not
+// count (see metaReinjected).
+func isSynthetic(event *schema.Event) bool {
+	_, ok := reinjectedDepth(event)
+	return ok
+}
+
 func (e *Engine) processEvent(ctx context.Context, event *schema.Event) {
+	synthetic := isSynthetic(event)
+
 	e.mu.RLock()
 	rules := make([]*Rule, 0, len(e.rules))
-	for _, rule := range e.rules {
-		if rule.Enabled {
-			rules = append(rules, rule)
+	for id, rule := range e.rules {
+		if !rule.Enabled {
+			continue
 		}
+		// Re-injected alerts only reach rules written to consume them, so an
+		// alert cannot re-trigger loosely filtered rules (alert storms).
+		if synthetic && !e.consumers[id] {
+			continue
+		}
+		rules = append(rules, rule)
 	}
 	e.mu.RUnlock()
 
 	for _, rule := range rules {
-		if e.matchesRuleConditions(event, rule.Conditions) {
+		if e.matchesRuleFilter(event, rule) {
 			e.evaluateRule(ctx, rule, event)
 		}
 	}
+}
+
+// matchesRuleFilter checks the event against all of the rule's filters:
+// Conditions.Match, EventConditions and the Condition tree.
+func (e *Engine) matchesRuleFilter(event *schema.Event, rule *Rule) bool {
+	if !e.matchesRuleConditions(event, rule.Conditions) {
+		return false
+	}
+	if !e.matchesConditions(event, rule.EventConditions) {
+		return false
+	}
+	return rule.Condition.IsZero() || e.matchConditionTree(event, rule.Condition)
 }
 
 // matchesRuleConditions checks if event matches rule's Conditions struct.
@@ -329,21 +536,15 @@ func matchValue(eventValue any, operator string, expected any) bool {
 		}
 	case "in":
 		eventStr := fmt.Sprintf("%v", eventValue)
-		if vals, ok := expected.([]string); ok {
-			for _, v := range vals {
-				if eventStr == v {
-					return true
-				}
-			}
-		}
-		if vals, ok := expected.([]any); ok {
-			for _, v := range vals {
-				if eventStr == fmt.Sprintf("%v", v) {
-					return true
-				}
+		for _, v := range listValues(expected) {
+			if eventStr == v {
+				return true
 			}
 		}
 		return false
+	case "regex", "not_in", "exists", "not_exists":
+		cond := Condition{Operator: operator, Value: expected}
+		return cond.Match(eventValue)
 	}
 	return false
 }
@@ -408,7 +609,30 @@ func (e *Engine) getEventField(event *schema.Event, field string) any {
 	return nil
 }
 
+// dedupWindow is how long an alert for a rule and group suppresses the next.
+func (e *Engine) dedupWindow(rule *Rule) time.Duration {
+	if e.config.DedupWindow > 0 {
+		return e.config.DedupWindow
+	}
+	return rule.Window
+}
+
+// sequenceSpan is how far apart the first and last step of a sequence may be.
+func sequenceSpan(rule *Rule) time.Duration {
+	if rule.Sequence != nil && rule.Sequence.MaxSpan > 0 {
+		return rule.Sequence.MaxSpan
+	}
+	return rule.Window
+}
+
 func (e *Engine) evaluateRule(ctx context.Context, rule *Rule, event *schema.Event) {
+	// Absence rules only track the expected event; anything else neither
+	// satisfies nor opens an absence period.
+	if rule.Type == RuleTypeAbsence &&
+		(rule.Absence == nil || !e.matchesConditions(event, rule.Absence.ExpectedConditions)) {
+		return
+	}
+
 	e.mu.RLock()
 	state := e.states[rule.ID]
 	e.mu.RUnlock()
@@ -422,44 +646,33 @@ func (e *Engine) evaluateRule(ctx context.Context, rule *Rule, event *schema.Eve
 	state.mu.Lock()
 	defer state.mu.Unlock()
 
-	window := state.windows[groupKey]
+	// Taken under the state lock so arrival times within a window never
+	// decrease.
 	now := time.Now()
 
-	// Create or reset window if needed
-	if window == nil || now.Sub(window.StartTime) > rule.Window {
-		// Enforce MaxStateEntries: evict oldest window if at capacity
-		if window == nil && len(state.windows) >= e.config.MaxStateEntries {
+	window := state.windows[groupKey]
+	if window == nil {
+		// Enforce MaxStateEntries: evict the least recently used window.
+		if len(state.windows) >= e.config.MaxStateEntries {
 			var oldestKey string
 			var oldestTime time.Time
 			for k, w := range state.windows {
-				if oldestKey == "" || w.StartTime.Before(oldestTime) {
+				if oldestKey == "" || w.LastSeen.Before(oldestTime) {
 					oldestKey = k
-					oldestTime = w.StartTime
+					oldestTime = w.LastSeen
 				}
 			}
 			if oldestKey != "" {
 				delete(state.windows, oldestKey)
 			}
 		}
-
-		window = &Window{
-			Events:    make([]*schema.Event, 0, 100),
-			StartTime: now,
-			Steps:     make(map[int]bool),
-		}
+		window = newWindow(now)
 		state.windows[groupKey] = window
 	}
 
-	// Trim old events
-	cutoff := now.Add(-rule.Window)
-	newEvents := make([]*schema.Event, 0, len(window.Events))
-	for _, e := range window.Events {
-		if e.Timestamp.After(cutoff) {
-			newEvents = append(newEvents, e)
-		}
-	}
-	window.Events = append(newEvents, event)
-	window.Count = len(window.Events)
+	// Sliding window: keep what arrived during the last rule.Window.
+	window.trim(now, rule.Window)
+	window.add(event, now)
 
 	// Evaluate based on rule type
 	var fired bool
@@ -467,12 +680,15 @@ func (e *Engine) evaluateRule(ctx context.Context, rule *Rule, event *schema.Eve
 	case RuleTypeThreshold:
 		fired = e.evaluateThreshold(window, rule, groupKey)
 	case RuleTypeSequence:
-		fired = e.evaluateSequence(window, rule, event)
+		fired = e.evaluateSequence(window, rule, event, now)
+		if fired {
+			// A completed sequence is consumed; the next alert needs a new one.
+			defer window.resetSequence()
+		}
 	case RuleTypeAggregate:
 		fired = e.evaluateAggregate(window, rule)
 	case RuleTypeAbsence:
-		// For absence rules, the trigger event resets the absence timer.
-		// Mark that we've seen the expected event in this window.
+		// The expected event arrived: the current absence period is satisfied.
 		if !window.AbsenceSeen {
 			slog.Debug("absence rule: expected event seen, resetting timer",
 				"rule_id", rule.ID,
@@ -484,16 +700,113 @@ func (e *Engine) evaluateRule(ctx context.Context, rule *Rule, event *schema.Eve
 	}
 
 	if fired {
-		// Check for duplicate suppression
-		if lastFire, ok := state.lastFire[groupKey]; ok {
-			if now.Sub(lastFire) < rule.Window {
-				return // Suppress duplicate
-			}
+		e.fire(state, rule, window, groupKey, event, now)
+	}
+}
+
+// fire reports a firing of rule for groupKey caused by trigger. The caller
+// holds state.mu.
+//
+// The alert lists only the window's events that no earlier alert of the
+// group reported. Within the dedup window of the group's last new alert the
+// firing is a recurrence of it: the recurrence is sent at once when the
+// group sent nothing during the last RecurrenceInterval, and otherwise waits
+// for flushRecurrences, collecting the firings in between.
+//
+// (Firings within the dedup window used to be dropped. The alert manager
+// never saw them, so a resumed attack after its alert was resolved raised
+// nothing and an open alert's event count never grew.)
+func (e *Engine) fire(state *RuleState, rule *Rule, window *Window, groupKey string, trigger *schema.Event, now time.Time) {
+	refs, depth := eventRefs(window.takeUnreported())
+	e.report(state, rule, groupKey, refs, depth, trigger, now)
+}
+
+// report sends a firing of rule for groupKey that lists refs as a new alert
+// or, within the dedup window of the group's last new alert, as a recurrence
+// of it (see fire). trigger may be nil. The caller holds state.mu.
+func (e *Engine) report(state *RuleState, rule *Rule, groupKey string, refs []EventRef, depth int, trigger *schema.Event, now time.Time) {
+	if last, ok := state.lastFire[groupKey]; !ok || now.Sub(last) >= e.dedupWindow(rule) {
+		// A new alert. It takes over a recurrence that is still waiting.
+		if p := state.pending[groupKey]; p != nil {
+			refs = append(p.events, refs...)
+			depth = max(depth, p.depth)
+			delete(state.pending, groupKey)
 		}
 		state.lastFire[groupKey] = now
-
-		alert := e.createAlert(rule, window, groupKey)
+		state.lastSent[groupKey] = now
+		alert := e.newAlert(rule, groupKey, refs, depth)
+		alert.trigger = trigger
 		e.sendAlert(alert)
+		return
+	}
+
+	p := state.pending[groupKey]
+	if p == nil {
+		p = &pendingRecurrence{}
+		state.pending[groupKey] = p
+	}
+	p.events = append(p.events, refs...)
+	p.depth = max(p.depth, depth)
+	p.trigger = trigger
+	if now.Sub(state.lastSent[groupKey]) >= e.config.RecurrenceInterval {
+		e.sendRecurrence(state, rule, groupKey, now)
+	}
+}
+
+// sendRecurrence sends the pending recurrence of groupKey, if any. The
+// caller holds state.mu.
+func (e *Engine) sendRecurrence(state *RuleState, rule *Rule, groupKey string, now time.Time) {
+	p := state.pending[groupKey]
+	if p == nil {
+		return
+	}
+	delete(state.pending, groupKey)
+	state.lastSent[groupKey] = now
+
+	alert := e.newAlert(rule, groupKey, p.events, p.depth)
+	alert.Recurrence = true
+	alert.trigger = p.trigger
+	e.sendAlert(alert)
+}
+
+// recurrenceFlusher sends collected recurrences once their rule and group
+// may send again.
+func (e *Engine) recurrenceFlusher(ctx context.Context) {
+	defer e.wg.Done()
+
+	ticker := time.NewTicker(min(e.config.RecurrenceInterval/2, time.Second))
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-e.stopCh:
+			return
+		case now := <-ticker.C:
+			e.flushRecurrences(now)
+		}
+	}
+}
+
+// flushRecurrences sends every pending recurrence whose rule and group sent
+// nothing during the last RecurrenceInterval.
+func (e *Engine) flushRecurrences(now time.Time) {
+	e.mu.RLock()
+	states := make([]*RuleState, 0, len(e.states))
+	for _, state := range e.states {
+		states = append(states, state)
+	}
+	e.mu.RUnlock()
+
+	for _, state := range states {
+		state.mu.Lock()
+		for groupKey := range state.pending {
+			if now.Sub(state.lastSent[groupKey]) >= e.config.RecurrenceInterval {
+				e.sendRecurrence(state, state.rule, groupKey, now)
+			}
+		}
+		state.mu.Unlock()
 	}
 }
 
@@ -522,7 +835,7 @@ func (e *Engine) sendAlert(alert *Alert) {
 
 func (e *Engine) buildGroupKey(event *schema.Event, groupBy []string) string {
 	if len(groupBy) == 0 {
-		return "default"
+		return defaultGroupKey
 	}
 
 	parts := make([]string, len(groupBy))
@@ -538,23 +851,28 @@ func (e *Engine) evaluateThreshold(window *Window, rule *Rule, groupKey string) 
 		return false
 	}
 
-	count := window.Count
-	threshold := rule.Threshold.Count
+	count := float64(window.Count)
+	threshold := float64(rule.Threshold.Count)
 
-	// Record metric for baseline learning
-	if e.baseline != nil {
-		e.baseline.Record(rule.ID, groupKey, "event_count", float64(count))
-	}
-
-	// Use adaptive threshold if baseline config is set and baseline is ready
+	// Adaptive threshold: learn the rule's normal count and raise the static
+	// threshold for groups that are routinely busier. The learned value never
+	// lowers a gt/gte threshold below the static one the rule author chose.
 	if rule.Baseline != nil && e.baseline != nil {
-		if adaptiveThreshold, active := e.baseline.AdaptiveThreshold(rule.ID, groupKey, rule.Baseline); active {
-			threshold = int(adaptiveThreshold)
+		metric := baselineMetric(rule.Baseline)
+		e.baseline.Record(rule.ID, groupKey, metric, count)
+		if adaptive, active := e.baseline.AdaptiveThreshold(rule.ID, groupKey, rule.Baseline); active {
+			switch rule.Threshold.Operator {
+			case "", "gt", ">", "gte", ">=":
+				threshold = math.Max(threshold, adaptive)
+			default:
+				threshold = adaptive
+			}
 			slog.Debug("using adaptive threshold",
 				"rule_id", rule.ID,
 				"group_key", groupKey,
 				"static_threshold", rule.Threshold.Count,
-				"adaptive_threshold", threshold,
+				"adaptive_threshold", adaptive,
+				"effective_threshold", threshold,
 			)
 		}
 	}
@@ -575,47 +893,78 @@ func (e *Engine) evaluateThreshold(window *Window, rule *Rule, groupKey string) 
 	}
 }
 
-func (e *Engine) evaluateSequence(window *Window, rule *Rule, event *schema.Event) bool {
-	if rule.Sequence == nil || len(rule.Sequence.Steps) == 0 {
+// evaluateSequence advances the sequence state with event and reports
+// whether the sequence is now complete.
+//
+// If any step is marked Required, only those steps are required and the
+// others are optional; otherwise every step is required. In ordered mode an
+// event may complete the next expected step or, if the steps before it are
+// optional, a later one. The steps must all happen within the span
+// (MaxSpan, or the rule window) of the first one.
+func (e *Engine) evaluateSequence(window *Window, rule *Rule, event *schema.Event, now time.Time) bool {
+	seq := rule.Sequence
+	if seq == nil || len(seq.Steps) == 0 {
 		return false
 	}
+	if window.Steps == nil {
+		window.Steps = make(map[int]bool)
+	}
+	if len(window.Steps) > 0 && now.Sub(window.SeqStart) > sequenceSpan(rule) {
+		window.resetSequence()
+	}
 
-	// Find which step this event matches
-	for i, step := range rule.Sequence.Steps {
-		if e.matchesConditions(event, step.Conditions) {
-			if rule.Sequence.Ordered {
-				// Must match steps in order
-				if i == window.StepIndex {
-					window.StepIndex++
-					window.Steps[i] = true
-				}
-			} else {
-				// Can match any step
-				window.Steps[i] = true
-			}
+	anyMarkedRequired := false
+	for _, step := range seq.Steps {
+		if step.Required {
+			anyMarkedRequired = true
 			break
 		}
 	}
+	required := func(i int) bool { return !anyMarkedRequired || seq.Steps[i].Required }
 
-	// Check if sequence is complete
-	requiredSteps := 0
-	matchedRequired := 0
-	for i, step := range rule.Sequence.Steps {
-		if step.Required {
-			requiredSteps++
-			if window.Steps[i] {
-				matchedRequired++
+	matched := -1
+	if seq.Ordered {
+		for i := window.StepIndex; i < len(seq.Steps); i++ {
+			if e.matchesConditions(event, seq.Steps[i].Conditions) {
+				matched = i
+				break
 			}
+			if required(i) {
+				break // a required step cannot be skipped
+			}
+		}
+		if matched < 0 {
+			// A fresh occurrence of the first step restarts a sequence that
+			// has not got past it, so its span counts from the latest one.
+			if window.StepIndex == 1 && e.matchesConditions(event, seq.Steps[0].Conditions) {
+				window.SeqStart = now
+			}
+			return false
+		}
+		window.StepIndex = matched + 1
+	} else {
+		for i, step := range seq.Steps {
+			if !window.Steps[i] && e.matchesConditions(event, step.Conditions) {
+				matched = i
+				break
+			}
+		}
+		if matched < 0 {
+			return false
 		}
 	}
 
-	// If no steps are marked as required, all steps are required
-	if requiredSteps == 0 {
-		requiredSteps = len(rule.Sequence.Steps)
-		matchedRequired = len(window.Steps)
+	if len(window.Steps) == 0 {
+		window.SeqStart = now
 	}
+	window.Steps[matched] = true
 
-	return matchedRequired >= requiredSteps
+	for i := range seq.Steps {
+		if required(i) && !window.Steps[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func (e *Engine) evaluateAggregate(window *Window, rule *Rule) bool {
@@ -672,7 +1021,7 @@ func (e *Engine) evaluateAggregate(window *Window, rule *Rule) bool {
 		value = float64(len(distinct))
 	}
 
-	threshold := rule.Aggregate.Value
+	threshold := rule.Aggregate.threshold()
 	switch rule.Aggregate.Operator {
 	case "gt", ">":
 		return value > threshold
@@ -689,14 +1038,39 @@ func (e *Engine) evaluateAggregate(window *Window, rule *Rule) bool {
 	}
 }
 
-func (e *Engine) createAlert(rule *Rule, window *Window, groupKey string) *Alert {
-	events := make([]EventRef, 0, len(window.Events))
-	for _, event := range window.Events {
-		events = append(events, EventRef{
+// eventRefs returns references to events and the deepest chain depth among
+// them.
+func eventRefs(events []*schema.Event) ([]EventRef, int) {
+	refs := make([]EventRef, 0, len(events))
+	depth := 0
+	for _, event := range events {
+		refs = append(refs, EventRef{
 			EventID:   event.EventID,
 			Timestamp: event.Timestamp,
 			Action:    event.Action,
 		})
+		if d, ok := reinjectedDepth(event); ok && d > depth {
+			depth = d
+		}
+	}
+	return refs, depth
+}
+
+// newAlert creates an alert of rule for groupKey that lists events; depth is
+// the deepest chain depth among them.
+func (e *Engine) newAlert(rule *Rule, groupKey string, events []EventRef, depth int) *Alert {
+	// Copy the rule metadata: alert consumers must not share (and mutate)
+	// the rule's map. chain_depth is the engine's to set.
+	var metadata map[string]any
+	if len(rule.Metadata) > 0 || depth > 0 {
+		metadata = make(map[string]any, len(rule.Metadata)+1)
+		for k, v := range rule.Metadata {
+			metadata[k] = v
+		}
+		delete(metadata, metaChainDepth)
+		if depth > 0 {
+			metadata[metaChainDepth] = depth
+		}
 	}
 
 	return &Alert{
@@ -711,7 +1085,7 @@ func (e *Engine) createAlert(rule *Rule, window *Window, groupKey string) *Alert
 		GroupKey:    groupKey,
 		Tags:        rule.Tags,
 		MITRE:       rule.MITRE,
-		Metadata:    rule.Metadata,
+		Metadata:    metadata,
 		Status:      AlertStatusNew,
 	}
 }
@@ -770,18 +1144,34 @@ func (e *Engine) cleanupExpiredState() {
 	now := time.Now()
 	for _, state := range states {
 		state.mu.Lock()
-		for groupKey, window := range state.windows {
-			if now.Sub(window.StartTime) > state.rule.Window*2 {
-				delete(state.windows, groupKey)
+		rule := state.rule
+		// Absence windows are how the engine remembers which groups must keep
+		// reporting; the absence checker manages them.
+		if rule.Type != RuleTypeAbsence {
+			retention := max(rule.Window, sequenceSpan(rule))
+			for groupKey, window := range state.windows {
+				if now.Sub(window.LastSeen) > retention {
+					delete(state.windows, groupKey)
+				}
 			}
 		}
 		// Cleanup old fire times
+		dedup := max(e.dedupWindow(rule), rule.Window)
 		for groupKey, fireTime := range state.lastFire {
-			if now.Sub(fireTime) > state.rule.Window*2 {
+			if now.Sub(fireTime) > dedup {
 				delete(state.lastFire, groupKey)
 			}
 		}
+		for groupKey, sent := range state.lastSent {
+			if state.pending[groupKey] == nil && now.Sub(sent) > e.config.RecurrenceInterval {
+				delete(state.lastSent, groupKey)
+			}
+		}
 		state.mu.Unlock()
+	}
+
+	if e.baseline != nil {
+		e.baseline.Cleanup()
 	}
 }
 
@@ -803,6 +1193,11 @@ func (e *Engine) absenceChecker(ctx context.Context) {
 	}
 }
 
+// checkAbsenceRules fires for every absence group whose current period (one
+// rule window) ended without the expected event, then starts the next period.
+// Rules without GroupBy track one "default" group from the moment they are
+// added; rules with GroupBy track each group once it has sent the expected
+// event.
 func (e *Engine) checkAbsenceRules() {
 	e.mu.RLock()
 	var absenceRules []*Rule
@@ -824,46 +1219,24 @@ func (e *Engine) checkAbsenceRules() {
 
 		state.mu.Lock()
 
-		// Check the default group key if no events have created windows yet
-		groupKeys := make([]string, 0, len(state.windows)+1)
-		if len(state.windows) == 0 {
-			groupKeys = append(groupKeys, "default")
-		}
-		for k := range state.windows {
-			groupKeys = append(groupKeys, k)
+		if len(rule.GroupBy) == 0 && state.windows[defaultGroupKey] == nil {
+			// Start a full period now rather than firing before the expected
+			// event could have arrived.
+			state.windows[defaultGroupKey] = newWindow(now)
 		}
 
-		for _, groupKey := range groupKeys {
-			window := state.windows[groupKey]
-			if window == nil {
-				// No events seen at all — create a window and fire
-				window = &Window{
-					Events:         make([]*schema.Event, 0),
-					StartTime:      now.Add(-rule.Window),
-					Steps:          make(map[int]bool),
-					AbsenceChecked: now,
-				}
-				state.windows[groupKey] = window
-			}
-
-			// Only check if enough time has passed since the window started
-			elapsed := now.Sub(window.StartTime)
-			if elapsed < rule.Window {
+		for groupKey, window := range state.windows {
+			// Only check once a full period has passed
+			if now.Sub(window.StartTime) < rule.Window {
 				continue
 			}
 
-			// If the expected event was NOT seen, fire the alert
+			// If the expected event was NOT seen, fire the alert: within the
+			// dedup window of the last one, as a recurrence of it (the
+			// expected event is still missing), which used to be dropped.
 			if !window.AbsenceSeen {
-				// Check dedup
-				if lastFire, ok := state.lastFire[groupKey]; ok {
-					if now.Sub(lastFire) < rule.Window {
-						continue
-					}
-				}
-				state.lastFire[groupKey] = now
-
-				alert := e.createAlert(rule, window, groupKey)
-				e.sendAlert(alert)
+				refs, depth := eventRefs(window.takeUnreported())
+				e.report(state, rule, groupKey, refs, depth, nil, now)
 			}
 
 			// Reset the window for the next period
@@ -874,8 +1247,7 @@ func (e *Engine) checkAbsenceRules() {
 			)
 			window.AbsenceSeen = false
 			window.StartTime = now
-			window.Events = window.Events[:0]
-			window.Count = 0
+			window.clearEvents()
 			window.AbsenceChecked = now
 		}
 
@@ -883,7 +1255,7 @@ func (e *Engine) checkAbsenceRules() {
 	}
 }
 
-// GetRules returns all loaded rules (for API use).
+// GetRules returns all loaded rules (for API use), ordered by ID.
 func (e *Engine) GetRules() []*Rule {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
@@ -892,6 +1264,7 @@ func (e *Engine) GetRules() []*Rule {
 	for _, rule := range e.rules {
 		rules = append(rules, rule)
 	}
+	sort.Slice(rules, func(i, j int) bool { return rules[i].ID < rules[j].ID })
 	return rules
 }
 

@@ -38,13 +38,19 @@ type Model struct {
 	width  int
 	height int
 
+	// scroll is the first visible line of the Dashboard and System scenes
+	// when they are taller than the window (↑↓/jk scroll them; the Events
+	// scene uses those keys to move its selection).
+	scroll map[Scene]int
+
 	// Whether we're quitting
 	quitting bool
 }
 
-// New creates a new TUI model
-func New(baseURL string) *Model {
-	client := api.NewClient(baseURL)
+// New creates a new TUI model. opts configure the API client, e.g.
+// api.WithAPIKey for servers with auth.enabled.
+func New(baseURL string, opts ...api.Option) *Model {
+	client := api.NewClient(baseURL, opts...)
 
 	return &Model{
 		client:    client,
@@ -122,14 +128,40 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			// Start the new scene's ticker
 			cmds = append(cmds, m.getActiveSceneTickCmd())
 			return m, tea.Batch(cmds...)
+
+		// Scroll scenes that do not use the arrow keys themselves.
+		case "up", "k", "down", "j", "pgup", "pgdown", "home":
+			if m.scene != SceneEvents {
+				if m.scroll == nil {
+					m.scroll = make(map[Scene]int)
+				}
+				switch msg.String() {
+				case "up", "k":
+					m.scroll[m.scene]--
+				case "down", "j":
+					m.scroll[m.scene]++
+				case "pgup":
+					m.scroll[m.scene] -= max(m.height/2, 1)
+				case "pgdown":
+					m.scroll[m.scene] += max(m.height/2, 1)
+				case "home":
+					m.scroll[m.scene] = 0
+				}
+				// View clamps the offset to the content.
+				m.scroll[m.scene] = max(m.scroll[m.scene], 0)
+				return m, nil
+			}
 		}
 
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		// Pass to all scenes so they can adjust
+		// Pass to all scenes so they can adjust. The events table sizes itself
+		// to the content area (the window minus the tab bar and footer, as in
+		// View), so it is not clipped; the other scenes scroll.
 		m.dashboard, _ = m.dashboard.Update(msg)
-		m.events, _ = m.events.Update(msg)
+		content := max(1, msg.Height-lipgloss.Height(m.renderHeader())-lipgloss.Height(m.renderFooter()))
+		m.events, _ = m.events.Update(tea.WindowSizeMsg{Width: msg.Width, Height: content})
 		m.system, _ = m.system.Update(msg)
 		return m, nil
 
@@ -189,25 +221,60 @@ func (m *Model) View() string {
 
 	var b strings.Builder
 
-	// Header with tabs
-	b.WriteString(m.renderHeader())
-	b.WriteString("\n")
+	header := m.renderHeader()
+	footer := m.renderFooter()
 
 	// Scene content
+	var content string
 	switch m.scene {
 	case SceneDashboard:
-		b.WriteString(m.dashboard.View())
+		content = m.dashboard.View()
 	case SceneEvents:
-		b.WriteString(m.events.View())
+		content = m.events.View()
 	case SceneSystem:
-		b.WriteString(m.system.View())
+		content = m.system.View()
+	}
+	// Keep the tab bar and the footer on screen: a scene taller than the
+	// window is clipped (and scrollable) instead of pushing the header off
+	// the top, as the System tab did in a 45-row terminal.
+	if m.height > 0 {
+		avail := m.height - lipgloss.Height(header) - lipgloss.Height(footer)
+		var offset int
+		content, offset = clipLines(content, avail, m.scroll[m.scene])
+		if m.scroll != nil {
+			m.scroll[m.scene] = offset
+		}
 	}
 
-	// Footer with help
+	b.WriteString(header)
 	b.WriteString("\n")
-	b.WriteString(m.renderFooter())
+	b.WriteString(content)
+	b.WriteString("\n")
+	b.WriteString(footer)
 
 	return b.String()
+}
+
+// clipLines returns at most height lines of content starting at line offset
+// (clamped to the content), and the offset used. When lines are hidden, the
+// first and last visible lines say so.
+func clipLines(content string, height, offset int) (string, int) {
+	lines := strings.Split(content, "\n")
+	if height < 1 {
+		height = 1
+	}
+	if len(lines) <= height {
+		return content, 0
+	}
+	offset = min(max(offset, 0), len(lines)-height)
+	visible := append([]string(nil), lines[offset:offset+height]...)
+	if offset > 0 {
+		visible[0] = styles.Muted.Render(fmt.Sprintf("  ↑ %d more line(s) (↑/k to scroll)", offset))
+	}
+	if below := len(lines) - offset - height; below > 0 {
+		visible[len(visible)-1] = styles.Muted.Render(fmt.Sprintf("  ↓ %d more line(s) (↓/j to scroll)", below))
+	}
+	return strings.Join(visible, "\n"), offset
 }
 
 func (m *Model) renderHeader() string {
@@ -248,9 +315,9 @@ func (m *Model) renderFooter() string {
 	return styles.Help.Render(help)
 }
 
-// Run starts the TUI application
-func Run(baseURL string) error {
-	m := New(baseURL)
+// Run starts the TUI application. opts configure the API client.
+func Run(baseURL string, opts ...api.Option) error {
+	m := New(baseURL, opts...)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err

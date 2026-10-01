@@ -58,11 +58,10 @@ type Monitor struct {
 	config Config
 
 	// Sub-monitors
-	gethParser      *ethereum.GethParser
-	consensusParser *consensus.Parser
-	validatorMon    *validator.Monitor
-	mempoolMon      *mempool.Monitor
-	contractMon     *contracts.Monitor
+	gethParser   *ethereum.GethParser
+	validatorMon *validator.Monitor
+	mempoolMon   *mempool.Monitor
+	contractMon  *contracts.Monitor
 
 	// Event processing
 	eventCh  chan *schema.Event

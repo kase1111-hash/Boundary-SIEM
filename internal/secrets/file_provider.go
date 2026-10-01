@@ -38,9 +38,11 @@ func (f *FileProvider) Name() string {
 // Get retrieves a secret from a file.
 // The key is converted to a filename (e.g., "database/password" -> "database_password").
 func (f *FileProvider) Get(ctx context.Context, key string) (*Secret, error) {
-	// Convert key to filename
-	filename := f.keyToFilename(key)
-	fullPath := filepath.Join(f.baseDir, filename)
+	// Convert key to a path inside the base directory
+	fullPath, err := f.secretPath(key)
+	if err != nil {
+		return nil, err
+	}
 
 	// Check if file exists
 	if _, err := os.Stat(fullPath); os.IsNotExist(err) {
@@ -48,7 +50,7 @@ func (f *FileProvider) Get(ctx context.Context, key string) (*Secret, error) {
 	}
 
 	// Read file content
-	data, err := os.ReadFile(fullPath)
+	data, err := os.ReadFile(fullPath) // #nosec G304 -- secretPath confines fullPath to a single file name directly inside baseDir
 	if err != nil {
 		return nil, fmt.Errorf("failed to read secret file: %w", err)
 	}
@@ -65,8 +67,10 @@ func (f *FileProvider) Get(ctx context.Context, key string) (*Secret, error) {
 
 // Set writes a secret to a file.
 func (f *FileProvider) Set(ctx context.Context, key, value string) error {
-	filename := f.keyToFilename(key)
-	fullPath := filepath.Join(f.baseDir, filename)
+	fullPath, err := f.secretPath(key)
+	if err != nil {
+		return err
+	}
 
 	// Ensure directory exists
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0700); err != nil {
@@ -83,8 +87,10 @@ func (f *FileProvider) Set(ctx context.Context, key, value string) error {
 
 // Delete removes a secret file.
 func (f *FileProvider) Delete(ctx context.Context, key string) error {
-	filename := f.keyToFilename(key)
-	fullPath := filepath.Join(f.baseDir, filename)
+	fullPath, err := f.secretPath(key)
+	if err != nil {
+		return err
+	}
 
 	if err := os.Remove(fullPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("failed to delete secret file: %w", err)
@@ -98,16 +104,16 @@ func (f *FileProvider) Close() error {
 	return nil
 }
 
-// HealthCheck verifies the base directory is accessible.
+// HealthCheck verifies the base directory is accessible. It never modifies
+// the filesystem: a missing directory is not an error, because the provider
+// then simply holds no secrets (Get returns ErrSecretNotFound and Set creates
+// the directory on first write).
 func (f *FileProvider) HealthCheck(ctx context.Context) error {
-	// Check if base directory exists and is readable
 	info, err := os.Stat(f.baseDir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			// Directory doesn't exist - create it
-			if err := os.MkdirAll(f.baseDir, 0700); err != nil {
-				return fmt.Errorf("cannot create secrets directory: %w", err)
-			}
+			f.logger.Debug("secrets directory does not exist, file provider holds no secrets",
+				"dir", f.baseDir)
 			return nil
 		}
 		return fmt.Errorf("cannot access secrets directory: %w", err)
@@ -118,6 +124,19 @@ func (f *FileProvider) HealthCheck(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+// secretPath returns the path of the file holding key. keyToFilename rewrites
+// separators and dots, so a valid key maps to exactly one path element inside
+// baseDir; anything else (an empty key, or a separator keyToFilename does not
+// rewrite on this platform) is rejected so a key can never address baseDir
+// itself or a path outside it.
+func (f *FileProvider) secretPath(key string) (string, error) {
+	filename := f.keyToFilename(key)
+	if filename == "" || filename != filepath.Base(filename) {
+		return "", fmt.Errorf("invalid secret key %q", key)
+	}
+	return filepath.Join(f.baseDir, filename), nil
 }
 
 // keyToFilename converts a secret key to a safe filename.

@@ -10,7 +10,9 @@ import (
 	"time"
 )
 
-func hasChattrCapability() bool {
+func hasChattrCapability(t *testing.T) bool {
+	t.Helper()
+
 	// Check if we can use chattr (need root or CAP_LINUX_IMMUTABLE)
 	if os.Geteuid() == 0 {
 		return true
@@ -37,9 +39,24 @@ func hasChattrCapability() bool {
 		return false
 	}
 
-	// Clean up
-	exec.CommandContext(ctx, "chattr", "-a", tmpPath).Run()
+	// Clean up (an append-only probe file could not be removed)
+	if output, err := exec.CommandContext(ctx, "chattr", "-a", tmpPath).CombinedOutput(); err != nil {
+		t.Fatalf("failed to clear append-only on probe file %s: %v: %s", tmpPath, err, output)
+	}
 	return true
+}
+
+// clearAttrs removes immutable and append-only attributes from path so the
+// test can clean it up, reporting (but not aborting on) failures.
+func clearAttrs(t *testing.T, im *ImmutableManager, path string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := im.ClearImmutable(ctx, path); err != nil {
+		t.Errorf("ClearImmutable(%s) error = %v", path, err)
+	}
+	if err := im.ClearAppendOnly(ctx, path); err != nil {
+		t.Errorf("ClearAppendOnly(%s) error = %v", path, err)
+	}
 }
 
 func TestDefaultImmutableConfig(t *testing.T) {
@@ -104,7 +121,7 @@ func TestNewImmutableManager_Enabled(t *testing.T) {
 }
 
 func TestImmutableManager_SetAppendOnly(t *testing.T) {
-	if !hasChattrCapability() {
+	if !hasChattrCapability(t) {
 		t.Skip("no chattr capability")
 	}
 
@@ -123,8 +140,7 @@ func TestImmutableManager_SetAppendOnly(t *testing.T) {
 	tmpFile.Close()
 	defer func() {
 		// Clear attributes before cleanup
-		ctx := context.Background()
-		im.ClearAppendOnly(ctx, tmpPath)
+		clearAttrs(t, im, tmpPath)
 		os.Remove(tmpPath)
 	}()
 
@@ -165,7 +181,7 @@ func TestImmutableManager_SetAppendOnly(t *testing.T) {
 }
 
 func TestImmutableManager_SetImmutable(t *testing.T) {
-	if !hasChattrCapability() {
+	if !hasChattrCapability(t) {
 		t.Skip("no chattr capability")
 	}
 
@@ -183,8 +199,7 @@ func TestImmutableManager_SetImmutable(t *testing.T) {
 	tmpPath := tmpFile.Name()
 	tmpFile.Close()
 	defer func() {
-		ctx := context.Background()
-		im.ClearImmutable(ctx, tmpPath)
+		clearAttrs(t, im, tmpPath)
 		os.Remove(tmpPath)
 	}()
 
@@ -249,21 +264,24 @@ func TestImmutableManager_DisabledNoOp(t *testing.T) {
 }
 
 func TestImmutableManager_VerifyLogDirectory(t *testing.T) {
-	if !hasChattrCapability() {
+	if !hasChattrCapability(t) {
 		t.Skip("no chattr capability")
 	}
 
 	// Create temp directory
 	tmpDir := filepath.Join(os.TempDir(), "immutable-verify-test")
 	os.RemoveAll(tmpDir)
-	os.MkdirAll(tmpDir, 0700)
+	if err := os.MkdirAll(tmpDir, 0700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
 	defer os.RemoveAll(tmpDir)
 
 	// Create some log files
 	for i := 0; i < 3; i++ {
-		f, _ := os.Create(filepath.Join(tmpDir, "audit-2024-01-01-"+string(rune('a'+i))+".log"))
-		f.Write([]byte("test log entry\n"))
-		f.Close()
+		name := filepath.Join(tmpDir, "audit-2024-01-01-"+string(rune('a'+i))+".log")
+		if err := os.WriteFile(name, []byte("test log entry\n"), 0600); err != nil {
+			t.Fatalf("WriteFile() error = %v", err)
+		}
 	}
 
 	config := DefaultImmutableConfig()
@@ -284,7 +302,7 @@ func TestImmutableManager_VerifyLogDirectory(t *testing.T) {
 }
 
 func TestImmutableManager_PrepareAndFinalizeRotation(t *testing.T) {
-	if !hasChattrCapability() {
+	if !hasChattrCapability(t) {
 		t.Skip("no chattr capability")
 	}
 
@@ -302,15 +320,21 @@ func TestImmutableManager_PrepareAndFinalizeRotation(t *testing.T) {
 		// Fall back to os.TempDir
 		tmpDir = filepath.Join(os.TempDir(), "rotation-test-"+t.Name())
 		os.RemoveAll(tmpDir)
-		os.MkdirAll(tmpDir, 0700)
+		if err := os.MkdirAll(tmpDir, 0700); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
 	}
 	defer os.RemoveAll(tmpDir)
 
 	oldPath := filepath.Join(tmpDir, "audit-old.log")
 	newPath := filepath.Join(tmpDir, "audit-new.log")
 
-	os.WriteFile(oldPath, []byte("old data\n"), 0600)
-	os.WriteFile(newPath, []byte("new data\n"), 0600)
+	if err := os.WriteFile(oldPath, []byte("old data\n"), 0600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	if err := os.WriteFile(newPath, []byte("new data\n"), 0600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
 
 	ctx := context.Background()
 
@@ -338,8 +362,8 @@ func TestImmutableManager_PrepareAndFinalizeRotation(t *testing.T) {
 	}
 
 	// Clean up
-	im.ClearImmutable(ctx, oldPath)
-	im.ClearAppendOnly(ctx, newPath)
+	clearAttrs(t, im, oldPath)
+	clearAttrs(t, im, newPath)
 }
 
 func TestImmutableManager_SecureDelete(t *testing.T) {
@@ -356,8 +380,12 @@ func TestImmutableManager_SecureDelete(t *testing.T) {
 		t.Fatalf("CreateTemp() error = %v", err)
 	}
 	tmpPath := tmpFile.Name()
-	tmpFile.Write([]byte("sensitive data that should be overwritten"))
-	tmpFile.Close()
+	if _, err := tmpFile.Write([]byte("sensitive data that should be overwritten")); err != nil {
+		t.Fatalf("Write() error = %v", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
 
 	ctx := context.Background()
 
@@ -374,7 +402,7 @@ func TestImmutableManager_SecureDelete(t *testing.T) {
 }
 
 func TestWithImmutableLogs(t *testing.T) {
-	if !hasChattrCapability() {
+	if !hasChattrCapability(t) {
 		t.Skip("no chattr capability")
 	}
 
@@ -387,13 +415,17 @@ func TestWithImmutableLogs(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		// Clean up any immutable files
-		ctx := context.Background()
-		config := DefaultImmutableConfig()
-		im, _ := NewImmutableManager(config)
-		files, _ := filepath.Glob(filepath.Join(tmpDir, "*"))
+		im, err := NewImmutableManager(DefaultImmutableConfig())
+		if err != nil {
+			t.Errorf("NewImmutableManager() for cleanup error = %v", err)
+			return
+		}
+		files, err := filepath.Glob(filepath.Join(tmpDir, "*"))
+		if err != nil {
+			t.Errorf("Glob() for cleanup error = %v", err)
+		}
 		for _, f := range files {
-			im.ClearImmutable(ctx, f)
-			im.ClearAppendOnly(ctx, f)
+			clearAttrs(t, im, f)
 		}
 		os.RemoveAll(tmpDir)
 	})

@@ -313,45 +313,39 @@ func (tg *TrustGate) detectTPMVersion() TPMVersion {
 	return TPMVersionUnknown
 }
 
+// pcrSysfsBanks lists the sysfs PCR directories in order of preference.
+var pcrSysfsBanks = []struct {
+	dir  string
+	bank PCRBank
+}{
+	{"/sys/class/tpm/tpm0/pcr-sha256", PCRBankSHA256},
+	{"/sys/class/tpm/tpm0/pcr-sha1", PCRBankSHA1}, // Fallback if SHA256 not available
+}
+
 // readPCRValues reads PCR values from the TPM.
 func (tg *TrustGate) readPCRValues() ([]PCRValue, error) {
 	var pcrs []PCRValue
 
-	// Read from sysfs if available
-	pcrDir := "/sys/class/tpm/tpm0/pcr-sha256"
-	if _, err := os.Stat(pcrDir); err == nil {
+	// Read from sysfs if available, using the first bank that yields values
+	for _, b := range pcrSysfsBanks {
+		if _, err := os.Stat(b.dir); err != nil {
+			continue
+		}
 		for _, idx := range tg.config.PCRsToVerify {
-			pcrPath := filepath.Join(pcrDir, strconv.Itoa(idx))
-			data, err := os.ReadFile(pcrPath)
+			pcrPath := filepath.Join(b.dir, strconv.Itoa(idx))
+			data, err := os.ReadFile(pcrPath) // #nosec G304 -- constant sysfs PCR directory joined with a decimal PCR index, which cannot contain a separator or ".."
 			if err != nil {
 				continue
 			}
 			pcrs = append(pcrs, PCRValue{
 				Index:   idx,
-				Bank:    PCRBankSHA256,
+				Bank:    b.bank,
 				Value:   strings.TrimSpace(string(data)),
 				Purpose: getPCRPurpose(idx),
 			})
 		}
-	}
-
-	// Try SHA1 bank if SHA256 not available
-	if len(pcrs) == 0 {
-		pcrDir = "/sys/class/tpm/tpm0/pcr-sha1"
-		if _, err := os.Stat(pcrDir); err == nil {
-			for _, idx := range tg.config.PCRsToVerify {
-				pcrPath := filepath.Join(pcrDir, strconv.Itoa(idx))
-				data, err := os.ReadFile(pcrPath)
-				if err != nil {
-					continue
-				}
-				pcrs = append(pcrs, PCRValue{
-					Index:   idx,
-					Bank:    PCRBankSHA1,
-					Value:   strings.TrimSpace(string(data)),
-					Purpose: getPCRPurpose(idx),
-				})
-			}
+		if len(pcrs) > 0 {
+			break
 		}
 	}
 
@@ -437,7 +431,7 @@ func (tg *TrustGate) checkIMA() bool {
 func (tg *TrustGate) computeBootHash(pcrs []PCRValue) string {
 	h := sha256.New()
 	for _, pcr := range pcrs {
-		h.Write([]byte(fmt.Sprintf("%d:%s:%s", pcr.Index, pcr.Bank, pcr.Value)))
+		fmt.Fprintf(h, "%d:%s:%s", pcr.Index, pcr.Bank, pcr.Value)
 	}
 	return hex.EncodeToString(h.Sum(nil))
 }

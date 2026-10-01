@@ -21,7 +21,7 @@ REM Check if Go is installed
 where go >nul 2>nul
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Go is not installed or not in PATH
-    echo Please install Go 1.21+ from https://golang.org/dl/
+    echo Please install Go 1.26+ from https://go.dev/dl/
     pause
     exit /b 1
 )
@@ -139,6 +139,16 @@ if %ERRORLEVEL% neq 0 (
     exit /b 1
 )
 echo [SUCCESS] bin\boundary-siem.exe
+
+REM Build the rule validator
+echo [INFO] Building siem-rules...
+go build -ldflags="-s -w" -o bin\siem-rules.exe .\cmd\siem-rules
+if %ERRORLEVEL% neq 0 (
+    echo [ERROR] siem-rules build failed
+    pause
+    exit /b 1
+)
+echo [SUCCESS] bin\siem-rules.exe
 echo.
 
 REM ----------------------------------------
@@ -191,19 +201,24 @@ echo.
 echo Binaries Built:
 echo   bin\siem-ingest.exe    - SIEM Ingest Service
 echo   bin\boundary-siem.exe  - Terminal User Interface
+echo   bin\siem-rules.exe     - Rule validator
 echo.
 echo ========================================
 echo    Quick Start Guide
 echo ========================================
 echo.
-echo 1. START THE SERVICE:
+echo 1. SET AN API KEY (the shipped config requires one):
+echo    set SIEM_API_KEY=dev-key-change-me
+echo.
+echo 2. START THE SERVICE:
 echo    start.bat
 echo.
-echo 2. LAUNCH THE TUI (in separate terminal):
+echo 3. LAUNCH THE TUI (separate terminal, same SIEM_API_KEY):
 echo    run-tui.bat
 echo.
-echo 3. TEST THE API:
+echo 4. TEST THE API:
 echo    curl http://localhost:8080/health
+echo    curl -H "X-API-Key: %%SIEM_API_KEY%%" http://localhost:8080/v1/alerts
 echo.
 echo ========================================
 echo    Security Notes
@@ -211,7 +226,7 @@ echo ========================================
 echo.
 echo - Plain UDP is DISABLED by default (insecure)
 echo - Enable TLS in configs\config.yaml for production
-echo - Enable authentication for production use
+echo - Authentication is enabled: every API call needs the X-API-Key header
 echo - Review startup diagnostics for warnings
 echo.
 pause

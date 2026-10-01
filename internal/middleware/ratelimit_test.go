@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -162,6 +163,64 @@ func TestRateLimiter_Cleanup(t *testing.T) {
 	}
 }
 
+// TestRateLimiter_AllowRacingCleanup tests that a request whose client entry
+// is evicted by cleanup between lookup and locking is counted against a live
+// entry instead of the orphaned one.
+func TestRateLimiter_AllowRacingCleanup(t *testing.T) {
+	cfg := config.RateLimitConfig{
+		Enabled:       true,
+		RequestsPerIP: 10,
+		WindowSize:    time.Minute,
+		BurstSize:     0,
+		CleanupPeriod: time.Hour, // cleanup is driven manually below
+	}
+
+	limiter := NewRateLimiter(cfg, slog.Default())
+	defer limiter.Stop()
+
+	ip := "192.168.1.200"
+	limiter.Allow(ip)
+
+	limiter.mu.Lock()
+	stale := limiter.clients[ip]
+	limiter.mu.Unlock()
+
+	// Hold the entry's lock so a concurrent Allow blocks on it after looking
+	// it up, then evict it exactly as cleanup does.
+	stale.mu.Lock()
+	result := make(chan bool, 1)
+	go func() {
+		allowed, _, _ := limiter.Allow(ip)
+		result <- allowed
+	}()
+	// Give Allow a chance to reach the entry lock. The assertions below hold
+	// for either interleaving; this only makes the eviction race likely.
+	time.Sleep(20 * time.Millisecond)
+
+	limiter.mu.Lock()
+	delete(limiter.clients, ip)
+	stale.evicted = true
+	limiter.mu.Unlock()
+	stale.mu.Unlock()
+
+	select {
+	case allowed := <-result:
+		if !allowed {
+			t.Fatal("request should be allowed")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout waiting for Allow")
+	}
+
+	stats := limiter.Stats()
+	if stats.TrackedIPs != 1 {
+		t.Errorf("expected request to be tracked in a live entry, got %d tracked IPs", stats.TrackedIPs)
+	}
+	if stats.TotalRequests != 1 {
+		t.Errorf("expected 1 counted request, got %d", stats.TotalRequests)
+	}
+}
+
 // TestRateLimiter_Stats tests statistics collection.
 func TestRateLimiter_Stats(t *testing.T) {
 	cfg := config.RateLimitConfig{
@@ -241,7 +300,9 @@ func TestRateLimitMiddleware(t *testing.T) {
 
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		if _, err := w.Write([]byte("OK")); err != nil {
+			t.Errorf("failed to write response body: %v", err)
+		}
 	})
 
 	middleware := RateLimitMiddleware(cfg, slog.Default())
@@ -434,10 +495,10 @@ func TestRateLimitMiddleware_Concurrent(t *testing.T) {
 	middleware := RateLimitMiddleware(cfg, slog.Default())
 	wrappedHandler := middleware(handler)
 
-	// Run 200 concurrent requests from same IP
+	// Run 200 concurrent requests from same IP. The counters are shared by
+	// all workers, so they must be updated atomically.
 	var wg sync.WaitGroup
-	successCount := int32(0)
-	rateLimitedCount := int32(0)
+	var successCount, rateLimitedCount, otherCount atomic.Int32
 
 	for i := 0; i < 200; i++ {
 		wg.Add(1)
@@ -450,10 +511,13 @@ func TestRateLimitMiddleware_Concurrent(t *testing.T) {
 
 			wrappedHandler.ServeHTTP(w, req)
 
-			if w.Code == http.StatusOK {
-				successCount++
-			} else if w.Code == http.StatusTooManyRequests {
-				rateLimitedCount++
+			switch w.Code {
+			case http.StatusOK:
+				successCount.Add(1)
+			case http.StatusTooManyRequests:
+				rateLimitedCount.Add(1)
+			default:
+				otherCount.Add(1)
 			}
 		}()
 	}
@@ -461,11 +525,14 @@ func TestRateLimitMiddleware_Concurrent(t *testing.T) {
 	wg.Wait()
 
 	// Should have exactly 150 successes (100 + 50 burst) and 50 rate limited
-	if successCount != 150 {
-		t.Errorf("expected 150 successful requests, got %d", successCount)
+	if got := successCount.Load(); got != 150 {
+		t.Errorf("expected 150 successful requests, got %d", got)
 	}
-	if rateLimitedCount != 50 {
-		t.Errorf("expected 50 rate limited requests, got %d", rateLimitedCount)
+	if got := rateLimitedCount.Load(); got != 50 {
+		t.Errorf("expected 50 rate limited requests, got %d", got)
+	}
+	if got := otherCount.Load(); got != 0 {
+		t.Errorf("expected no other status codes, got %d", got)
 	}
 }
 

@@ -69,6 +69,7 @@ allow boundary_siem_t boundary_siem_tmp_t:dir { search write add_name remove_nam
 
 # Network operations - restricted to specific ports
 allow boundary_siem_t boundary_siem_port_t:tcp_socket { name_bind name_connect };
+allow boundary_siem_t boundary_siem_port_t:udp_socket { name_bind };
 allow boundary_siem_t self:tcp_socket { create read write connect listen accept bind getopt setopt shutdown };
 allow boundary_siem_t self:udp_socket { create read write connect bind getopt setopt };
 
@@ -133,3 +134,4 @@ auditallow boundary_siem_t self:capability { net_bind_service setuid setgid dac_
 
 # Audit network connections
 auditallow boundary_siem_t boundary_siem_port_t:tcp_socket { name_bind name_connect };
+allow boundary_siem_t boundary_siem_port_t:udp_socket { name_bind };

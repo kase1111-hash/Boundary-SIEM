@@ -6,22 +6,65 @@ import {
   createRule,
   deleteRule,
   testRule,
+  describeError,
 } from "../services/api";
-import type { Rule, RuleType } from "../types/api";
+import type { Rule, RuleListResponse, RuleType, Severity } from "../types/api";
+import { severityClass } from "../services/severity";
+import { useEscape } from "../hooks/useEscape";
 
-// --- Severity number to label ---
-function severityLabel(sev: number): string {
-  if (sev >= 8) return "critical";
-  if (sev >= 5) return "high";
-  if (sev >= 3) return "medium";
-  return "low";
-}
+// --- Severity number to label (the class the rule's alerts get) ---
+const severityTextColors: Record<Severity, string> = {
+  critical: "text-red-400",
+  high: "text-orange-400",
+  medium: "text-yellow-400",
+  low: "text-blue-400",
+};
 
 function severityColor(sev: number): string {
-  if (sev >= 8) return "text-red-400";
-  if (sev >= 5) return "text-orange-400";
-  if (sev >= 3) return "text-yellow-400";
-  return "text-blue-400";
+  return severityTextColors[severityClass(sev)];
+}
+
+/** The rule's time window as shown in the table ("—" when it has none). */
+export function ruleWindow(rule: Rule): string {
+  const w = rule.window;
+  if (typeof w !== "string" || w === "" || w === "0s") return "—";
+  return w;
+}
+
+// Rules come from the API and may lack fields the type marks as required
+// (older servers, custom rules); every accessor below tolerates that.
+
+function ruleName(rule: Rule): string {
+  return rule.name || rule.id || "(unnamed rule)";
+}
+
+/** Applies the search box and category filter. */
+export function filterRules(
+  rules: Rule[],
+  { search, category }: { search: string; category: string },
+): Rule[] {
+  const q = search.toLowerCase();
+  return rules.filter((rule) => {
+    if (category && rule.category !== category) return false;
+    if (!q) return true;
+    return [rule.name, rule.id, rule.description].some((field) =>
+      String(field ?? "").toLowerCase().includes(q),
+    );
+  });
+}
+
+/** Counts for the summary line, over all returned rules. */
+export function summarizeRules(data: RuleListResponse | undefined): {
+  total: number;
+  enabled: number;
+  custom: number;
+} {
+  const rules = data?.rules ?? [];
+  return {
+    total: data?.total ?? rules.length,
+    enabled: rules.filter((r) => r.enabled === true).length,
+    custom: rules.filter((r) => r.source === "custom").length,
+  };
 }
 
 const ruleTypeLabels: Record<RuleType, string> = {
@@ -43,8 +86,18 @@ export const RulesPage: React.FC = () => {
   const [editingRule, setEditingRule] = useState<Rule | null>(null);
   const [testResults, setTestResults] = useState<Record<string, unknown> | null>(null);
   const [testingId, setTestingId] = useState<string | null>(null);
+  const [detailRule, setDetailRule] = useState<Rule | null>(null);
 
-  const { data, isLoading } = useQuery({
+  // Escape closes the test result dialog (the other dialogs handle it).
+  useEscape(
+    () => {
+      setTestResults(null);
+      setTestingId(null);
+    },
+    !!testResults && !!testingId,
+  );
+
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["rules", typeFilter],
     queryFn: () =>
       listRules({
@@ -75,24 +128,23 @@ export const RulesPage: React.FC = () => {
     },
   });
 
+  const rules = data?.rules ?? [];
+
   // Get unique categories for filter
   const categories = Array.from(
-    new Set(data?.rules?.map((r) => r.category).filter(Boolean) || []),
+    new Set(
+      rules
+        .map((r) => r.category)
+        .filter((c): c is string => typeof c === "string" && c !== ""),
+    ),
   );
 
   // Filter rules
-  const filtered = (data?.rules || []).filter((rule) => {
-    if (categoryFilter && rule.category !== categoryFilter) return false;
-    if (search) {
-      const q = search.toLowerCase();
-      return (
-        rule.name.toLowerCase().includes(q) ||
-        rule.id.toLowerCase().includes(q) ||
-        rule.description?.toLowerCase().includes(q)
-      );
-    }
-    return true;
+  const filtered = filterRules(rules, {
+    search,
+    category: categoryFilter,
   });
+  const summary = summarizeRules(data);
 
   return (
     <div className="space-y-4">
@@ -146,18 +198,26 @@ export const RulesPage: React.FC = () => {
 
       {/* Rules summary */}
       <div className="flex gap-4 text-sm text-gray-400">
-        <span>Total: {data?.total ?? 0}</span>
-        <span>
-          Enabled: {filtered.filter((r) => r.enabled).length}
-        </span>
-        <span>
-          Custom: {filtered.filter((r) => r.source === "custom").length}
-        </span>
+        <span>Total: {summary.total}</span>
+        <span>Enabled: {summary.enabled}</span>
+        <span>Custom: {summary.custom}</span>
       </div>
 
       {/* Rules table */}
       <div className="bg-gray-800 rounded-lg overflow-hidden">
-        {isLoading ? (
+        {isError ? (
+          <div className="p-8 text-center">
+            <p className="text-red-400 mb-2">
+              Failed to load rules: {describeError(error)}
+            </p>
+            <button
+              onClick={() => refetch()}
+              className="px-4 py-2 bg-blue-600 text-white text-sm rounded hover:bg-blue-500"
+            >
+              Retry
+            </button>
+          </div>
+        ) : isLoading ? (
           <div className="p-8 text-center text-gray-500">Loading rules...</div>
         ) : (
           <table className="w-full text-sm">
@@ -167,18 +227,21 @@ export const RulesPage: React.FC = () => {
                 <th className="p-3">Name</th>
                 <th className="p-3">Type</th>
                 <th className="p-3">Severity</th>
+                <th className="p-3">Window</th>
                 <th className="p-3">Category</th>
                 <th className="p-3">Source</th>
                 <th className="p-3 w-32">Actions</th>
               </tr>
             </thead>
             <tbody>
-              {filtered.map((rule) => (
+              {filtered.map((rule, idx) => (
                 <tr
-                  key={rule.id}
-                  className="border-b border-gray-700/50 hover:bg-gray-700/30"
+                  key={rule.id || `rule-${idx}`}
+                  className="border-b border-gray-700/50 hover:bg-gray-700/30 cursor-pointer"
+                  onClick={() => setDetailRule(rule)}
+                  title="Show rule details"
                 >
-                  <td className="p-3">
+                  <td className="p-3" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() =>
                         toggleMutation.mutate({
@@ -198,23 +261,34 @@ export const RulesPage: React.FC = () => {
                     </button>
                   </td>
                   <td className="p-3">
-                    <p className="text-gray-300">{rule.name}</p>
+                    <p className="text-gray-300">{ruleName(rule)}</p>
                     <p className="text-gray-500 text-xs mt-0.5 truncate max-w-md">
                       {rule.description}
                     </p>
                   </td>
                   <td className="p-3">
                     <span className="px-2 py-0.5 bg-gray-700 text-gray-300 rounded text-xs">
-                      {ruleTypeLabels[rule.type] || rule.type}
+                      {ruleTypeLabels[rule.type] || rule.type || "—"}
                     </span>
                   </td>
                   <td className="p-3">
-                    <span className={`font-medium ${severityColor(rule.severity)}`}>
-                      {severityLabel(rule.severity)}
-                    </span>
-                    <span className="text-gray-500 text-xs ml-1">
-                      ({rule.severity})
-                    </span>
+                    {typeof rule.severity === "number" ? (
+                      <>
+                        <span
+                          className={`font-medium ${severityColor(rule.severity)}`}
+                        >
+                          {severityClass(rule.severity)}
+                        </span>
+                        <span className="text-gray-500 text-xs ml-1">
+                          ({rule.severity})
+                        </span>
+                      </>
+                    ) : (
+                      <span className="text-gray-500">—</span>
+                    )}
+                  </td>
+                  <td className="p-3 text-gray-400 text-xs whitespace-nowrap">
+                    {ruleWindow(rule)}
                   </td>
                   <td className="p-3 text-gray-400 text-xs">
                     {rule.category || "—"}
@@ -230,7 +304,7 @@ export const RulesPage: React.FC = () => {
                       {rule.source || "builtin"}
                     </span>
                   </td>
-                  <td className="p-3">
+                  <td className="p-3" onClick={(e) => e.stopPropagation()}>
                     <div className="flex gap-1">
                       <button
                         onClick={() => testMutation.mutate(rule.id)}
@@ -253,7 +327,7 @@ export const RulesPage: React.FC = () => {
                             onClick={() => {
                               if (
                                 confirm(
-                                  `Delete rule "${rule.name}"?`,
+                                  `Delete rule "${ruleName(rule)}"?`,
                                 )
                               )
                                 deleteMutation.mutate(rule.id);
@@ -271,7 +345,7 @@ export const RulesPage: React.FC = () => {
               {filtered.length === 0 && (
                 <tr>
                   <td
-                    colSpan={7}
+                    colSpan={8}
                     className="p-8 text-center text-gray-500"
                   >
                     No rules found
@@ -283,11 +357,23 @@ export const RulesPage: React.FC = () => {
         )}
       </div>
 
+      {/* Rule detail modal (click a row) */}
+      {detailRule && (
+        <RuleDetail rule={detailRule} onClose={() => setDetailRule(null)} />
+      )}
+
       {/* Test result modal */}
       {testResults && testingId && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-gray-800 rounded-lg p-6 w-96 max-h-[80vh] overflow-y-auto">
-            <h3 className="text-white font-semibold mb-3">Rule Test Result</h3>
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="rule-test-title"
+            className="bg-gray-800 rounded-lg p-6 w-96 max-h-[80vh] overflow-y-auto"
+          >
+            <h3 id="rule-test-title" className="text-white font-semibold mb-3">
+              Rule Test Result
+            </h3>
             <pre className="text-gray-300 text-xs bg-gray-900 rounded p-3 overflow-x-auto">
               {JSON.stringify(testResults, null, 2)}
             </pre>
@@ -319,6 +405,70 @@ export const RulesPage: React.FC = () => {
           }}
         />
       )}
+    </div>
+  );
+};
+
+// --- Rule Detail ---
+
+/** Read-only view of a rule: the summary fields, then the full definition. */
+export const RuleDetail: React.FC<{ rule: Rule; onClose: () => void }> = ({
+  rule,
+  onClose,
+}) => {
+  const fields: [string, string][] = [
+    ["ID", rule.id || "—"],
+    ["Type", ruleTypeLabels[rule.type] || rule.type || "—"],
+    [
+      "Severity",
+      typeof rule.severity === "number"
+        ? `${severityClass(rule.severity)} (${rule.severity})`
+        : "—",
+    ],
+    ["Window", ruleWindow(rule)],
+    ["Group by", rule.group_by?.length ? rule.group_by.join(", ") : "—"],
+    ["Category", rule.category || "—"],
+    ["Source", rule.source || "builtin"],
+    ["Enabled", rule.enabled ? "yes" : "no"],
+  ];
+  useEscape(onClose);
+  return (
+    <div
+      className="fixed inset-0 bg-black/60 flex items-center justify-center z-50"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rule-detail-title"
+        className="bg-gray-800 rounded-lg p-6 w-[40rem] max-h-[85vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h3 id="rule-detail-title" className="text-white font-semibold">
+          {ruleName(rule)}
+        </h3>
+        {rule.description && (
+          <p className="text-gray-400 text-sm mt-1">{rule.description}</p>
+        )}
+        <dl className="grid grid-cols-3 gap-x-4 gap-y-1 text-sm mt-4">
+          {fields.map(([label, value]) => (
+            <React.Fragment key={label}>
+              <dt className="text-gray-500">{label}</dt>
+              <dd className="col-span-2 text-gray-300">{value}</dd>
+            </React.Fragment>
+          ))}
+        </dl>
+        <pre className="text-gray-300 text-xs bg-gray-900 rounded p-3 mt-4 overflow-x-auto">
+          {JSON.stringify(rule, null, 2)}
+        </pre>
+        <button
+          onClick={onClose}
+          autoFocus
+          className="mt-4 w-full px-4 py-2 bg-gray-700 text-gray-300 rounded hover:bg-gray-600 text-sm"
+        >
+          Close
+        </button>
+      </div>
     </div>
   );
 };
@@ -366,10 +516,17 @@ const RuleEditor: React.FC<{
     onError: (err: Error) => setError(err.message),
   });
 
+  useEscape(onClose, !saveMutation.isPending);
+
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-      <div className="bg-gray-800 rounded-lg p-6 w-[640px] max-h-[85vh] flex flex-col">
-        <h3 className="text-white font-semibold mb-3">
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="rule-editor-title"
+        className="bg-gray-800 rounded-lg p-6 w-[640px] max-h-[85vh] flex flex-col"
+      >
+        <h3 id="rule-editor-title" className="text-white font-semibold mb-3">
           {isNew ? "Create Rule" : "Edit Rule"}
         </h3>
         {error && (

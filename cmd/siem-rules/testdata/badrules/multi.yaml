@@ -1,0 +1,12 @@
+---
+id: multi-1
+name: m1
+type: threshold
+threshold: {count: 1}
+window: 1m
+---
+id: multi-2
+name: m2
+type: threshold
+threshold: {count: 1}
+window: 1m

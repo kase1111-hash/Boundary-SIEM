@@ -2,11 +2,15 @@
 package alerting
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
+	"slices"
+	"sort"
 	"sync"
 	"time"
 
@@ -24,6 +28,15 @@ const (
 	StatusInProgress   AlertStatus = "in_progress"
 	StatusResolved     AlertStatus = "resolved"
 	StatusSuppressed   AlertStatus = "suppressed"
+)
+
+var (
+	// ErrAlertNotFound is returned when no alert has the requested ID.
+	ErrAlertNotFound = errors.New("alert not found")
+	// ErrInvalidTransition is returned when a lifecycle action is not valid
+	// for the alert's current status (for example acknowledging a resolved
+	// alert).
+	ErrInvalidTransition = errors.New("invalid alert status transition")
 )
 
 // Alert represents a managed alert.
@@ -51,6 +64,31 @@ type Alert struct {
 	AssignedTo  string                    `json:"assigned_to,omitempty"`
 }
 
+// clone returns a copy of the alert that shares no mutable state with it.
+// Metadata is copied one level deep; nested values are never mutated by the
+// manager.
+func (a *Alert) clone() *Alert {
+	c := *a
+	if a.AckedAt != nil {
+		t := *a.AckedAt
+		c.AckedAt = &t
+	}
+	if a.ResolvedAt != nil {
+		t := *a.ResolvedAt
+		c.ResolvedAt = &t
+	}
+	c.EventIDs = slices.Clone(a.EventIDs)
+	c.Tags = slices.Clone(a.Tags)
+	c.Notes = slices.Clone(a.Notes)
+	if a.MITRE != nil {
+		mitre := *a.MITRE
+		mitre.Techniques = slices.Clone(a.MITRE.Techniques)
+		c.MITRE = &mitre
+	}
+	c.Metadata = maps.Clone(a.Metadata)
+	return &c
+}
+
 // Note represents a note on an alert.
 type Note struct {
 	ID        uuid.UUID `json:"id"`
@@ -70,7 +108,30 @@ type ManagerConfig struct {
 	DeduplicationWindow time.Duration
 	RetentionPeriod     time.Duration
 	MaxAlerts           int
+
+	// MaxPendingWrites bounds the alerts whose latest change could not be
+	// written to the database and waits for a retry (see Manager.Start).
+	// A failed write beyond it is not queued: it is logged at ERROR and
+	// counted in PersistenceMetrics.DroppedWrites. Zero means
+	// DefaultMaxPendingWrites.
+	MaxPendingWrites int
+	// PersistRetryInitial and PersistRetryMax bound the exponential backoff
+	// between retries of pending writes while storage stays unavailable.
+	// Zero means DefaultPersistRetryInitial and DefaultPersistRetryMax.
+	PersistRetryInitial time.Duration
+	PersistRetryMax     time.Duration
+	// PersistTimeout bounds each alert write. Zero means
+	// DefaultPersistTimeout.
+	PersistTimeout time.Duration
 }
+
+// Defaults of the persistence settings of ManagerConfig.
+const (
+	DefaultMaxPendingWrites    = 10000
+	DefaultPersistRetryInitial = time.Second
+	DefaultPersistRetryMax     = 30 * time.Second
+	DefaultPersistTimeout      = 10 * time.Second
+)
 
 // DefaultManagerConfig returns default manager configuration.
 func DefaultManagerConfig() ManagerConfig {
@@ -78,27 +139,77 @@ func DefaultManagerConfig() ManagerConfig {
 		DeduplicationWindow: 15 * time.Minute,
 		RetentionPeriod:     30 * 24 * time.Hour, // 30 days
 		MaxAlerts:           100000,
+		MaxPendingWrites:    DefaultMaxPendingWrites,
+		PersistRetryInitial: DefaultPersistRetryInitial,
+		PersistRetryMax:     DefaultPersistRetryMax,
+		PersistTimeout:      DefaultPersistTimeout,
 	}
 }
 
-// Manager manages alerts and notifications.
-type Manager struct {
-	config   ManagerConfig
-	db       *sql.DB
-	channels []NotificationChannel
-	alerts   map[uuid.UUID]*Alert
-	dedup    map[string]time.Time // rule_id+group_key -> last alert time
-	mu       sync.RWMutex
+// withDefaults fills in the persistence settings left at zero.
+func (c ManagerConfig) withDefaults() ManagerConfig {
+	if c.MaxPendingWrites <= 0 {
+		c.MaxPendingWrites = DefaultMaxPendingWrites
+	}
+	if c.PersistRetryInitial <= 0 {
+		c.PersistRetryInitial = DefaultPersistRetryInitial
+	}
+	if c.PersistRetryMax <= 0 {
+		c.PersistRetryMax = DefaultPersistRetryMax
+	}
+	c.PersistRetryMax = max(c.PersistRetryMax, c.PersistRetryInitial)
+	if c.PersistTimeout <= 0 {
+		c.PersistTimeout = DefaultPersistTimeout
+	}
+	return c
 }
 
-// NewManager creates a new alert manager.
+// Manager manages alerts and notifications.
+//
+// Alerts are held in memory, which is the source of truth, and, when db is
+// non-nil, persisted to the ClickHouse "alerts" table (see persistence.go).
+// A change whose write fails stays applied in memory and its alert is
+// queued: the background writer started by Start writes the alert's latest
+// version once storage is back, and Close makes a final attempt (see
+// pending.go). Every accessor returns a snapshot (deep copy) of an alert, so
+// callers may read or encode it without holding the manager's lock while
+// lifecycle methods mutate the original.
+type Manager struct {
+	config      ManagerConfig
+	db          *sql.DB
+	channels    []NotificationChannel
+	recurrences []func(*Alert)              // OnRecurrence listeners
+	alerts      map[uuid.UUID]*Alert        // guarded by mu
+	dedup       map[string]dedupEntry       // "rule_id:group_key" -> latest alert; guarded by mu
+	pending     map[uuid.UUID]*pendingWrite // alerts whose latest change is not stored; guarded by mu
+	mu          sync.RWMutex
+
+	writes writeState // background writer and persistence counters
+}
+
+// dedupEntry is the latest alert raised for a rule and group, and when that
+// alert was last raised or recurred.
+type dedupEntry struct {
+	alertID uuid.UUID
+	last    time.Time
+}
+
+// maxAlertEventIDs bounds the event IDs an alert keeps in memory as
+// recurrences are merged into it; EventCount keeps the full count.
+const maxAlertEventIDs = 1000
+
+// NewManager creates a new alert manager. db is the database/sql handle of
+// the ClickHouse store (storage.ClickHouseClient.DB()); pass nil to keep
+// alerts in memory only.
 func NewManager(config ManagerConfig, db *sql.DB) *Manager {
 	return &Manager{
-		config:   config,
+		config:   config.withDefaults(),
 		db:       db,
 		channels: make([]NotificationChannel, 0),
 		alerts:   make(map[uuid.UUID]*Alert),
-		dedup:    make(map[string]time.Time),
+		dedup:    make(map[string]dedupEntry),
+		pending:  make(map[uuid.UUID]*pendingWrite),
+		writes:   writeState{wake: make(chan struct{}, 1)},
 	}
 }
 
@@ -110,29 +221,101 @@ func (m *Manager) AddChannel(channel NotificationChannel) {
 	slog.Info("added notification channel", "name", channel.Name())
 }
 
+// OnRecurrence registers fn to be called with a snapshot of an open alert
+// each time a recurrence is merged into it (its event count, event IDs,
+// metadata and updated_at changed). Merged recurrences are not sent to the
+// notification channels, which only see new alerts, so this is how live
+// views learn about them. fn runs on the goroutine that handles the
+// correlation alert, after the change has been stored or queued; it must
+// not block and must not modify the alert, which all listeners share.
+func (m *Manager) OnRecurrence(fn func(alert *Alert)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recurrences = append(m.recurrences, fn)
+}
+
 // HandleCorrelationAlert handles an alert from the correlation engine.
+//
+// Deduplication: when the rule fired for the same group within
+// DeduplicationWindow of the previous occurrence and that alert is still
+// open (any status but resolved), the recurrence is merged into it: its
+// event count, event IDs and updated_at grow, metadata.occurrences counts
+// the merged alerts, and no notification is sent. Once the alert has been
+// resolved, a recurrence raises a new alert: the attack resumed. (Every
+// recurrence within a fixed window from the first alert used to be dropped,
+// logged at debug only, even after the alert was resolved.)
+//
+// The correlation engine sends the firings of a rule and group within its
+// own dedup window as recurrences (correlation.Alert.Recurrence) instead of
+// dropping them, each listing only events no earlier alert reported; they
+// are handled here like any other alert.
 func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correlation.Alert) error {
-	// Check for deduplication
-	dedupKey := fmt.Sprintf("%s:%s", corrAlert.RuleID, corrAlert.GroupKey)
+	dedupKey := dedupKeyOf(corrAlert.RuleID, corrAlert.GroupKey)
+	now := time.Now()
+	alert := newManagedAlert(corrAlert)
 
 	m.mu.Lock()
-	if lastTime, ok := m.dedup[dedupKey]; ok {
-		if time.Since(lastTime) < m.config.DeduplicationWindow {
+	if entry, ok := m.dedup[dedupKey]; ok && now.Sub(entry.last) < m.config.DeduplicationWindow {
+		if open, ok := m.alerts[entry.alertID]; ok && open.Status != StatusResolved {
+			m.dedup[dedupKey] = dedupEntry{alertID: open.ID, last: now}
+			mergeRecurrence(open, corrAlert, nextUpdateTime(open.UpdatedAt))
+			snapshot := open.clone()
 			m.mu.Unlock()
-			slog.Debug("suppressing duplicate alert", "rule_id", corrAlert.RuleID)
+
+			slog.Info("alert recurred; merged into the open alert",
+				"rule_id", corrAlert.RuleID, "group_key", corrAlert.GroupKey,
+				"alert_id", snapshot.ID, "status", snapshot.Status,
+				"occurrences", snapshot.Metadata[metaOccurrences], "event_count", snapshot.EventCount)
+			m.store(ctx, snapshot, "merge recurrence")
+			m.notifyRecurrence(snapshot)
 			return nil
 		}
 	}
-	m.dedup[dedupKey] = time.Now()
+	// The alert is stored under the same lock as its dedup entry: a
+	// concurrent recurrence that found the entry but not yet the alert used
+	// to raise (and notify) a second alert.
+	m.dedup[dedupKey] = dedupEntry{alertID: alert.ID, last: now}
+	m.alerts[alert.ID] = alert
+	snapshot := alert.clone()
 	m.mu.Unlock()
 
-	// Convert to managed alert
+	m.store(ctx, snapshot, "create")
+	m.sendNotifications(ctx, snapshot)
+	return nil
+}
+
+// notifyRecurrence calls the OnRecurrence listeners with a snapshot of an
+// alert a recurrence was merged into.
+func (m *Manager) notifyRecurrence(alert *Alert) {
+	m.mu.RLock()
+	listeners := m.recurrences
+	m.mu.RUnlock()
+	for _, fn := range listeners {
+		fn(alert)
+	}
+}
+
+// newManagedAlert converts an alert of the correlation engine into a new
+// managed alert.
+func newManagedAlert(corrAlert *correlation.Alert) *Alert {
 	eventIDs := make([]uuid.UUID, len(corrAlert.Events))
 	for i, e := range corrAlert.Events {
 		eventIDs[i] = e.EventID
 	}
 
-	alert := &Alert{
+	createdAt := corrAlert.Timestamp
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+
+	var mitre *correlation.MITREMapping
+	if corrAlert.MITRE != nil {
+		mitreCopy := *corrAlert.MITRE
+		mitreCopy.Techniques = slices.Clone(corrAlert.MITRE.Techniques)
+		mitre = &mitreCopy
+	}
+
+	return &Alert{
 		ID:          corrAlert.ID,
 		RuleID:      corrAlert.RuleID,
 		RuleName:    corrAlert.RuleName,
@@ -140,95 +323,71 @@ func (m *Manager) HandleCorrelationAlert(ctx context.Context, corrAlert *correla
 		Status:      StatusNew,
 		Title:       corrAlert.Title,
 		Description: corrAlert.Description,
-		CreatedAt:   corrAlert.Timestamp,
-		UpdatedAt:   corrAlert.Timestamp,
+		CreatedAt:   createdAt,
+		UpdatedAt:   createdAt,
 		GroupKey:    corrAlert.GroupKey,
 		EventCount:  len(corrAlert.Events),
 		EventIDs:    eventIDs,
-		Tags:        corrAlert.Tags,
-		MITRE:       corrAlert.MITRE,
+		Tags:        slices.Clone(corrAlert.Tags),
+		MITRE:       mitre,
 		Metadata:    make(map[string]interface{}),
 	}
-
-	// Store alert
-	if err := m.storeAlert(ctx, alert); err != nil {
-		slog.Error("failed to store alert", "error", err)
-	}
-
-	// Send notifications
-	m.sendNotifications(ctx, alert)
-
-	return nil
 }
 
-// storeAlert stores an alert in memory and database.
-func (m *Manager) storeAlert(ctx context.Context, alert *Alert) error {
-	m.mu.Lock()
-	m.alerts[alert.ID] = alert
-	m.mu.Unlock()
+// Metadata keys maintained on alerts that recurrences were merged into.
+const (
+	metaOccurrences    = "occurrences"
+	metaLastOccurrence = "last_occurrence"
+)
 
-	// Store to database if available
-	if m.db != nil {
-		return m.persistAlert(ctx, alert)
-	}
-	return nil
+// dedupKeyOf is the deduplication key of a rule and group.
+func dedupKeyOf(ruleID, groupKey string) string {
+	return fmt.Sprintf("%s:%s", ruleID, groupKey)
 }
 
-// persistAlert persists an alert to the database.
-func (m *Manager) persistAlert(ctx context.Context, alert *Alert) error {
-	eventIDsJSON, err := json.Marshal(alert.EventIDs)
-	if err != nil {
-		slog.Warn("failed to marshal event IDs, using empty array", "alert_id", alert.ID, "error", err)
-		eventIDsJSON = []byte("[]")
+// mergeRecurrence folds a recurrence of alert's rule and group into alert.
+// The caller holds the manager lock.
+//
+// Events the alert already lists are not counted again. The correlation
+// engine reports every event once (see correlation.EngineConfig); this
+// guards against a recurrence that repeats events anyway, as far as the
+// alert's (bounded) event ID list can tell.
+func mergeRecurrence(alert *Alert, recurrence *correlation.Alert, now time.Time) {
+	known := make(map[uuid.UUID]struct{}, len(alert.EventIDs))
+	for _, id := range alert.EventIDs {
+		known[id] = struct{}{}
 	}
-	tagsJSON, err := json.Marshal(alert.Tags)
-	if err != nil {
-		slog.Warn("failed to marshal tags, using empty array", "alert_id", alert.ID, "error", err)
-		tagsJSON = []byte("[]")
+	for _, e := range recurrence.Events {
+		if _, dup := known[e.EventID]; dup {
+			continue
+		}
+		known[e.EventID] = struct{}{}
+		alert.EventCount++
+		if len(alert.EventIDs) < maxAlertEventIDs {
+			alert.EventIDs = append(alert.EventIDs, e.EventID)
+		}
 	}
-	metadataJSON, err := json.Marshal(alert.Metadata)
-	if err != nil {
-		slog.Warn("failed to marshal metadata, using empty object", "alert_id", alert.ID, "error", err)
-		metadataJSON = []byte("{}")
+	if alert.Metadata == nil {
+		alert.Metadata = make(map[string]interface{})
 	}
-	mitreJSON, err := json.Marshal(alert.MITRE)
-	if err != nil {
-		slog.Warn("failed to marshal MITRE data, using null", "alert_id", alert.ID, "error", err)
-		mitreJSON = []byte("null")
+	occurrences := 1
+	switch n := alert.Metadata[metaOccurrences].(type) {
+	case int:
+		occurrences = n
+	case float64: // decoded from the persisted JSON
+		occurrences = int(n)
 	}
-
-	query := `
-		INSERT INTO alerts (
-			id, rule_id, rule_name, severity, status, title, description,
-			created_at, updated_at, group_key, event_count, event_ids,
-			tags, mitre, metadata
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`
-
-	_, err = m.db.ExecContext(ctx, query,
-		alert.ID.String(),
-		alert.RuleID,
-		alert.RuleName,
-		string(alert.Severity),
-		string(alert.Status),
-		alert.Title,
-		alert.Description,
-		alert.CreatedAt,
-		alert.UpdatedAt,
-		alert.GroupKey,
-		alert.EventCount,
-		string(eventIDsJSON),
-		string(tagsJSON),
-		string(mitreJSON),
-		string(metadataJSON),
-	)
-	if err != nil {
-		return fmt.Errorf("failed to persist alert %s: %w", alert.ID, err)
+	alert.Metadata[metaOccurrences] = occurrences + 1
+	seen := recurrence.Timestamp
+	if seen.IsZero() {
+		seen = now
 	}
-	return nil
+	alert.Metadata[metaLastOccurrence] = seen.UTC().Format(time.RFC3339Nano)
+	alert.UpdatedAt = now
 }
 
-// sendNotifications sends alert to all channels.
+// sendNotifications sends an alert snapshot to all channels. Channels only
+// read the alert, so one snapshot is shared between them.
 func (m *Manager) sendNotifications(ctx context.Context, alert *Alert) {
 	m.mu.RLock()
 	channels := m.channels
@@ -250,12 +409,14 @@ func (m *Manager) sendNotifications(ctx context.Context, alert *Alert) {
 	}
 }
 
-// GetAlert retrieves an alert by ID.
+// GetAlert retrieves a snapshot of an alert by ID. Alerts that are not in
+// memory are looked up in the database, if one is configured.
 func (m *Manager) GetAlert(ctx context.Context, id uuid.UUID) (*Alert, error) {
 	m.mu.RLock()
 	if alert, ok := m.alerts[id]; ok {
+		snapshot := alert.clone()
 		m.mu.RUnlock()
-		return alert, nil
+		return snapshot, nil
 	}
 	m.mu.RUnlock()
 
@@ -263,223 +424,76 @@ func (m *Manager) GetAlert(ctx context.Context, id uuid.UUID) (*Alert, error) {
 	if m.db != nil {
 		return m.loadAlert(ctx, id)
 	}
-	return nil, fmt.Errorf("alert not found: %s", id)
+	return nil, fmt.Errorf("%w: %s", ErrAlertNotFound, id)
 }
 
-// loadAlert loads an alert from the database.
-func (m *Manager) loadAlert(ctx context.Context, id uuid.UUID) (*Alert, error) {
-	query := `
-		SELECT
-			id, rule_id, rule_name, severity, status, title, description,
-			created_at, updated_at, acked_at, acked_by, resolved_at, resolved_by,
-			group_key, event_count, event_ids, tags, mitre, metadata, assigned_to
-		FROM alerts
-		WHERE id = ?
-	`
-
-	var alert Alert
-	var severity, status string
-	var eventIDsJSON, tagsJSON, mitreJSON, metadataJSON sql.NullString
-	var ackedAt, resolvedAt sql.NullTime
-	var ackedBy, resolvedBy, assignedTo sql.NullString
-
-	err := m.db.QueryRowContext(ctx, query, id.String()).Scan(
-		&alert.ID,
-		&alert.RuleID,
-		&alert.RuleName,
-		&severity,
-		&status,
-		&alert.Title,
-		&alert.Description,
-		&alert.CreatedAt,
-		&alert.UpdatedAt,
-		&ackedAt,
-		&ackedBy,
-		&resolvedAt,
-		&resolvedBy,
-		&alert.GroupKey,
-		&alert.EventCount,
-		&eventIDsJSON,
-		&tagsJSON,
-		&mitreJSON,
-		&metadataJSON,
-		&assignedTo,
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	alert.Severity = correlation.Severity(severity)
-	alert.Status = AlertStatus(status)
-	if ackedAt.Valid {
-		alert.AckedAt = &ackedAt.Time
-	}
-	alert.AckedBy = ackedBy.String
-	if resolvedAt.Valid {
-		alert.ResolvedAt = &resolvedAt.Time
-	}
-	alert.ResolvedBy = resolvedBy.String
-	alert.AssignedTo = assignedTo.String
-
-	if eventIDsJSON.Valid {
-		if err := json.Unmarshal([]byte(eventIDsJSON.String), &alert.EventIDs); err != nil {
-			slog.Warn("failed to unmarshal event IDs", "alert_id", alert.ID, "error", err)
-		}
-	}
-	if tagsJSON.Valid {
-		if err := json.Unmarshal([]byte(tagsJSON.String), &alert.Tags); err != nil {
-			slog.Warn("failed to unmarshal tags", "alert_id", alert.ID, "error", err)
-		}
-	}
-	if metadataJSON.Valid {
-		if err := json.Unmarshal([]byte(metadataJSON.String), &alert.Metadata); err != nil {
-			slog.Warn("failed to unmarshal metadata", "alert_id", alert.ID, "error", err)
-		}
-	}
-
-	return &alert, nil
-}
-
-// ListAlerts lists alerts with optional filters.
+// ListAlerts lists snapshots of alerts with optional filters, newest first.
 // Falls back to database if in-memory store has no results and DB is available.
 func (m *Manager) ListAlerts(ctx context.Context, filter AlertFilter) ([]*Alert, error) {
-	m.mu.RLock()
-
-	var results []*Alert
-	for _, alert := range m.alerts {
-		if filter.matches(alert) {
-			results = append(results, alert)
-		}
-	}
-	m.mu.RUnlock()
+	results, matched := m.listInMemory(filter)
 
 	// Fall back to database if in-memory store is empty and DB is available
-	if len(results) == 0 && m.db != nil {
+	if matched == 0 && m.db != nil {
 		dbResults, err := m.listAlertsFromDB(ctx, filter)
 		if err != nil {
 			slog.Warn("failed to list alerts from database, returning in-memory results", "error", err)
 		} else {
-			results = dbResults
+			sortAlertsNewestFirst(dbResults)
+			results = paginateAlerts(dbResults, filter.Offset, filter.Limit)
 		}
-	}
-
-	// Sort by created_at desc
-	for i := 0; i < len(results)-1; i++ {
-		for j := i + 1; j < len(results); j++ {
-			if results[j].CreatedAt.After(results[i].CreatedAt) {
-				results[i], results[j] = results[j], results[i]
-			}
-		}
-	}
-
-	// Apply pagination
-	if filter.Offset > 0 {
-		if filter.Offset >= len(results) {
-			return []*Alert{}, nil
-		}
-		results = results[filter.Offset:]
-	}
-	if filter.Limit > 0 && filter.Limit < len(results) {
-		results = results[:filter.Limit]
 	}
 
 	return results, nil
 }
 
-// listAlertsFromDB queries alerts from the database with filters.
-func (m *Manager) listAlertsFromDB(ctx context.Context, filter AlertFilter) ([]*Alert, error) {
-	query := `
-		SELECT
-			id, rule_id, rule_name, severity, status, title, description,
-			created_at, updated_at, acked_at, acked_by, resolved_at, resolved_by,
-			group_key, event_count, event_ids, tags, mitre, metadata, assigned_to
-		FROM alerts
-		WHERE 1=1
-	`
-	var args []interface{}
+// listInMemory returns snapshots of the page of in-memory alerts selected by
+// filter, newest first, and the number of alerts that matched before
+// pagination. Only the alerts on the returned page are copied.
+func (m *Manager) listInMemory(filter AlertFilter) ([]*Alert, int) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	if filter.Status != nil {
-		query += " AND status = ?"
-		args = append(args, string(*filter.Status))
-	}
-	if filter.Severity != nil {
-		query += " AND severity = ?"
-		args = append(args, string(*filter.Severity))
-	}
-	if filter.RuleID != "" {
-		query += " AND rule_id = ?"
-		args = append(args, filter.RuleID)
-	}
-	if filter.Since != nil {
-		query += " AND created_at >= ?"
-		args = append(args, *filter.Since)
-	}
-	if filter.Until != nil {
-		query += " AND created_at <= ?"
-		args = append(args, *filter.Until)
-	}
-
-	query += " ORDER BY created_at DESC"
-
-	rows, err := m.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, fmt.Errorf("failed to query alerts: %w", err)
-	}
-	defer rows.Close()
-
-	var results []*Alert
-	for rows.Next() {
-		var alert Alert
-		var severity, status string
-		var eventIDsJSON, tagsJSON, mitreJSON, metadataJSON sql.NullString
-		var ackedAt, resolvedAt sql.NullTime
-		var ackedBy, resolvedBy, assignedTo sql.NullString
-
-		err := rows.Scan(
-			&alert.ID, &alert.RuleID, &alert.RuleName,
-			&severity, &status, &alert.Title, &alert.Description,
-			&alert.CreatedAt, &alert.UpdatedAt,
-			&ackedAt, &ackedBy, &resolvedAt, &resolvedBy,
-			&alert.GroupKey, &alert.EventCount,
-			&eventIDsJSON, &tagsJSON, &mitreJSON, &metadataJSON,
-			&assignedTo,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to scan alert: %w", err)
+	var matched []*Alert
+	for _, alert := range m.alerts {
+		if filter.matches(alert) {
+			matched = append(matched, alert)
 		}
-
-		alert.Severity = correlation.Severity(severity)
-		alert.Status = AlertStatus(status)
-		if ackedAt.Valid {
-			alert.AckedAt = &ackedAt.Time
-		}
-		alert.AckedBy = ackedBy.String
-		if resolvedAt.Valid {
-			alert.ResolvedAt = &resolvedAt.Time
-		}
-		alert.ResolvedBy = resolvedBy.String
-		alert.AssignedTo = assignedTo.String
-
-		if eventIDsJSON.Valid {
-			if err := json.Unmarshal([]byte(eventIDsJSON.String), &alert.EventIDs); err != nil {
-				slog.Warn("failed to unmarshal event IDs", "alert_id", alert.ID, "error", err)
-			}
-		}
-		if tagsJSON.Valid {
-			if err := json.Unmarshal([]byte(tagsJSON.String), &alert.Tags); err != nil {
-				slog.Warn("failed to unmarshal tags", "alert_id", alert.ID, "error", err)
-			}
-		}
-		if metadataJSON.Valid {
-			if err := json.Unmarshal([]byte(metadataJSON.String), &alert.Metadata); err != nil {
-				slog.Warn("failed to unmarshal metadata", "alert_id", alert.ID, "error", err)
-			}
-		}
-
-		results = append(results, &alert)
 	}
+	sortAlertsNewestFirst(matched)
 
-	return results, rows.Err()
+	page := paginateAlerts(matched, filter.Offset, filter.Limit)
+	for i, alert := range page {
+		page[i] = alert.clone()
+	}
+	return page, len(matched)
+}
+
+// sortAlertsNewestFirst orders alerts by creation time, newest first. Alerts
+// created at the same time are ordered by ID so that pagination is stable
+// between requests.
+func sortAlertsNewestFirst(alerts []*Alert) {
+	sort.Slice(alerts, func(i, j int) bool {
+		if !alerts[i].CreatedAt.Equal(alerts[j].CreatedAt) {
+			return alerts[i].CreatedAt.After(alerts[j].CreatedAt)
+		}
+		return bytes.Compare(alerts[i].ID[:], alerts[j].ID[:]) < 0
+	})
+}
+
+// paginateAlerts returns the page of alerts selected by offset and limit
+// (limit <= 0 means no limit). The result may share its backing array with
+// alerts.
+func paginateAlerts(alerts []*Alert, offset, limit int) []*Alert {
+	if offset > 0 {
+		if offset >= len(alerts) {
+			return []*Alert{}
+		}
+		alerts = alerts[offset:]
+	}
+	if limit > 0 && limit < len(alerts) {
+		alerts = alerts[:limit]
+	}
+	return alerts
 }
 
 // AlertFilter defines filters for listing alerts.
@@ -512,110 +526,143 @@ func (f *AlertFilter) matches(alert *Alert) bool {
 	return true
 }
 
-// AcknowledgeAlert acknowledges an alert.
-func (m *Manager) AcknowledgeAlert(ctx context.Context, id uuid.UUID, user string) error {
+// Alert lifecycle. Valid transitions:
+//
+//	acknowledge: new, suppressed                         -> acknowledged
+//	assign:      new, suppressed, acknowledged, in_progress -> in_progress
+//	resolve:     any status except resolved              -> resolved
+//
+// Resolved is terminal. Notes can be added in any status. A rejected
+// transition returns ErrInvalidTransition and leaves the alert unchanged.
+
+func transitionError(id uuid.UUID, action string, from AlertStatus) error {
+	return fmt.Errorf("%w: cannot %s alert %s in status %q", ErrInvalidTransition, action, id, from)
+}
+
+// nextUpdateTime returns the UpdatedAt for a new version of an alert whose
+// previous version was stamped prev. The result has microsecond precision
+// (the resolution of the alerts table) and is strictly later than prev, so
+// the newest persisted version always sorts last by updated_at.
+func nextUpdateTime(prev time.Time) time.Time {
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	if !now.After(prev) {
+		now = prev.UTC().Truncate(time.Microsecond).Add(time.Microsecond)
+	}
+	return now
+}
+
+// updateAlert applies fn to the alert under the manager lock and persists the
+// resulting version. fn must validate before mutating: if it returns an error
+// the alert is left untouched and nothing is written.
+//
+// The in-memory alert is the source of truth, so once fn has applied the
+// change the call succeeds even if writing it to the database fails: the
+// alert is queued and its latest version written later (see store). The
+// write error used to be returned with the change applied anyway, so the API
+// answered 500 for an action that had taken effect, a retry got 409, and the
+// change was never persisted. Now the caller sees the state it asked for,
+// and repeating the action is judged against that state, as it would be
+// once stored (a second acknowledge is ErrInvalidTransition).
+//
+// An error is returned only when the alert is unknown, fn rejects the
+// change, or the alert is not in memory and cannot be loaded from the
+// database; nothing has changed then.
+func (m *Manager) updateAlert(ctx context.Context, id uuid.UUID, action string, fn func(alert *Alert, now time.Time) error) error {
+	if err := m.ensureLoaded(ctx, id); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	alert, ok := m.alerts[id]
 	if !ok {
 		m.mu.Unlock()
-		return fmt.Errorf("alert not found: %s", id)
+		return fmt.Errorf("%w: %s", ErrAlertNotFound, id)
 	}
-
-	now := time.Now()
-	alert.Status = StatusAcknowledged
-	alert.AckedAt = &now
-	alert.AckedBy = user
+	now := nextUpdateTime(alert.UpdatedAt)
+	if err := fn(alert, now); err != nil {
+		m.mu.Unlock()
+		return err
+	}
 	alert.UpdatedAt = now
+	snapshot := alert.clone()
 	m.mu.Unlock()
 
-	if m.db != nil {
-		query := `
-			UPDATE alerts
-			SET status = ?, acked_at = ?, acked_by = ?, updated_at = ?
-			WHERE id = ?
-		`
-		_, err := m.db.ExecContext(ctx, query, StatusAcknowledged, now, user, now, id.String())
-		if err != nil {
-			return fmt.Errorf("failed to acknowledge alert %s: %w", id, err)
-		}
-	}
+	m.store(ctx, snapshot, action)
 	return nil
+}
+
+// ensureLoaded brings an alert that exists only in the database (for
+// example an old alert not restored by LoadFromDB) into memory so that it
+// can be updated like any other alert.
+func (m *Manager) ensureLoaded(ctx context.Context, id uuid.UUID) error {
+	m.mu.RLock()
+	_, inMemory := m.alerts[id]
+	m.mu.RUnlock()
+	if inMemory || m.db == nil {
+		return nil
+	}
+
+	alert, err := m.loadAlert(ctx, id)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if _, exists := m.alerts[id]; !exists {
+		m.alerts[id] = alert
+	}
+	m.mu.Unlock()
+	return nil
+}
+
+// AcknowledgeAlert acknowledges an alert.
+func (m *Manager) AcknowledgeAlert(ctx context.Context, id uuid.UUID, user string) error {
+	return m.updateAlert(ctx, id, "acknowledge", func(alert *Alert, now time.Time) error {
+		if alert.Status != StatusNew && alert.Status != StatusSuppressed {
+			return transitionError(id, "acknowledge", alert.Status)
+		}
+		alert.Status = StatusAcknowledged
+		alert.AckedAt = &now
+		alert.AckedBy = user
+		return nil
+	})
 }
 
 // ResolveAlert resolves an alert.
 func (m *Manager) ResolveAlert(ctx context.Context, id uuid.UUID, user string) error {
-	m.mu.Lock()
-	alert, ok := m.alerts[id]
-	if !ok {
-		m.mu.Unlock()
-		return fmt.Errorf("alert not found: %s", id)
-	}
-
-	now := time.Now()
-	alert.Status = StatusResolved
-	alert.ResolvedAt = &now
-	alert.ResolvedBy = user
-	alert.UpdatedAt = now
-	m.mu.Unlock()
-
-	if m.db != nil {
-		query := `
-			UPDATE alerts
-			SET status = ?, resolved_at = ?, resolved_by = ?, updated_at = ?
-			WHERE id = ?
-		`
-		_, err := m.db.ExecContext(ctx, query, StatusResolved, now, user, now, id.String())
-		return err
-	}
-	return nil
+	return m.updateAlert(ctx, id, "resolve", func(alert *Alert, now time.Time) error {
+		if alert.Status == StatusResolved {
+			return transitionError(id, "resolve", alert.Status)
+		}
+		alert.Status = StatusResolved
+		alert.ResolvedAt = &now
+		alert.ResolvedBy = user
+		return nil
+	})
 }
 
 // AddNote adds a note to an alert.
 func (m *Manager) AddNote(ctx context.Context, alertID uuid.UUID, author, content string) error {
-	m.mu.Lock()
-	alert, ok := m.alerts[alertID]
-	if !ok {
-		m.mu.Unlock()
-		return fmt.Errorf("alert not found: %s", alertID)
-	}
-
-	note := Note{
-		ID:        uuid.New(),
-		Author:    author,
-		Content:   content,
-		CreatedAt: time.Now(),
-	}
-	alert.Notes = append(alert.Notes, note)
-	alert.UpdatedAt = time.Now()
-	m.mu.Unlock()
-
-	return nil
+	return m.updateAlert(ctx, alertID, "add note", func(alert *Alert, now time.Time) error {
+		alert.Notes = append(alert.Notes, Note{
+			ID:        uuid.New(),
+			Author:    author,
+			Content:   content,
+			CreatedAt: now,
+		})
+		return nil
+	})
 }
 
 // AssignAlert assigns an alert to a user.
 func (m *Manager) AssignAlert(ctx context.Context, id uuid.UUID, assignee string) error {
-	m.mu.Lock()
-	alert, ok := m.alerts[id]
-	if !ok {
-		m.mu.Unlock()
-		return fmt.Errorf("alert not found: %s", id)
-	}
-
-	alert.AssignedTo = assignee
-	alert.Status = StatusInProgress
-	alert.UpdatedAt = time.Now()
-	m.mu.Unlock()
-
-	if m.db != nil {
-		query := `
-			UPDATE alerts
-			SET assigned_to = ?, status = ?, updated_at = ?
-			WHERE id = ?
-		`
-		_, err := m.db.ExecContext(ctx, query, assignee, StatusInProgress, time.Now(), id.String())
-		return err
-	}
-	return nil
+	return m.updateAlert(ctx, id, "assign", func(alert *Alert, _ time.Time) error {
+		if alert.Status == StatusResolved {
+			return transitionError(id, "assign", alert.Status)
+		}
+		alert.AssignedTo = assignee
+		alert.Status = StatusInProgress
+		return nil
+	})
 }
 
 // Stats returns alert statistics.
@@ -625,14 +672,22 @@ func (m *Manager) Stats() map[string]interface{} {
 
 	statusCounts := make(map[string]int)
 	severityCounts := make(map[string]int)
+	open := 0
 
 	for _, alert := range m.alerts {
 		statusCounts[string(alert.Status)]++
 		severityCounts[string(alert.Severity)]++
+		switch alert.Status {
+		case StatusNew, StatusAcknowledged, StatusInProgress:
+			open++
+		}
 	}
 
 	stats := map[string]interface{}{
-		"total":       len(m.alerts),
+		"total": len(m.alerts),
+		// open counts the alerts still to be worked: new, acknowledged or
+		// in progress (not resolved or suppressed).
+		"open":        open,
 		"by_status":   statusCounts,
 		"by_severity": severityCounts,
 		"channels":    len(m.channels),
@@ -641,7 +696,9 @@ func (m *Manager) Stats() map[string]interface{} {
 	return stats
 }
 
-// Cleanup removes old alerts.
+// Cleanup removes old resolved alerts from memory. An alert whose latest
+// change is not yet in the database is kept until it is, since memory holds
+// its only copy.
 func (m *Manager) Cleanup(ctx context.Context) int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -650,6 +707,9 @@ func (m *Manager) Cleanup(ctx context.Context) int {
 	removed := 0
 
 	for id, alert := range m.alerts {
+		if _, unsaved := m.pending[id]; unsaved {
+			continue
+		}
 		if alert.CreatedAt.Before(cutoff) && alert.Status == StatusResolved {
 			delete(m.alerts, id)
 			removed++
@@ -657,8 +717,8 @@ func (m *Manager) Cleanup(ctx context.Context) int {
 	}
 
 	// Cleanup dedup map
-	for key, t := range m.dedup {
-		if time.Since(t) > m.config.DeduplicationWindow*2 {
+	for key, entry := range m.dedup {
+		if time.Since(entry.last) > m.config.DeduplicationWindow*2 {
 			delete(m.dedup, key)
 		}
 	}

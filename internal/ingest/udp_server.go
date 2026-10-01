@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net"
 	"sync"
@@ -11,6 +12,7 @@ import (
 	"boundary-siem/internal/ingest/cef"
 	"boundary-siem/internal/queue"
 	"boundary-siem/internal/schema"
+	"boundary-siem/internal/storage"
 )
 
 // UDPServerConfig holds configuration for the UDP server.
@@ -37,7 +39,12 @@ type UDPServerMetrics struct {
 	Parsed     uint64
 	Normalized uint64
 	Queued     uint64
-	Errors     uint64
+	// Errors counts every dropped message; the fields below break it down.
+	Errors uint64
+	// ParseErrors counts datagrams that are not valid CEF.
+	ParseErrors uint64
+	// ValidationErrors counts events that failed normalization or validation.
+	ValidationErrors uint64
 }
 
 // UDPServer receives CEF messages over UDP.
@@ -48,16 +55,20 @@ type UDPServer struct {
 	normalizer *cef.Normalizer
 	validator  *schema.Validator
 	queue      *queue.RingBuffer
+	rejects    *cef.RejectLogger
+	quarantine *Quarantiner
 
 	wg   sync.WaitGroup
 	done chan struct{}
 
 	// Metrics
-	received   uint64
-	parsed     uint64
-	normalized uint64
-	queued     uint64
-	errors     uint64
+	received         uint64
+	parsed           uint64
+	normalized       uint64
+	queued           uint64
+	errors           uint64
+	parseErrors      uint64
+	validationErrors uint64
 }
 
 // NewUDPServer creates a new UDP server for CEF ingestion.
@@ -74,8 +85,17 @@ func NewUDPServer(
 		normalizer: normalizer,
 		validator:  validator,
 		queue:      q,
+		rejects:    cef.NewRejectLogger(nil, "udp", cef.DefaultRejectLogInterval),
 		done:       make(chan struct{}),
 	}
+}
+
+// WithQuarantine stores messages that fail parsing, normalization or
+// validation in the quarantine table through q (best effort; it never
+// blocks). Call it before Start.
+func (s *UDPServer) WithQuarantine(q *Quarantiner) *UDPServer {
+	s.quarantine = q
+	return s
 }
 
 // Start starts the UDP server.
@@ -122,6 +142,10 @@ func (s *UDPServer) Start(ctx context.Context) error {
 	return nil
 }
 
+// errMessageChannelFull reports a message dropped because the workers are
+// not keeping up.
+var errMessageChannelFull = errors.New("message channel full")
+
 type udpMessage struct {
 	data     []byte
 	sourceIP string
@@ -143,7 +167,10 @@ func (s *UDPServer) receiver(ctx context.Context, messages chan<- udpMessage) {
 		}
 
 		// Set read deadline to allow periodic context checks
-		s.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond))
+		if err := s.conn.SetReadDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			// The read below surfaces the underlying socket failure.
+			slog.Debug("failed to set UDP read deadline", "error", err)
+		}
 
 		n, remoteAddr, err := s.conn.ReadFromUDP(buffer)
 		if err != nil {
@@ -170,7 +197,7 @@ func (s *UDPServer) receiver(ctx context.Context, messages chan<- udpMessage) {
 		default:
 			// Channel full, drop message
 			atomic.AddUint64(&s.errors, 1)
-			slog.Debug("UDP message channel full, dropping message")
+			s.rejects.Reject("queue", errMessageChannelFull, remoteAddr.IP.String(), "")
 		}
 	}
 }
@@ -185,13 +212,13 @@ func (s *UDPServer) worker(ctx context.Context, messages <-chan udpMessage, work
 
 func (s *UDPServer) processMessage(ctx context.Context, msg udpMessage) {
 	// Parse CEF
-	cefEvent, err := s.parser.Parse(string(msg.data))
+	raw := string(msg.data)
+	cefEvent, err := s.parser.Parse(raw)
 	if err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		slog.Debug("CEF parse error",
-			"error", err,
-			"source", msg.sourceIP,
-		)
+		atomic.AddUint64(&s.parseErrors, 1)
+		s.rejects.Reject("parse", err, msg.sourceIP, raw)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeParseFailed, raw, msg.sourceIP, err)
 		return
 	}
 	atomic.AddUint64(&s.parsed, 1)
@@ -200,10 +227,9 @@ func (s *UDPServer) processMessage(ctx context.Context, msg udpMessage) {
 	event, err := s.normalizer.Normalize(cefEvent, msg.sourceIP)
 	if err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		slog.Debug("CEF normalize error",
-			"error", err,
-			"source", msg.sourceIP,
-		)
+		atomic.AddUint64(&s.validationErrors, 1)
+		s.rejects.Reject("normalize", err, msg.sourceIP, raw)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeValidationFailed, raw, msg.sourceIP, err)
 		return
 	}
 	atomic.AddUint64(&s.normalized, 1)
@@ -211,17 +237,16 @@ func (s *UDPServer) processMessage(ctx context.Context, msg udpMessage) {
 	// Validate
 	if err := s.validator.Validate(event); err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		slog.Debug("CEF validation error",
-			"error", err,
-			"source", msg.sourceIP,
-		)
+		atomic.AddUint64(&s.validationErrors, 1)
+		s.rejects.Reject("validate", err, msg.sourceIP, raw)
+		quarantineCEF(s.quarantine, storage.QuarantineCodeValidationFailed, raw, msg.sourceIP, err)
 		return
 	}
 
 	// Queue for storage
 	if err := s.queue.Push(event); err != nil {
 		atomic.AddUint64(&s.errors, 1)
-		slog.Debug("queue push error", "error", err)
+		s.rejects.Reject("queue", err, msg.sourceIP, raw)
 		return
 	}
 
@@ -239,16 +264,20 @@ func (s *UDPServer) Stop() {
 		"received", atomic.LoadUint64(&s.received),
 		"queued", atomic.LoadUint64(&s.queued),
 		"errors", atomic.LoadUint64(&s.errors),
+		"parse_errors", atomic.LoadUint64(&s.parseErrors),
+		"validation_errors", atomic.LoadUint64(&s.validationErrors),
 	)
 }
 
 // Metrics returns the current server metrics.
 func (s *UDPServer) Metrics() UDPServerMetrics {
 	return UDPServerMetrics{
-		Received:   atomic.LoadUint64(&s.received),
-		Parsed:     atomic.LoadUint64(&s.parsed),
-		Normalized: atomic.LoadUint64(&s.normalized),
-		Queued:     atomic.LoadUint64(&s.queued),
-		Errors:     atomic.LoadUint64(&s.errors),
+		Received:         atomic.LoadUint64(&s.received),
+		Parsed:           atomic.LoadUint64(&s.parsed),
+		Normalized:       atomic.LoadUint64(&s.normalized),
+		Queued:           atomic.LoadUint64(&s.queued),
+		Errors:           atomic.LoadUint64(&s.errors),
+		ParseErrors:      atomic.LoadUint64(&s.parseErrors),
+		ValidationErrors: atomic.LoadUint64(&s.validationErrors),
 	}
 }

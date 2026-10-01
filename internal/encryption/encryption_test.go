@@ -3,9 +3,12 @@ package encryption
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -44,6 +47,36 @@ func TestNewEngine(t *testing.T) {
 			cfg: &Config{
 				Enabled: true,
 				Logger:  slog.New(slog.NewTextHandler(os.Stdout, nil)),
+			},
+			wantErr: true,
+		},
+		{
+			name: "max_key_version",
+			cfg: &Config{
+				Enabled:    true,
+				MasterKey:  []byte("test-master-key-32-bytes-long!!"),
+				KeyVersion: 255,
+				Logger:     slog.New(slog.NewTextHandler(os.Stdout, nil)),
+			},
+			wantErr: false,
+		},
+		{
+			name: "key_version_too_large",
+			cfg: &Config{
+				Enabled:    true,
+				MasterKey:  []byte("test-master-key-32-bytes-long!!"),
+				KeyVersion: 256,
+				Logger:     slog.New(slog.NewTextHandler(os.Stdout, nil)),
+			},
+			wantErr: true,
+		},
+		{
+			name: "negative_key_version",
+			cfg: &Config{
+				Enabled:    true,
+				MasterKey:  []byte("test-master-key-32-bytes-long!!"),
+				KeyVersion: -1,
+				Logger:     slog.New(slog.NewTextHandler(os.Stdout, nil)),
 			},
 			wantErr: true,
 		},
@@ -249,8 +282,16 @@ func TestKeyRotation(t *testing.T) {
 		t.Fatalf("Encrypt() error = %v", err)
 	}
 
-	// Rotate to new key
+	// Versions that do not fit the one-byte ciphertext header are rejected
 	newKey := []byte("new-master-key-32-bytes-long!!!")
+	if err := engine.RotateKey(newKey, 256); !errors.Is(err, ErrInvalidKey) {
+		t.Fatalf("RotateKey(256) error = %v, want ErrInvalidKey", err)
+	}
+	if got := engine.GetKeyVersion(); got != 1 {
+		t.Fatalf("GetKeyVersion() = %d after rejected rotation, want 1", got)
+	}
+
+	// Rotate to new key
 	if err := engine.RotateKey(newKey, 2); err != nil {
 		t.Fatalf("RotateKey() error = %v", err)
 	}
@@ -482,5 +523,78 @@ func BenchmarkEncryptString(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, _ = engine.EncryptString(plaintext)
+	}
+}
+
+// TestEncryptFieldConcurrentRotation verifies that EncryptField reports the
+// key version that is actually embedded in the ciphertext header, even while
+// RotateKey runs concurrently. Run with -race: an unsynchronised read of the
+// key version is also reported as a data race.
+func TestEncryptFieldConcurrentRotation(t *testing.T) {
+	engine, err := NewEngine(&Config{
+		Enabled:    true,
+		MasterKey:  []byte("test-master-key-32-bytes-long!!"),
+		KeyVersion: 1,
+	})
+	if err != nil {
+		t.Fatalf("failed to create engine: %v", err)
+	}
+
+	const rotations = 4
+	stop := make(chan struct{})
+	rotateErr := make(chan error, 1)
+	go func() {
+		defer close(stop)
+		for v := 2; v < 2+rotations; v++ {
+			if err := engine.RotateKey([]byte("rotated-master-key-32-bytes-long"), v); err != nil {
+				rotateErr <- err
+				return
+			}
+		}
+		rotateErr <- nil
+	}()
+
+	const workers = 4
+	var wg sync.WaitGroup
+	errs := make(chan string, workers)
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				field, err := engine.EncryptField("field-value")
+				if err != nil {
+					errs <- "EncryptField() error: " + err.Error()
+					return
+				}
+				raw, err := base64.StdEncoding.DecodeString(field.Ciphertext)
+				if err != nil || len(raw) == 0 {
+					errs <- "EncryptField() returned invalid ciphertext encoding"
+					return
+				}
+				if header := int(raw[0]); header != field.KeyVersion {
+					errs <- fmt.Sprintf("KeyVersion = %d but ciphertext header version = %d", field.KeyVersion, header)
+					return
+				}
+			}
+		}()
+	}
+
+	if err := <-rotateErr; err != nil {
+		t.Fatalf("RotateKey() error = %v", err)
+	}
+	wg.Wait()
+	close(errs)
+	for msg := range errs {
+		t.Error(msg)
+	}
+
+	if got := engine.GetKeyVersion(); got != 1+rotations {
+		t.Errorf("GetKeyVersion() = %d, want %d", got, 1+rotations)
 	}
 }

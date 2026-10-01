@@ -320,6 +320,27 @@ func TestApplyEnvOverrides(t *testing.T) {
 	})
 }
 
+func TestApplyEnvOverridesInvalidIntegers(t *testing.T) {
+	t.Setenv("SIEM_HTTP_PORT", "not-a-port")
+	t.Setenv("SIEM_RATELIMIT_RPS", "12abc")
+	t.Setenv("SIEM_RATELIMIT_BURST", " 25 ")
+
+	cfg := DefaultConfig()
+	wantPort := cfg.Server.HTTPPort
+	wantRPS := cfg.RateLimit.RequestsPerIP
+	cfg.applyEnvOverrides()
+
+	if cfg.Server.HTTPPort != wantPort {
+		t.Errorf("invalid SIEM_HTTP_PORT changed HTTPPort to %d, want default %d", cfg.Server.HTTPPort, wantPort)
+	}
+	if cfg.RateLimit.RequestsPerIP != wantRPS {
+		t.Errorf("invalid SIEM_RATELIMIT_RPS changed RequestsPerIP to %d, want default %d", cfg.RateLimit.RequestsPerIP, wantRPS)
+	}
+	if cfg.RateLimit.BurstSize != 25 {
+		t.Errorf("expected surrounding whitespace to be ignored, BurstSize = %d, want 25", cfg.RateLimit.BurstSize)
+	}
+}
+
 func TestLoadAuthFromEnv(t *testing.T) {
 	// Save and restore env vars
 	original := map[string]string{

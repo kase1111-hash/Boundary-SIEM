@@ -539,7 +539,7 @@ func (m *Monitor) Cleanup() {
 
 	// Clean rate limits
 	for ip, state := range m.rateLimits {
-		if time.Now().Sub(state.window) > 10*time.Minute && !state.blocked {
+		if time.Since(state.window) > 10*time.Minute && !state.blocked {
 			delete(m.rateLimits, ip)
 		}
 	}

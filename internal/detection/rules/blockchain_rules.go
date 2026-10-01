@@ -7,27 +7,37 @@ import (
 	"boundary-siem/internal/correlation"
 )
 
-// GetAllRules returns all pre-built detection rules.
+// GetAllRules returns all pre-built detection rules. Each rule's Category
+// is the group it belongs to (Validator, Consensus, ...) unless the rule sets
+// its own.
 func GetAllRules() []*correlation.Rule {
 	var rules []*correlation.Rule
+	add := func(category string, group []*correlation.Rule) {
+		for _, r := range group {
+			if r.Category == "" {
+				r.Category = category
+			}
+		}
+		rules = append(rules, group...)
+	}
 
-	rules = append(rules, GetValidatorRules()...)
-	rules = append(rules, GetConsensusRules()...)
-	rules = append(rules, GetTransactionRules()...)
-	rules = append(rules, GetContractRules()...)
-	rules = append(rules, GetMEVRules()...)
-	rules = append(rules, GetInfrastructureRules()...)
-	rules = append(rules, GetSecurityRules()...)
-	rules = append(rules, GetComplianceRules()...)
-	rules = append(rules, GetKeyManagementRules()...)
-	rules = append(rules, GetCloudSecurityRules()...)
-	rules = append(rules, GetNetworkRules()...)
-	rules = append(rules, GetAPISecurityRules()...)
-	rules = append(rules, GetDeFiRules()...)
-	rules = append(rules, GetExchangeRules()...)
+	add("Validator", GetValidatorRules())
+	add("Consensus", GetConsensusRules())
+	add("Transactions", GetTransactionRules())
+	add("Smart Contract", GetContractRules())
+	add("MEV", GetMEVRules())
+	add("Infrastructure", GetInfrastructureRules())
+	add("Security", GetSecurityRules())
+	add("Compliance", GetComplianceRules())
+	add("Key Management", GetKeyManagementRules())
+	add("Cloud Security", GetCloudSecurityRules())
+	add("Network", GetNetworkRules())
+	add("API Security", GetAPISecurityRules())
+	add("DeFi", GetDeFiRules())
+	add("Exchange", GetExchangeRules())
 
 	// Cross-system ecosystem rules
-	rules = append(rules, GetEcosystemRules()...)
+	add("Ecosystem", GetEcosystemRules())
 
 	return rules
 }
@@ -242,10 +252,11 @@ func GetExchangeRules() []*correlation.Rule {
 			},
 		},
 		{
+			// 10+ self-trades by one trader within an hour.
 			ID:          "exch-005",
 			Name:        "Wash Trading Pattern",
 			Description: "Potential wash trading pattern detected",
-			Type:        correlation.RuleTypeSequence,
+			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
 			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
 			Tags:        []string{"exchange", "wash", "trading"},
@@ -568,15 +579,19 @@ func GetConsensusRules() []*correlation.Rule {
 func GetTransactionRules() []*correlation.Rule {
 	return []*correlation.Rule{
 		{
+			// The shipped rule community-evm-high-value-transfer covers
+			// 500-1000 ETH (high); both used to fire on every transfer of
+			// 1000 ETH and more, this one as medium.
 			ID:          "tx-001",
 			Name:        "Large ETH Transfer",
-			Description: "Unusually large ETH transfer detected",
+			Description: "ETH transfer of 1000 ETH or more",
 			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
-			Severity:    correlation.SeverityToInt(correlation.SeverityMedium),
+			Severity:    correlation.SeverityToInt(correlation.SeverityHigh),
 			Tags:        []string{"transaction", "transfer", "whale"},
 			EventConditions: []correlation.Condition{
-				{Field: "action", Operator: "eq", Value: "tx.transfer"},
+				// evm.transaction is what the EVM poller emits (with value_eth and from).
+				{Field: "action", Operator: "in", Values: []string{"tx.transfer", "evm.transaction"}},
 				{Field: "metadata.value_eth", Operator: "gte", Value: float64(1000)},
 			},
 			GroupBy:   []string{"metadata.from"},
@@ -835,10 +850,11 @@ func GetContractRules() []*correlation.Rule {
 			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
 		},
 		{
+			// 3+ recursive calls into the same contract within a minute.
 			ID:          "sc-010",
 			Name:        "Reentrancy Attack Pattern",
 			Description: "Potential reentrancy attack pattern detected",
-			Type:        correlation.RuleTypeSequence,
+			Type:        correlation.RuleTypeThreshold,
 			Enabled:     true,
 			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
 			Tags:        []string{"contract", "attack", "reentrancy"},
@@ -1200,7 +1216,8 @@ func GetSecurityRules() []*correlation.Rule {
 				TechniqueID: "T1110",
 			},
 			EventConditions: []correlation.Condition{
-				{Field: "action", Operator: "eq", Value: "auth.failed"},
+				// auth.failure is what the ingest normalizers and the API emit.
+				{Field: "action", Operator: "in", Values: []string{"auth.failure", "auth.failed"}},
 			},
 			GroupBy:   []string{"actor.ip"},
 			Window:    10 * time.Minute,
@@ -1424,23 +1441,11 @@ func GetComplianceRules() []*correlation.Rule {
 }
 
 // GetKeyManagementRules returns key management detection rules.
+//
+// There is no key-001: it was an exact copy of sec-005 (Key Export Attempt),
+// so every key export raised two critical alerts.
 func GetKeyManagementRules() []*correlation.Rule {
 	return []*correlation.Rule{
-		{
-			ID:          "key-001",
-			Name:        "Key Export Attempt",
-			Description: "Cryptographic key export was attempted",
-			Type:        correlation.RuleTypeThreshold,
-			Enabled:     true,
-			Severity:    correlation.SeverityToInt(correlation.SeverityCritical),
-			Tags:        []string{"keys", "export", "critical"},
-			EventConditions: []correlation.Condition{
-				{Field: "action", Operator: "eq", Value: "key.export"},
-			},
-			GroupBy:   []string{"target"},
-			Window:    1 * time.Hour,
-			Threshold: &correlation.ThresholdConfig{Count: 1, Operator: "gte"},
-		},
 		{
 			ID:          "key-002",
 			Name:        "Key Import",

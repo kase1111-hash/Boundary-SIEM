@@ -48,7 +48,7 @@ CREATE TABLE IF NOT EXISTS events (
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (tenant_id, source_product, toStartOfHour(timestamp), event_id)
-TTL timestamp + INTERVAL 90 DAY DELETE
+TTL toDateTime(timestamp) + INTERVAL 90 DAY DELETE
 SETTINGS
     index_granularity = 8192,
     ttl_only_drop_parts = 1;

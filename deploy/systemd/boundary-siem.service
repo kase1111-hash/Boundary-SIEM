@@ -1,10 +1,20 @@
-# Boundary SIEM Service with Watchdog Protection
-# This service provides process protection against termination
+# Boundary SIEM ingest service (siem-ingest)
 #
-# Install: cp boundary-siem.service /etc/systemd/system/
-#          systemctl daemon-reload
-#          systemctl enable boundary-siem
-#          systemctl start boundary-siem
+# Install:
+#   useradd -r -s /sbin/nologin boundary-siem
+#   install -m 0755 bin/siem-ingest /usr/local/bin/siem-ingest
+#   install -d -m 0755 /etc/boundary-siem
+#   install -m 0640 -g boundary-siem configs/config.yaml /etc/boundary-siem/config.yaml
+#   install -d /var/lib/boundary-siem/rules && cp rules/*.yaml /var/lib/boundary-siem/rules/
+#   printf 'SIEM_API_KEY=...\nCLICKHOUSE_PASSWORD=...\n' > /etc/boundary-siem/siem.env
+#   chmod 0600 /etc/boundary-siem/siem.env
+#   cp boundary-siem.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now boundary-siem
+#
+# siem-ingest takes no flags. It reads SIEM_CONFIG_PATH and resolves the
+# relative paths in the config (rules/, data/rules, certs/) from its working
+# directory, /var/lib/boundary-siem.
 
 [Unit]
 Description=Boundary SIEM Security Information and Event Management
@@ -20,38 +30,29 @@ After=apparmor.service selinux-policy-migrate-local-changes@targeted.service
 # If we crash, make sure to notify admin
 OnFailure=boundary-siem-failure@%n.service
 
-[Service]
-Type=notify
-NotifyAccess=main
-
-# Main executable
-ExecStart=/usr/local/bin/boundary-siem serve --config /etc/boundary-siem/config.yaml
-
-# Pre-start checks
-ExecStartPre=/usr/local/bin/boundary-siem preflight --config /etc/boundary-siem/config.yaml
-
-# Graceful reload
-ExecReload=/bin/kill -HUP $MAINPID
-
-# =====================================================
-# WATCHDOG CONFIGURATION
-# =====================================================
-
-# Watchdog interval - process must notify within this time
-# Set to 5 seconds for fast detection of hangs/freezes
-WatchdogSec=5
-
-# Restart on watchdog timeout
-WatchdogSignal=SIGABRT
-
-# Also restart on these failures
-Restart=always
-RestartSec=1
-RestartPreventExitStatus=SIGTERM SIGINT
-
 # Maximum restart attempts (10 in 5 minutes)
 StartLimitIntervalSec=300
 StartLimitBurst=10
+
+[Service]
+Type=exec
+
+# Main executable
+ExecStart=/usr/local/bin/siem-ingest
+WorkingDirectory=/var/lib/boundary-siem
+
+# Configuration and secrets (SIEM_API_KEY, CLICKHOUSE_PASSWORD, ...)
+Environment=SIEM_CONFIG_PATH=/etc/boundary-siem/config.yaml
+EnvironmentFile=-/etc/boundary-siem/siem.env
+
+# SIGTERM drains accepted events and exits within server.shutdown_timeout (8s)
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+# Restart on failure (for example ClickHouse unreachable at startup)
+Restart=always
+RestartSec=5
+RestartPreventExitStatus=SIGTERM SIGINT
 
 # =====================================================
 # PROCESS PROTECTION
@@ -64,19 +65,12 @@ Group=boundary-siem
 # Protect against OOM killer - prefer killing other processes
 OOMScoreAdjust=-900
 
-# Prevent memory overcommit from affecting us
+# Memory limits
 MemoryMax=2G
 MemoryHigh=1G
 
 # CPU limits to prevent runaway
 CPUQuota=200%
-
-# IO priority
-IOSchedulingClass=realtime
-IOSchedulingPriority=4
-
-# Nice level (higher priority)
-Nice=-10
 
 # =====================================================
 # SECURITY HARDENING
@@ -94,8 +88,8 @@ ProtectControlGroups=yes
 ProtectClock=yes
 ProtectHostname=yes
 
-# Writable directories
-ReadWritePaths=/var/lib/boundary-siem /var/log/boundary-siem /run/boundary-siem
+# Writable directories (StateDirectory/LogsDirectory below are writable too)
+ReadWritePaths=/var/lib/boundary-siem /var/log/boundary-siem
 
 # Network namespace (use host network for SIEM)
 PrivateNetwork=no
@@ -106,13 +100,14 @@ RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 # No new privileges after exec
 NoNewPrivileges=yes
 
-# Capability restrictions
-CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH CAP_SETUID CAP_SETGID CAP_SYS_RESOURCE
-AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_DAC_READ_SEARCH
+# Capability restrictions: only needed to bind ports below 1024
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
 
-# Seccomp filter
+# Seccomp filter; blocked calls fail with EPERM instead of killing the process
 SystemCallFilter=@system-service
-SystemCallFilter=~@privileged @resources
+SystemCallFilter=~@privileged
+SystemCallErrorNumber=EPERM
 SystemCallArchitectures=native
 
 # Restrict realtime and memory locking
@@ -128,24 +123,20 @@ UMask=0027
 # RUNTIME DIRECTORIES
 # =====================================================
 
-RuntimeDirectory=boundary-siem
-RuntimeDirectoryMode=0750
 StateDirectory=boundary-siem
 StateDirectoryMode=0750
 LogsDirectory=boundary-siem
 LogsDirectoryMode=0750
+# Owned by root (systemd does not chown it); the service user reads config.yaml
+# through its group, siem.env is read by systemd itself
 ConfigurationDirectory=boundary-siem
-ConfigurationDirectoryMode=0750
+ConfigurationDirectoryMode=0755
 
 # =====================================================
-# ENVIRONMENT
+# LOGGING
 # =====================================================
 
-# Notify systemd of watchdog
-Environment=WATCHDOG_USEC=5000000
-Environment=BOUNDARY_SIEM_WATCHDOG=1
-
-# Logging
+# siem-ingest logs JSON to stdout
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=boundary-siem

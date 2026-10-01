@@ -761,9 +761,10 @@ func (s *ReportService) generateTableConfigs(sectionID string) []TableConfig {
 
 func (s *ReportService) generateControlsContent(reportType ReportType, sectionID string) interface{} {
 	framework := "soc2"
-	if reportType == ReportTypeISO27001 {
+	switch reportType {
+	case ReportTypeISO27001:
 		framework = "iso27001"
-	} else if reportType == ReportTypeNIST {
+	case ReportTypeNIST:
 		framework = "nist"
 	}
 

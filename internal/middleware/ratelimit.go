@@ -22,21 +22,35 @@ type RateLimiter struct {
 	mu          sync.RWMutex
 	exemptPaths map[string]bool
 	stopCleanup chan struct{}
+	stopOnce    sync.Once
 	logger      *slog.Logger
 }
+
+// defaultCleanupPeriod replaces a non-positive CleanupPeriod, which
+// time.NewTicker would reject with a panic in the cleanup goroutine.
+const defaultCleanupPeriod = 5 * time.Minute
 
 // clientState tracks request counts for a single client IP.
 type clientState struct {
 	count     int64     // Current request count in window
 	windowEnd time.Time // When current window expires
+	evicted   bool      // Set by cleanup once removed from the clients map
 	mu        sync.Mutex
 }
 
 // NewRateLimiter creates a new rate limiter with the given configuration.
-// It starts a background goroutine for periodic cleanup of expired entries.
+// It starts a background goroutine for periodic cleanup of expired entries;
+// call Stop to end it.
 func NewRateLimiter(cfg config.RateLimitConfig, logger *slog.Logger) *RateLimiter {
 	if logger == nil {
 		logger = slog.Default()
+	}
+
+	if cfg.CleanupPeriod <= 0 {
+		logger.Warn("rate limiter cleanup period is not positive, using default",
+			"cleanup_period", cfg.CleanupPeriod,
+			"default", defaultCleanupPeriod)
+		cfg.CleanupPeriod = defaultCleanupPeriod
 	}
 
 	exemptPaths := make(map[string]bool)
@@ -63,19 +77,30 @@ func NewRateLimiter(cfg config.RateLimitConfig, logger *slog.Logger) *RateLimite
 func (rl *RateLimiter) Allow(ip string) (bool, int, time.Time) {
 	now := time.Now()
 
-	// Get or create client state
-	rl.mu.Lock()
-	client, exists := rl.clients[ip]
-	if !exists {
-		client = &clientState{
-			count:     0,
-			windowEnd: now.Add(rl.cfg.WindowSize),
+	// Get or create client state. The map lock is released before the
+	// client lock is taken, so cleanup may evict the entry in between; in
+	// that case retry so the request is counted against the live entry
+	// rather than an orphaned one.
+	var client *clientState
+	for {
+		rl.mu.Lock()
+		c, exists := rl.clients[ip]
+		if !exists {
+			c = &clientState{
+				count:     0,
+				windowEnd: now.Add(rl.cfg.WindowSize),
+			}
+			rl.clients[ip] = c
 		}
-		rl.clients[ip] = client
-	}
-	rl.mu.Unlock()
+		rl.mu.Unlock()
 
-	client.mu.Lock()
+		c.mu.Lock()
+		if !c.evicted {
+			client = c
+			break
+		}
+		c.mu.Unlock()
+	}
 	defer client.mu.Unlock()
 
 	// Check if window has expired - reset if so
@@ -131,6 +156,7 @@ func (rl *RateLimiter) cleanup() {
 		client.mu.Lock()
 		if client.windowEnd.Before(expiredThreshold) {
 			delete(rl.clients, ip)
+			client.evicted = true
 			removed++
 		}
 		client.mu.Unlock()
@@ -141,9 +167,10 @@ func (rl *RateLimiter) cleanup() {
 	}
 }
 
-// Stop gracefully stops the rate limiter cleanup goroutine.
+// Stop gracefully stops the rate limiter cleanup goroutine. It is safe to
+// call more than once.
 func (rl *RateLimiter) Stop() {
-	close(rl.stopCleanup)
+	rl.stopOnce.Do(func() { close(rl.stopCleanup) })
 }
 
 // IsExempt checks if a path is exempt from rate limiting.
@@ -188,8 +215,37 @@ func GetRateLimitMetrics() (limited, allowed uint64) {
 
 // RateLimitMiddleware creates HTTP middleware that applies rate limiting based on client IP.
 // It sets standard rate limit headers and returns 429 Too Many Requests when limit is exceeded.
+//
+// Deprecated: the limiter's cleanup goroutine can never be stopped, so each
+// call with rate limiting enabled leaks a goroutine. Use NewRateLimitMiddleware
+// and call its stop function on shutdown, or own a RateLimiter and use its
+// Middleware method.
 func RateLimitMiddleware(cfg config.RateLimitConfig, logger *slog.Logger) func(http.Handler) http.Handler {
+	middleware, _ := NewRateLimitMiddleware(cfg, logger)
+	return middleware
+}
+
+// NewRateLimitMiddleware creates HTTP middleware that applies rate limiting
+// based on client IP, and a stop function that ends the limiter's background
+// cleanup goroutine. Call stop once the middleware is no longer serving
+// (for example on server shutdown); it is safe to call more than once. When
+// rate limiting is disabled the middleware passes every request through and
+// no goroutine is started.
+func NewRateLimitMiddleware(cfg config.RateLimitConfig, logger *slog.Logger) (middleware func(http.Handler) http.Handler, stop func()) {
+	if !cfg.Enabled {
+		return func(next http.Handler) http.Handler { return next }, func() {}
+	}
+
 	limiter := NewRateLimiter(cfg, logger)
+	return limiter.Middleware(), limiter.Stop
+}
+
+// Middleware returns HTTP middleware that applies rl's per-IP limits. It sets
+// standard rate limit headers and returns 429 Too Many Requests when the
+// limit is exceeded. The caller owns rl and must Stop it when done.
+func (rl *RateLimiter) Middleware() func(http.Handler) http.Handler {
+	cfg := rl.cfg
+	logger := rl.logger
 
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -200,7 +256,7 @@ func RateLimitMiddleware(cfg config.RateLimitConfig, logger *slog.Logger) func(h
 			}
 
 			// Check exempt paths
-			if limiter.IsExempt(r.URL.Path) {
+			if rl.IsExempt(r.URL.Path) {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -209,7 +265,7 @@ func RateLimitMiddleware(cfg config.RateLimitConfig, logger *slog.Logger) func(h
 			ip := getClientIP(r, cfg.TrustProxy)
 
 			// Check rate limit
-			allowed, remaining, resetTime := limiter.Allow(ip)
+			allowed, remaining, resetTime := rl.Allow(ip)
 
 			// Set rate limit headers (RFC 6585 compliant)
 			limit := cfg.RequestsPerIP + cfg.BurstSize

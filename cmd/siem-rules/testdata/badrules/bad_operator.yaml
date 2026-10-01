@@ -1,0 +1,14 @@
+id: bad-op
+name: Bad operator
+type: threshold
+enabled: true
+severity: 5
+conditions:
+  match:
+    - field: action
+      operator: equalz
+      value: x
+threshold:
+  count: 1
+  operator: gte
+window: 5m

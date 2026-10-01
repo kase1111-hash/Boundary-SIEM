@@ -1,0 +1,12 @@
+# Rules as a YAML list.
+- id: list-one
+  name: Contract self-destruct
+  type: threshold
+  severity: 9
+  event_conditions:
+    - field: action
+      operator: eq
+      value: tx.selfdestruct
+  threshold:
+    count: 1
+  window: 10m

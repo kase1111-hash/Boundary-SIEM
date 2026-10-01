@@ -1,6 +1,8 @@
 package consumer
 
 import (
+	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,21 +12,38 @@ import (
 	"boundary-siem/internal/schema"
 )
 
-// mockBatchWriter is a mock implementation for testing
+// mockBatchWriter is an in-memory eventWriter for testing. Consumer workers
+// call it from their own goroutines, so all access is mutex-protected.
 type mockBatchWriter struct {
+	mu      sync.Mutex
 	events  []*schema.Event
-	written int
-	failed  int
+	flushes int
 }
 
 func (m *mockBatchWriter) Write(event *schema.Event) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.events = append(m.events, event)
-	m.written++
 	return nil
 }
 
 func (m *mockBatchWriter) Flush() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.flushes++
 	return nil
+}
+
+func (m *mockBatchWriter) written() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.events)
+}
+
+func (m *mockBatchWriter) flushCount() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.flushes
 }
 
 func newTestEvent() *schema.Event {
@@ -77,9 +96,8 @@ func TestDefaultConfig(t *testing.T) {
 
 func TestConsumer_StartStop(t *testing.T) {
 	q := queue.NewRingBuffer(100)
+	writer := &mockBatchWriter{}
 
-	// We can't easily test with the real BatchWriter without ClickHouse,
-	// so we just test that the consumer starts and stops without panic
 	cfg := Config{
 		Workers:      1,
 		PollInterval: 10 * time.Millisecond,
@@ -87,23 +105,49 @@ func TestConsumer_StartStop(t *testing.T) {
 	}
 
 	// Push some events
-	for i := 0; i < 5; i++ {
-		q.Push(newTestEvent())
+	const numEvents = 5
+	for i := 0; i < numEvents; i++ {
+		if err := q.Push(newTestEvent()); err != nil {
+			t.Fatalf("Push() error = %v", err)
+		}
 	}
 
-	// Since we can't use a real batch writer, we'll just verify
-	// the consumer can be created and stopped
 	c := &Consumer{
-		queue:  q,
-		config: cfg,
-		done:   make(chan struct{}),
+		queue:       q,
+		batchWriter: writer,
+		config:      cfg,
+		done:        make(chan struct{}),
 	}
 
-	// Verify it can be created
-	if c == nil {
-		t.Fatal("Consumer should not be nil")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c.Start(ctx)
+
+	// Wait for the worker to drain the queue into the writer.
+	deadline := time.Now().Add(5 * time.Second)
+	for c.Metrics().Consumed < numEvents {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for events: consumed %d of %d", c.Metrics().Consumed, numEvents)
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 
-	// Just close without starting (to avoid needing a mock)
-	close(c.done)
+	c.Stop()
+
+	if got := writer.written(); got != numEvents {
+		t.Errorf("writer received %d events, want %d", got, numEvents)
+	}
+	if got := writer.flushCount(); got != 1 {
+		t.Errorf("Flush() called %d times, want 1 (final flush on Stop)", got)
+	}
+	m := c.Metrics()
+	if m.Consumed != numEvents {
+		t.Errorf("Consumed = %d, want %d", m.Consumed, numEvents)
+	}
+	if m.Errors != 0 {
+		t.Errorf("Errors = %d, want 0", m.Errors)
+	}
+	if !q.IsEmpty() {
+		t.Errorf("queue still holds %d events after consumer drained it", q.Len())
+	}
 }

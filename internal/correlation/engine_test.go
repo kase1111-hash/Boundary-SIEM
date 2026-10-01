@@ -54,6 +54,45 @@ func TestCondition_Match(t *testing.T) {
 			value:     3,
 			expected:  true,
 		},
+		// A missing field, or a non-number compared with a number, satisfies
+		// no comparison (it used to compare as the string "<nil>" / "abc",
+		// above every number).
+		{
+			name:      "gte missing field",
+			condition: Condition{Field: "metadata.value_eth", Operator: "gte", Value: float64(1000)},
+			value:     nil,
+			expected:  false,
+		},
+		{
+			name:      "gt missing field",
+			condition: Condition{Field: "metadata.value_eth", Operator: "gt", Value: float64(1000)},
+			value:     nil,
+			expected:  false,
+		},
+		{
+			name:      "lte missing field",
+			condition: Condition{Field: "metadata.health", Operator: "lte", Value: float64(1)},
+			value:     nil,
+			expected:  false,
+		},
+		{
+			name:      "gte non-numeric against number",
+			condition: Condition{Field: "metadata.value_eth", Operator: "gte", Value: float64(1000)},
+			value:     "unknown",
+			expected:  false,
+		},
+		{
+			name:      "gte numeric string",
+			condition: Condition{Field: "metadata.value_eth", Operator: "gte", Value: float64(1000)},
+			value:     "1500",
+			expected:  true,
+		},
+		{
+			name:      "gt strings compare lexically",
+			condition: Condition{Field: "metadata.version", Operator: "gt", Value: "v1"},
+			value:     "v2",
+			expected:  true,
+		},
 		{
 			name:      "contains match",
 			condition: Condition{Field: "action", Operator: "contains", Value: "auth"},
@@ -116,6 +155,7 @@ func TestRule_Validate(t *testing.T) {
 				Type:     RuleTypeThreshold,
 				Enabled:  true,
 				Severity: 7,
+				Window:   time.Minute,
 				Conditions: Conditions{
 					Match: []MatchCondition{
 						{Field: "action", Operator: "eq", Value: "auth.failure"},
@@ -275,6 +315,7 @@ func TestEngine_NoAlertBelowThreshold(t *testing.T) {
 		Type:     RuleTypeThreshold,
 		Enabled:  true,
 		Severity: 5,
+		Window:   time.Minute,
 		Conditions: Conditions{
 			Match: []MatchCondition{
 				{Field: "action", Operator: "eq", Value: "auth.failure"},
@@ -286,7 +327,9 @@ func TestEngine_NoAlertBelowThreshold(t *testing.T) {
 		},
 	}
 
-	engine.AddRule(rule)
+	if err := engine.AddRule(rule); err != nil {
+		t.Fatalf("failed to add rule: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -345,7 +388,9 @@ func TestEngine_GroupBy(t *testing.T) {
 		},
 	}
 
-	engine.AddRule(rule)
+	if err := engine.AddRule(rule); err != nil {
+		t.Fatalf("failed to add rule: %v", err)
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -401,6 +446,7 @@ func TestEngine_Stats(t *testing.T) {
 		Type:     RuleTypeThreshold,
 		Enabled:  true,
 		Severity: 5,
+		Window:   time.Minute,
 		Conditions: Conditions{
 			Match: []MatchCondition{
 				{Field: "action", Operator: "eq", Value: "test"},
@@ -409,7 +455,9 @@ func TestEngine_Stats(t *testing.T) {
 		Threshold: &ThresholdConfig{Count: 5, Operator: "gte"},
 	}
 
-	engine.AddRule(rule)
+	if err := engine.AddRule(rule); err != nil {
+		t.Fatalf("failed to add rule: %v", err)
+	}
 
 	stats := engine.Stats()
 	if stats["rules_count"].(int) != 1 {
@@ -421,7 +469,9 @@ func BenchmarkEngine_ProcessEvent(b *testing.B) {
 	engine := NewEngine(DefaultEngineConfig())
 
 	rule := BruteForceRule()
-	engine.AddRule(rule)
+	if err := engine.AddRule(rule); err != nil {
+		b.Fatalf("failed to add rule: %v", err)
+	}
 
 	ctx := context.Background()
 	engine.Start(ctx)

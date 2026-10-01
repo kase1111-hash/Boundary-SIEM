@@ -1,7 +1,8 @@
-# Binaries
+# Binaries (anchored so cmd/boundary-siem/ and cmd/siem-ingest/ sources are not ignored)
 bin/
-boundary-siem
-siem-ingest
+/boundary-siem
+/siem-ingest
+/siem-rules
 *.exe
 *.exe~
 *.dll
@@ -50,8 +51,9 @@ deployments/**/.env
 logs/
 
 # Node.js
+# package-lock.json is intentionally tracked (web/): CI uses `npm ci`, which
+# requires it, and it pins the dependency tree for reproducible, auditable builds.
 node_modules/
-package-lock.json
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

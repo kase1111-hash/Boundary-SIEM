@@ -4,76 +4,43 @@ This document outlines planned features and future enhancements for the Boundary
 
 ## Current Features (Implemented)
 
-### Phase 1: Core SIEM Foundation
-- ✅ Event ingestion pipeline with Kafka
-- ✅ Structured logging and parsing
-- ✅ Event correlation engine
-- ✅ Alert generation and routing
+### Running in `siem-ingest`
+- ✅ Event ingestion: JSON HTTP (`POST /v1/events`), CEF over UDP/TCP/DTLS, EVM JSON-RPC poller
+- ✅ Schema validation with quarantine of rejected events (`events_quarantine`)
+- ✅ Ring buffer queue with backpressure (100K events)
+- ✅ ClickHouse storage with migrations, TTL retention, retries and dead-lettering
+- ✅ Search API: field, time-range, boolean and phrase queries, aggregations, EXPLAIN
+- ✅ Correlation engine: threshold, sequence, aggregate and absence rules, baselines, rule chaining
+- ✅ 138 rules loaded by default: 130 built-in detection rules (validator, consensus, transactions, contracts, MEV, DeFi, exchange, infrastructure, security, compliance, key management, cloud, network, API, 27 cross-system ecosystem rules), 3 kill chains, 5 community YAML rules
+- ✅ MITRE ATT&CK mappings on 35 built-in rules
+- ✅ Alerting: dedup, escalation policies, 7 channel types (log, webhook, Slack, Discord, PagerDuty, email, Telegram), alerts persisted in ClickHouse
+- ✅ Alert and rules APIs; custom rules and toggles persisted on disk
+- ✅ API-key authentication, per-IP rate limiting, CORS
+- ✅ `/health`, `/ready`, Prometheus `/metrics`, WebSocket stream (`/ws/events`)
+- ✅ React SOC dashboard and terminal UI
+- ✅ `boundary-daemon` CEF signature mapping; `/api/system/dreaming` for Agent-OS
 
-### Phase 2: Blockchain Security
-- ✅ Validator monitoring (attestations, slashing, sync status)
-- ✅ Transaction analysis (gas, transfers, contract interactions)
-- ✅ Smart contract security analysis
-- ✅ DeFi protocol monitoring
+### In the repository, not used by `siem-ingest` yet
+- Kafka producer/consumer (`internal/kafka`) and S3 archival (`internal/storage/s3`)
+- OAuth/SAML/OIDC/LDAP provider framework, RBAC, Redis sessions, dashboard and compliance reports (`internal/api`)
+- Blockchain monitors (`internal/blockchain`), infrastructure monitors (`internal/infrastructure`)
+- Threat intelligence (OFAC, Chainalysis) and incident playbooks (`internal/detection/threat`, `internal/detection/playbook`)
+- Tamper-evident audit logging, immutable logs, syslog forwarding, TPM 2.0 key storage (`internal/security`)
+- Secrets providers (Vault, file, env) and AES-256-GCM encryption (`internal/secrets`, `internal/encryption`)
 
-### Phase 3: Infrastructure
-- ✅ Metrics collection (Prometheus format)
-- ✅ Log aggregation
-- ✅ Network monitoring
+### Deployment
+- ✅ Dockerfile and Docker Compose (siem-ingest + ClickHouse), seccomp/AppArmor profiles
+- ✅ Kubernetes single-replica Deployment with probes and NetworkPolicy
+- ✅ systemd unit, SELinux/AppArmor host policies, firewall rules
 
-### Phase 4: Detection & Response
-- ✅ 200+ detection rules across all integrations
-  - 80+ blockchain/infrastructure rules
-  - 20 NatLangChain rules (NLC-001 to NLC-020)
-  - 78 integration-specific rules (VL/ILR/LC/MN/MV/SM/IL/RRA)
-  - 26 cross-system ecosystem rules (ECO-001 to ECO-065)
-- ✅ MITRE ATT&CK mappings
-- ✅ Threat intelligence integration (OFAC, Chainalysis)
-- ✅ Incident playbooks (9 built-in)
+### Not implemented
+- GraphQL API, SDK generation
+- Kubernetes high availability or clustering (one `siem-ingest` per ClickHouse database)
+- Multi-tenancy in the service (every event gets the configured default tenant)
+- Per-system integrations (NatLangChain client and NLC-* rules, Value Ledger, ILR, Learning Contracts, Mediator Node, Memory Vault, Synth Mind, IntentLog, RRA rule sets); these systems can send events to `POST /v1/events`
+- Threat hunting workbench, forensics toolkit, SOAR workflow automation
 
-### Phase 5: User Interface
-- ✅ React-based SOC dashboard
-- ✅ OAuth/SAML/OIDC/LDAP authentication
-- ✅ RBAC with 7 roles and 16 permissions
-- ✅ Multi-tenancy support
-- ✅ Compliance reporting (SOC 2, ISO 27001, NIST CSF)
-
-### Phase 6: Enterprise Features
-- ✅ Kubernetes high availability (StatefulSet, HPA, PDB)
-- ✅ Kafka streaming with ClickHouse clustering
-- ✅ Tiered data retention (hot/warm/cold/frozen)
-- ✅ S3 archival
-- ✅ REST/GraphQL APIs
-- ✅ SDK generation (Go, Python, TypeScript, Java)
-
-### Phase 7: Advanced Features (Partial)
-- ✅ Threat Hunting Workbench (10 templates)
-- ✅ Forensics Toolkit (12 artifact types)
-- ✅ SOAR Workflow Automation (8 workflows, 8 integrations)
-
-### Phase 8: Platform Security
-- ✅ Tamper-evident audit logging with hash chain integrity
-- ✅ Linux immutable log support (chattr +a/+i)
-- ✅ Remote syslog forwarding (UDP/TCP/TLS, RFC 3164/5424/CEF/JSON)
-- ✅ Container isolation (Docker seccomp/AppArmor, K8s NetworkPolicy)
-- ✅ TPM 2.0 hardware key storage with PCR policy binding
-
-### Phase 9: External Integrations (11 Production-Ready)
-- ✅ **boundary-daemon** - CEF protocol (UDP:5514/TCP:5515), session/auth/access events
-- ✅ **NatLangChain** - Natural language blockchain (20 rules, NLC-001 to NLC-020)
-- ✅ **Agent-OS** - `/api/system/dreaming` endpoint for system status
-- ✅ **Value Ledger** - Financial tracking with vector scores (8 rules, VL-001 to VL-008)
-- ✅ **ILR-Module** - Immutable License Registry disputes (10 rules, ILR-001 to ILR-010)
-- ✅ **Learning Contracts** - Consent management (10 rules, LC-001 to LC-010)
-- ✅ **Mediator Node** - Intent-aligned mediation (10 rules, MN-001 to MN-010)
-- ✅ **Memory Vault** - Secure memory storage (10 rules, MV-001 to MV-010)
-- ✅ **Synth Mind** - Agent-OS psychological modules (10 rules, SM-001 to SM-010)
-- ✅ **IntentLog** - Prose-based version control (10 rules, IL-001 to IL-010)
-- ✅ **RRA-Module** - Revenant Repo Agent (10 rules, RRA-001 to RRA-010)
-
-See [ECOSYSTEM_COMPATIBILITY_REPORT.md](./ECOSYSTEM_COMPATIBILITY_REPORT.md) for full integration details.
-
-### Phase 10: CI/CD & DevOps
+### CI/CD & DevOps
 - ✅ GitHub Actions CI workflow (lint, security, test, build)
 - ✅ GitHub Actions security workflow (gosec, govulncheck, dependency review)
 - ✅ Makefile targets for local security scanning
@@ -329,6 +296,7 @@ We welcome contributions to these planned features! Here's how to get started:
 | 0.1.0-alpha | 2026-01-01 | Core SIEM, Blockchain Security, boundary-daemon & NatLangChain integrations |
 | 0.1.1-alpha | 2026-01-02 | 11 ecosystem integrations, 200+ detection rules, cross-system correlation |
 | 1.0.0-beta | 2026-01-09 | TUI, startup diagnostics, Windows support, security audit, key rotation |
+| Unreleased | - | End-to-end siem-ingest pipeline, alert persistence, rules API, /ready, WebSocket stream, Go 1.26 |
 | 1.1.0 | TBD | ML/UEBA (planned) |
 | 1.2.0 | TBD | Advanced Visualizations (planned) |
 | 1.3.0 | TBD | Mobile App (planned) |

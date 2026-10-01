@@ -115,14 +115,19 @@ func (d *DashboardScene) View() string {
 
 	// Status indicator with explanation
 	var statusText string
-	if d.stats.Healthy {
+	if !d.stats.Reachable {
+		statusText = styles.StatusError.Render("● UNREACHABLE")
+	} else if !d.stats.Connected {
+		// The server answered /health with an HTTP error
+		statusText = styles.StatusError.Render("● UNHEALTHY")
+	} else if d.stats.Healthy {
 		statusText = styles.StatusOK.Render("● HEALTHY")
 	} else if d.stats.HealthStatus == "degraded" {
 		statusText = styles.StatusWarning.Render("● DEGRADED")
 	} else {
 		statusText = styles.StatusError.Render("● UNHEALTHY")
 	}
-	b.WriteString(fmt.Sprintf("  Status: %s", statusText))
+	fmt.Fprintf(&b, "  Status: %s", statusText)
 
 	// Show reason
 	if d.stats.StatusReason != "" {
@@ -133,13 +138,15 @@ func (d *DashboardScene) View() string {
 	// Activity status
 	if d.stats.Activity != "" && d.stats.Activity != "unknown" {
 		activityIcon := d.getActivityIcon(d.stats.Activity)
-		b.WriteString(fmt.Sprintf("  Activity: %s %s\n", activityIcon, d.stats.ActivityDesc))
+		fmt.Fprintf(&b, "  Activity: %s %s\n", activityIcon, d.stats.ActivityDesc)
 		b.WriteString("\n")
 	}
 
 	// Metrics cards - Row 1: Overview
 	cards1 := []string{
-		d.renderMetricCard("Events Total", formatNumber(d.stats.EventsTotal)),
+		// events_total counts since the server process started; the Events
+		// tab shows what is stored.
+		d.renderMetricCard("Events (uptime)", formatNumber(d.stats.EventsTotal)),
 		d.renderMetricCard("Events/sec", fmt.Sprintf("%.1f", d.stats.EventsPerSecond)),
 		d.renderMetricCard("Queue Depth", fmt.Sprintf("%d/%d", d.stats.QueueSize, d.stats.QueueCapacity)),
 		d.renderMetricCard("Uptime", d.stats.Uptime),
@@ -159,11 +166,11 @@ func (d *DashboardScene) View() string {
 	b.WriteString(cardRow2)
 	b.WriteString("\n\n")
 
-	// Service status section
-	b.WriteString(styles.Subtitle.Render("  Active Services"))
+	// Service status section: only what the server reports, never guesses
+	b.WriteString(styles.Subtitle.Render("  Backend Services"))
 	b.WriteString("\n")
-	b.WriteString(d.renderServiceStatus())
-	b.WriteString("\n")
+	b.WriteString(renderServices(d.client, d.stats))
+	b.WriteString("\n\n")
 
 	// Last update
 	if !d.lastUpdate.IsZero() {
@@ -177,7 +184,7 @@ func (d *DashboardScene) renderMetricCard(label, value string) string {
 	card := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(styles.MutedColor).
-		Padding(0, 2).
+		Padding(0, 1). // 16 columns of text: "Events (uptime)" fits
 		Width(18).
 		Align(lipgloss.Center)
 
@@ -187,44 +194,6 @@ func (d *DashboardScene) renderMetricCard(label, value string) string {
 	)
 
 	return card.Render(content)
-}
-
-func (d *DashboardScene) renderServiceStatus() string {
-	// Services with their actual status based on typical secure defaults
-	services := []struct {
-		name    string
-		enabled bool
-		port    string
-	}{
-		{"HTTP API", true, "8080"},
-		{"CEF TCP", true, "5515"},
-		{"CEF UDP", false, "5514"},  // Disabled by default (insecure)
-		{"CEF DTLS", false, "5516"}, // Disabled until certs configured
-		{"Queue Consumer", true, "-"},
-		{"Storage", false, "-"}, // Placeholder mode
-	}
-
-	var rows []string
-	for _, svc := range services {
-		var statusIcon, statusText string
-		if svc.enabled {
-			statusIcon = styles.StatusOK.Render("●")
-			statusText = ""
-		} else {
-			statusIcon = styles.Muted.Render("○")
-			statusText = styles.Muted.Render(" (disabled)")
-		}
-
-		portText := svc.port
-		if svc.port == "-" {
-			portText = "-"
-		}
-
-		row := fmt.Sprintf("  %s %-16s Port: %-6s%s", statusIcon, svc.name, portText, statusText)
-		rows = append(rows, row)
-	}
-
-	return strings.Join(rows, "\n")
 }
 
 func formatNumber(n int64) string {

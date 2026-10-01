@@ -3,6 +3,9 @@
 
 .PHONY: security-scan security-govulncheck security-gosec security-trivy security-nancy security-install-tools
 
+# Keep in sync with the securego/gosec action version pinned in .github/workflows/*.yml
+GOSEC_VERSION ?= v2.29.0
+
 # Run all security scans
 security-scan: security-govulncheck security-gosec
 
@@ -10,7 +13,7 @@ security-scan: security-govulncheck security-gosec
 security-install-tools:
 	@echo "Installing security scanning tools..."
 	go install golang.org/x/vuln/cmd/govulncheck@latest
-	go install github.com/securego/gosec/v2/cmd/gosec@latest
+	go install github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION)
 	@echo "✅ Security tools installed"
 
 # Run govulncheck for Go vulnerability scanning
@@ -27,11 +30,11 @@ security-govulncheck-json:
 	govulncheck -json ./... > reports/govulncheck-$(shell date +%Y%m%d-%H%M%S).json
 	@echo "✅ Report saved to reports/"
 
-# Run gosec security scanner
+# Run gosec security scanner (same severity threshold as the CI gate)
 security-gosec:
 	@echo "Running gosec security scanner..."
 	@command -v gosec >/dev/null 2>&1 || { echo "gosec not found. Run 'make security-install-tools'"; exit 1; }
-	gosec -fmt=text ./...
+	gosec -severity=medium -fmt=text ./...
 
 # Run gosec with detailed output
 security-gosec-full:
@@ -46,17 +49,26 @@ security-gosec-full:
 # Run Trivy scanner (if Docker is available)
 security-trivy:
 	@echo "Running Trivy scanner..."
-	@command -v docker >/dev/null 2>&1 || { echo "Docker not found. Skipping Trivy scan."; exit 0; }
-	@mkdir -p reports
-	docker run --rm -v $(PWD):/scan aquasec/trivy:latest fs --security-checks vuln,config,secret --format json --output /scan/reports/trivy-$(shell date +%Y%m%d-%H%M%S).json /scan
-	@echo "✅ Trivy scan complete"
+	@if ! command -v docker >/dev/null 2>&1; then \
+		echo "Docker not found. Skipping Trivy scan."; \
+	else \
+		mkdir -p reports && \
+		docker run --rm -v $(PWD):/scan aquasec/trivy:latest fs --scanners vuln,misconfig,secret --format json --output /scan/reports/trivy-$(shell date +%Y%m%d-%H%M%S).json /scan && \
+		echo "✅ Trivy scan complete"; \
+	fi
 
-# Run Nancy for dependency checking
+# Run Nancy for dependency checking.
+# Nancy v2 requires a Sonatype Guide token (free: https://guide.sonatype.com);
+# export GUIDE_TOKEN before running this target.
 security-nancy:
 	@echo "Running Nancy dependency checker..."
-	@mkdir -p reports
-	go list -json -deps ./... | docker run --rm -i sonatypecommunity/nancy:latest sleuth --output json > reports/nancy-$(shell date +%Y%m%d-%H%M%S).json || true
-	@echo "✅ Nancy scan complete"
+	@if [ -z "$$GUIDE_TOKEN" ]; then \
+		echo "GUIDE_TOKEN not set; Nancy requires a Sonatype Guide token. Skipping."; \
+	else \
+		mkdir -p reports; \
+		go list -json -deps ./... | docker run --rm -i -e GUIDE_TOKEN sonatypecommunity/nancy:latest sleuth --output json > reports/nancy-$(shell date +%Y%m%d-%H%M%S).json || true; \
+		echo "✅ Nancy scan complete"; \
+	fi
 
 # Check for sensitive data in code
 security-check-secrets:
@@ -86,7 +98,7 @@ security-report:
 security-quick:
 	@echo "Running quick security check..."
 	@govulncheck ./... || echo "⚠️  Vulnerabilities detected"
-	@gosec -quiet ./... || echo "⚠️  Security issues detected"
+	@gosec -quiet -severity=medium ./... || echo "⚠️  Security issues detected"
 	@echo "✅ Quick security check complete"
 
 # Help target

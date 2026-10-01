@@ -2,10 +2,12 @@ package alerting
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -243,6 +245,7 @@ func TestEmailChannelSendConnectionError(t *testing.T) {
 // MockSMTPServer for integration testing
 type MockSMTPServer struct {
 	listener     net.Listener
+	mu           sync.Mutex // guards receivedMail, written by connection goroutines
 	receivedMail [][]byte
 	done         chan struct{}
 }
@@ -270,7 +273,10 @@ func (s *MockSMTPServer) serve(t *testing.T) {
 		default:
 		}
 
-		s.listener.(*net.TCPListener).SetDeadline(time.Now().Add(100 * time.Millisecond))
+		// A short accept deadline lets the loop notice Close() promptly.
+		if err := s.listener.(*net.TCPListener).SetDeadline(time.Now().Add(100 * time.Millisecond)); err != nil {
+			return // listener closed
+		}
 		conn, err := s.listener.Accept()
 		if err != nil {
 			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
@@ -286,8 +292,17 @@ func (s *MockSMTPServer) serve(t *testing.T) {
 func (s *MockSMTPServer) handleConnection(t *testing.T, conn net.Conn) {
 	defer conn.Close()
 
+	// reply writes an SMTP response line; a failed write means the client
+	// has gone away, so the session is abandoned.
+	reply := func(line string) bool {
+		_, err := conn.Write([]byte(line))
+		return err == nil
+	}
+
 	// Send greeting
-	conn.Write([]byte("220 mock.smtp.server ESMTP\r\n"))
+	if !reply("220 mock.smtp.server ESMTP\r\n") {
+		return
+	}
 
 	buf := make([]byte, 4096)
 	for {
@@ -298,15 +313,18 @@ func (s *MockSMTPServer) handleConnection(t *testing.T, conn net.Conn) {
 
 		cmd := strings.ToUpper(strings.TrimSpace(string(buf[:n])))
 
+		var resp string
 		switch {
 		case strings.HasPrefix(cmd, "EHLO"), strings.HasPrefix(cmd, "HELO"):
-			conn.Write([]byte("250-mock.smtp.server\r\n250 OK\r\n"))
+			resp = "250-mock.smtp.server\r\n250 OK\r\n"
 		case strings.HasPrefix(cmd, "MAIL FROM"):
-			conn.Write([]byte("250 OK\r\n"))
+			resp = "250 OK\r\n"
 		case strings.HasPrefix(cmd, "RCPT TO"):
-			conn.Write([]byte("250 OK\r\n"))
+			resp = "250 OK\r\n"
 		case strings.HasPrefix(cmd, "DATA"):
-			conn.Write([]byte("354 Start mail input\r\n"))
+			if !reply("354 Start mail input\r\n") {
+				return
+			}
 			// Read until we get the terminating dot
 			var data []byte
 			for {
@@ -319,15 +337,28 @@ func (s *MockSMTPServer) handleConnection(t *testing.T, conn net.Conn) {
 					break
 				}
 			}
+			s.mu.Lock()
 			s.receivedMail = append(s.receivedMail, data)
-			conn.Write([]byte("250 OK\r\n"))
+			s.mu.Unlock()
+			resp = "250 OK\r\n"
 		case strings.HasPrefix(cmd, "QUIT"):
-			conn.Write([]byte("221 Bye\r\n"))
+			reply("221 Bye\r\n")
 			return
 		default:
-			conn.Write([]byte("500 Unknown command\r\n"))
+			resp = "500 Unknown command\r\n"
+		}
+
+		if !reply(resp) {
+			return
 		}
 	}
+}
+
+// ReceivedMail returns a snapshot of the messages accepted so far.
+func (s *MockSMTPServer) ReceivedMail() [][]byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([][]byte(nil), s.receivedMail...)
 }
 
 func (s *MockSMTPServer) Addr() string {
@@ -384,12 +415,13 @@ func TestEmailChannelWithMockServer(t *testing.T) {
 	// Give the server time to receive
 	time.Sleep(100 * time.Millisecond)
 
-	if len(server.receivedMail) == 0 {
-		t.Error("expected to receive mail")
+	received := server.ReceivedMail()
+	if len(received) == 0 {
+		t.Fatal("expected to receive mail")
 	}
 
 	// Check mail content
-	mail := string(server.receivedMail[0])
+	mail := string(received[0])
 	if !strings.Contains(mail, "Flash Loan Attack Detected") {
 		t.Error("mail missing alert title")
 	}
@@ -604,8 +636,12 @@ func TestWebhookSendSanitizesSecrets(t *testing.T) {
 	// Verify the full pipeline: WebhookChannel.Send masks secrets in the JSON payload
 	var receivedBody string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		body := make([]byte, r.ContentLength)
-		r.Body.Read(body)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("failed to read webhook body: %v", err)
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
 		receivedBody = string(body)
 		w.WriteHeader(200)
 	}))

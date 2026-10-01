@@ -2,12 +2,20 @@ package alerting
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"boundary-siem/internal/correlation"
+	"boundary-siem/internal/identity"
+	"boundary-siem/internal/search"
 
 	"github.com/google/uuid"
 )
@@ -33,47 +41,91 @@ func (h *Handler) RegisterRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/alerts/stats", h.HandleStats)
 }
 
-// HandleListAlerts handles GET /v1/alerts requests.
-func (h *Handler) HandleListAlerts(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
-	q := r.URL.Query()
+// Pagination of GET /v1/alerts.
+const (
+	defaultAlertListLimit = 100
+	maxAlertListLimit     = 10000
+)
 
-	filter := AlertFilter{}
+// alertStatuses and alertSeverities are the values the status and severity
+// filters accept.
+var (
+	alertStatuses   = []AlertStatus{StatusNew, StatusAcknowledged, StatusInProgress, StatusResolved, StatusSuppressed}
+	alertSeverities = []correlation.Severity{
+		correlation.SeverityLow, correlation.SeverityMedium, correlation.SeverityHigh, correlation.SeverityCritical,
+	}
+)
 
-	if status := q.Get("status"); status != "" {
-		s := AlertStatus(status)
+// parseAlertFilter builds the filter of a GET /v1/alerts request. Every
+// parameter that is present must be valid: an unparseable time, limit or
+// offset, or an unknown status or severity, used to be ignored, so the
+// request silently listed every alert (or none, for an unknown status).
+// Times take the formats of the search API (search.ParseTime); status and
+// severity are case-insensitive.
+func parseAlertFilter(q url.Values) (AlertFilter, error) {
+	filter := AlertFilter{RuleID: q.Get("rule_id"), Limit: defaultAlertListLimit}
+
+	if v := q.Get("status"); v != "" {
+		s := AlertStatus(strings.ToLower(v))
+		if !slices.Contains(alertStatuses, s) {
+			return filter, fmt.Errorf("status: unknown status %q (want one of %v)", v, alertStatuses)
+		}
 		filter.Status = &s
 	}
-	if severity := q.Get("severity"); severity != "" {
-		s := correlation.Severity(severity)
+	if v := q.Get("severity"); v != "" {
+		s := correlation.Severity(strings.ToLower(v))
+		if !slices.Contains(alertSeverities, s) {
+			return filter, fmt.Errorf("severity: unknown severity %q (want one of %v)", v, alertSeverities)
+		}
 		filter.Severity = &s
 	}
-	if ruleID := q.Get("rule_id"); ruleID != "" {
-		filter.RuleID = ruleID
-	}
-	if since := q.Get("since"); since != "" {
-		if t, err := time.Parse(time.RFC3339, since); err == nil {
-			filter.Since = &t
+	for _, p := range []struct {
+		name string
+		dst  **time.Time
+	}{{"since", &filter.Since}, {"until", &filter.Until}} {
+		v := q.Get(p.name)
+		if v == "" {
+			continue
 		}
-	}
-	if until := q.Get("until"); until != "" {
-		if t, err := time.Parse(time.RFC3339, until); err == nil {
-			filter.Until = &t
+		t, err := search.ParseTime(v)
+		if err != nil {
+			return filter, fmt.Errorf("%s: %w", p.name, err)
 		}
+		*p.dst = &t
 	}
-	if limit := q.Get("limit"); limit != "" {
-		if l, err := strconv.Atoi(limit); err == nil && l > 0 {
-			filter.Limit = l
+	if filter.Since != nil && filter.Until != nil && filter.Until.Before(*filter.Since) {
+		return filter, errors.New("until is before since")
+	}
+	if v := q.Get("limit"); v != "" {
+		l, err := strconv.Atoi(v)
+		if err != nil || l < 1 || l > maxAlertListLimit {
+			return filter, fmt.Errorf("limit: want an integer from 1 to %d, got %q", maxAlertListLimit, v)
 		}
+		filter.Limit = l
 	}
-	if offset := q.Get("offset"); offset != "" {
-		if o, err := strconv.Atoi(offset); err == nil && o >= 0 {
-			filter.Offset = o
+	if v := q.Get("offset"); v != "" {
+		o, err := strconv.Atoi(v)
+		if err != nil || o < 0 {
+			return filter, fmt.Errorf("offset: want a non-negative integer, got %q", v)
 		}
+		filter.Offset = o
 	}
+	return filter, nil
+}
 
-	if filter.Limit == 0 {
-		filter.Limit = 100
+// HandleListAlerts handles GET /v1/alerts requests. An invalid filter is
+// 400 with the reason in details.
+func (h *Handler) HandleListAlerts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	filter, err := parseAlertFilter(r.URL.Query())
+	if err != nil {
+		h.writeJSON(w, http.StatusBadRequest, map[string]string{
+			"error":   "invalid alert filter",
+			"code":    "invalid_filter",
+			"details": err.Error(),
+		})
+		return
 	}
 
 	alerts, err := h.manager.ListAlerts(ctx, filter)
@@ -81,6 +133,9 @@ func (h *Handler) HandleListAlerts(w http.ResponseWriter, r *http.Request) {
 		slog.Error("failed to list alerts", "error", err)
 		h.writeError(w, http.StatusInternalServerError, "list_error", "failed to list alerts")
 		return
+	}
+	if alerts == nil {
+		alerts = []*Alert{} // [] rather than null
 	}
 
 	h.writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -102,7 +157,12 @@ func (h *Handler) HandleGetAlert(w http.ResponseWriter, r *http.Request) {
 
 	alert, err := h.manager.GetAlert(ctx, id)
 	if err != nil {
-		h.writeError(w, http.StatusNotFound, "not_found", "alert not found")
+		if errors.Is(err, ErrAlertNotFound) {
+			h.writeError(w, http.StatusNotFound, "not_found", "alert not found")
+			return
+		}
+		slog.Error("failed to get alert", "alert_id", id, "error", err)
+		h.writeError(w, http.StatusInternalServerError, "get_error", "failed to get alert")
 		return
 	}
 
@@ -111,6 +171,35 @@ func (h *Handler) HandleGetAlert(w http.ResponseWriter, r *http.Request) {
 
 type actionRequest struct {
 	User string `json:"user"`
+}
+
+// actorOf is who an alert action is recorded as (acknowledged_by,
+// resolved_by, a note's author). user is the name the request gives, which
+// the client chooses freely, so the authenticated caller (identity.Caller,
+// e.g. "api-key-2") is added: "alice (api-key-2)". A request that gives no
+// user is recorded as its caller. ok is false when there is neither. (The
+// dashboard sent the fixed user "operator", so every action looked alike.)
+func actorOf(r *http.Request, user string) (actor string, ok bool) {
+	user = strings.TrimSpace(user)
+	caller, authenticated := identity.Caller(r.Context())
+	switch {
+	case user != "" && authenticated:
+		return user + " (" + caller + ")", true
+	case user != "":
+		return user, true
+	case authenticated:
+		return caller, true
+	}
+	return "", false
+}
+
+// decodeOptionalJSON decodes the JSON body of r into v; an empty body leaves
+// v unchanged.
+func decodeOptionalJSON(r *http.Request, v any) error {
+	if err := json.NewDecoder(r.Body).Decode(v); err != nil && !errors.Is(err, io.EOF) {
+		return err
+	}
+	return nil
 }
 
 type noteRequest struct {
@@ -133,13 +222,18 @@ func (h *Handler) HandleAcknowledge(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req actionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.User == "" {
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body")
+		return
+	}
+	actor, ok := actorOf(r, req.User)
+	if !ok {
 		h.writeError(w, http.StatusBadRequest, "invalid_request", "user field is required")
 		return
 	}
 
-	if err := h.manager.AcknowledgeAlert(ctx, id, req.User); err != nil {
-		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+	if err := h.manager.AcknowledgeAlert(ctx, id, actor); err != nil {
+		h.writeManagerError(w, err)
 		return
 	}
 
@@ -157,13 +251,18 @@ func (h *Handler) HandleResolve(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req actionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.User == "" {
+	if err := decodeOptionalJSON(r, &req); err != nil {
+		h.writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body")
+		return
+	}
+	actor, ok := actorOf(r, req.User)
+	if !ok {
 		h.writeError(w, http.StatusBadRequest, "invalid_request", "user field is required")
 		return
 	}
 
-	if err := h.manager.ResolveAlert(ctx, id, req.User); err != nil {
-		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+	if err := h.manager.ResolveAlert(ctx, id, actor); err != nil {
+		h.writeManagerError(w, err)
 		return
 	}
 
@@ -185,13 +284,14 @@ func (h *Handler) HandleAddNote(w http.ResponseWriter, r *http.Request) {
 		h.writeError(w, http.StatusBadRequest, "invalid_request", "failed to parse request body")
 		return
 	}
-	if req.Author == "" || req.Content == "" {
+	author, ok := actorOf(r, req.Author)
+	if !ok || req.Content == "" {
 		h.writeError(w, http.StatusBadRequest, "invalid_request", "author and content fields are required")
 		return
 	}
 
-	if err := h.manager.AddNote(ctx, id, req.Author, req.Content); err != nil {
-		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+	if err := h.manager.AddNote(ctx, id, author, req.Content); err != nil {
+		h.writeManagerError(w, err)
 		return
 	}
 
@@ -215,7 +315,7 @@ func (h *Handler) HandleAssign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.manager.AssignAlert(ctx, id, req.Assignee); err != nil {
-		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+		h.writeManagerError(w, err)
 		return
 	}
 
@@ -232,6 +332,24 @@ func (h *Handler) writeJSON(w http.ResponseWriter, status int, data interface{})
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {
 		slog.Error("failed to write response", "error", err)
+	}
+}
+
+// writeManagerError maps an error from a Manager lifecycle method to an HTTP
+// response: unknown alert -> 404, invalid status transition -> 409, anything
+// else -> 500. A lifecycle method fails with a storage error only when the
+// alert is not in memory and the database cannot be read, so nothing was
+// changed; a change that was applied but could not be written succeeds (it
+// is queued for persistence, see Manager.updateAlert).
+func (h *Handler) writeManagerError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, ErrAlertNotFound):
+		h.writeError(w, http.StatusNotFound, "not_found", err.Error())
+	case errors.Is(err, ErrInvalidTransition):
+		h.writeError(w, http.StatusConflict, "invalid_transition", err.Error())
+	default:
+		slog.Error("alert storage error", "error", err)
+		h.writeError(w, http.StatusInternalServerError, "storage_error", "alert storage error")
 	}
 }
 

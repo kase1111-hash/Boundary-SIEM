@@ -2,6 +2,7 @@ package kafka
 
 import (
 	"context"
+	"crypto/tls"
 	"log/slog"
 	"os"
 	"testing"
@@ -183,6 +184,37 @@ func TestGetDialerWithTLS(t *testing.T) {
 	}
 }
 
+func TestGetDialerTLSVerification(t *testing.T) {
+	cfg := DefaultConfig()
+	if cfg.TLSSkipVerify {
+		t.Fatal("TLSSkipVerify must default to false")
+	}
+	cfg.TLSEnabled = true
+
+	dialer, err := cfg.GetDialer()
+	if err != nil {
+		t.Fatalf("GetDialer() error = %v", err)
+	}
+	if dialer.TLS == nil {
+		t.Fatal("expected TLS config to be set")
+	}
+	if dialer.TLS.InsecureSkipVerify {
+		t.Error("certificate verification must stay enabled unless tls_skip_verify is set")
+	}
+	if dialer.TLS.MinVersion < tls.VersionTLS12 {
+		t.Errorf("MinVersion = %#x, want at least TLS 1.2", dialer.TLS.MinVersion)
+	}
+
+	cfg.TLSSkipVerify = true
+	dialer, err = cfg.GetDialer()
+	if err != nil {
+		t.Fatalf("GetDialer() error = %v", err)
+	}
+	if !dialer.TLS.InsecureSkipVerify {
+		t.Error("tls_skip_verify=true should disable certificate verification")
+	}
+}
+
 // Integration tests - skipped if Kafka is not available
 func getTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug}))
@@ -249,7 +281,11 @@ func TestConsumerIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewConsumer() error = %v", err)
 	}
-	defer consumer.Stop()
+	t.Cleanup(func() {
+		if err := consumer.Stop(); err != nil {
+			t.Errorf("Stop() error = %v", err)
+		}
+	})
 
 	ctx := context.Background()
 

@@ -2,7 +2,6 @@ package detection
 
 import (
 	"context"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -40,7 +39,9 @@ func TestThreatScreenAddress(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	service.Start(ctx)
+	if err := service.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
 	defer service.Stop()
 
 	// Test known sanctioned address (Tornado Cash)
@@ -65,7 +66,9 @@ func TestThreatScreenCleanAddress(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	service.Start(ctx)
+	if err := service.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
 	defer service.Stop()
 
 	// Test random clean address
@@ -86,7 +89,9 @@ func TestAddCustomIndicator(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	service.Start(ctx)
+	if err := service.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
 	defer service.Stop()
 
 	// Add custom indicator
@@ -116,21 +121,33 @@ func TestThreatAlertHandler(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	var alertCount int32
+	// Alert handlers run asynchronously, so signal delivery over a channel
+	// instead of sleeping and polling a counter.
+	alerts := make(chan *threat.Alert, 1)
 	service.AddHandler(func(ctx context.Context, alert *threat.Alert) error {
-		atomic.AddInt32(&alertCount, 1)
+		select {
+		case alerts <- alert:
+		default:
+		}
 		return nil
 	})
 
-	service.Start(ctx)
+	if err := service.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
 	defer service.Stop()
 
 	// Screen a sanctioned address
-	service.ScreenAddress(ctx, "0x8589427373d6d84e98730d7795d8f6f8731fda16")
+	if _, err := service.ScreenAddress(ctx, "0x8589427373d6d84e98730d7795d8f6f8731fda16"); err != nil {
+		t.Fatalf("ScreenAddress() error = %v", err)
+	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	if atomic.LoadInt32(&alertCount) == 0 {
+	select {
+	case alert := <-alerts:
+		if alert.Address != "0x8589427373d6d84e98730d7795d8f6f8731fda16" {
+			t.Errorf("alert address = %s, want sanctioned address", alert.Address)
+		}
+	case <-time.After(5 * time.Second):
 		t.Error("expected alert for sanctioned address")
 	}
 }
@@ -142,10 +159,15 @@ func TestThreatNormalization(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	service.Start(ctx)
+	if err := service.Start(ctx); err != nil {
+		t.Fatalf("Start() error = %v", err)
+	}
 	defer service.Stop()
 
-	result, _ := service.ScreenAddress(ctx, "0x8589427373d6d84e98730d7795d8f6f8731fda16")
+	result, err := service.ScreenAddress(ctx, "0x8589427373d6d84e98730d7795d8f6f8731fda16")
+	if err != nil {
+		t.Fatalf("ScreenAddress() error = %v", err)
+	}
 
 	event := service.NormalizeToEvent(result, "tenant-1")
 
@@ -463,14 +485,18 @@ func BenchmarkThreatScreening(b *testing.B) {
 	service := threat.NewIntelService(config)
 
 	ctx := context.Background()
-	service.Start(ctx)
+	if err := service.Start(ctx); err != nil {
+		b.Fatalf("Start() error = %v", err)
+	}
 	defer service.Stop()
 
 	address := "0x742d35cc6634c0532925a3b844bc454e4438f44e"
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		service.ScreenAddress(ctx, address)
+		if _, err := service.ScreenAddress(ctx, address); err != nil {
+			b.Fatalf("ScreenAddress() error = %v", err)
+		}
 	}
 }
 

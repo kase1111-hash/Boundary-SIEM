@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"path"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -72,12 +71,10 @@ type ArchivePart struct {
 
 // Archiver handles data archival to S3 with compression and batching.
 type Archiver struct {
-	client      *Client
-	config      *ArchiverConfig
-	logger      *slog.Logger
-	metrics     *archiverMetrics
-	mu          sync.Mutex
-	activeBatch *ArchiveBatch
+	client  *Client
+	config  *ArchiverConfig
+	logger  *slog.Logger
+	metrics *archiverMetrics
 }
 
 // ArchiverConfig configures the archiver.

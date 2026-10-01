@@ -313,7 +313,9 @@ func BenchmarkGethParser(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		parser.Parse(line)
+		if _, err := parser.Parse(line); err != nil {
+			b.Fatalf("Parse() error = %v", err)
+		}
 	}
 }
 
@@ -355,6 +357,8 @@ func BenchmarkContractEventDecode(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		monitor.ProcessLog(log)
+		if _, err := monitor.ProcessLog(log); err != nil {
+			b.Fatalf("ProcessLog() error = %v", err)
+		}
 	}
 }

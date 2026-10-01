@@ -199,8 +199,21 @@ export interface EventStats {
   time_histogram?: AggregationBucket[];
 }
 
-// WebSocket event types
+// WebSocket event types (/ws/events, see services/wsClient.ts)
 export interface WSEvent {
   type: "event" | "alert" | "stats";
   data: SearchResult | Alert | EventStats;
 }
+
+/** Frames the server sends on /ws/events. */
+export type WSServerMessage =
+  | { type: "auth_ok" }
+  | { type: "pong" }
+  | { type: "alert"; data: Alert }
+  | { type: "event"; data: SearchResult }
+  | { type: "stats"; data: EventStats };
+
+/** Frames the client sends on /ws/events. */
+export type WSClientMessage =
+  | { type: "auth"; api_key: string }
+  | { type: "ping" };

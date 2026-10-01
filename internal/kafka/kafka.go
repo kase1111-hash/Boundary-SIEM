@@ -206,7 +206,7 @@ func (c *Config) getTLSConfig() (*tls.Config, error) {
 	}
 
 	tlsConfig := &tls.Config{
-		InsecureSkipVerify: c.TLSSkipVerify,
+		InsecureSkipVerify: c.TLSSkipVerify, // #nosec G402 -- explicit operator opt-in via tls_skip_verify (default false); a security warning is logged above when enabled
 		MinVersion:         tls.VersionTLS12,
 	}
 

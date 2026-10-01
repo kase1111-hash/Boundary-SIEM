@@ -24,5 +24,5 @@ CREATE TABLE IF NOT EXISTS events_quarantine (
 ENGINE = MergeTree()
 PARTITION BY toYYYYMM(quarantined_at)
 ORDER BY (quarantined_at, quarantine_id)
-TTL quarantined_at + INTERVAL 30 DAY DELETE
+TTL toDateTime(quarantined_at) + INTERVAL 30 DAY DELETE
 SETTINGS index_granularity = 8192;

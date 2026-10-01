@@ -1,5 +1,7 @@
 # Step 1: Ingest Foundation
 
+> **Note:** historical implementation guide from the first build steps. For the current API, configuration and deployment, see the README.
+
 **Objective:** Build the foundational ingest layer with JSON HTTP ingestion and canonical event schema validation.
 
 **Estimated Complexity:** Medium

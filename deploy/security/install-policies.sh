@@ -95,8 +95,11 @@ install_selinux() {
 
     # Define ports
     log_info "Defining custom ports..."
+    # HTTP API, CEF TCP, CEF plain UDP, CEF DTLS
     semanage port -a -t boundary_siem_port_t -p tcp 8080 2>/dev/null || true
-    semanage port -a -t boundary_siem_port_t -p tcp 9090 2>/dev/null || true
+    semanage port -a -t boundary_siem_port_t -p tcp 5515 2>/dev/null || true
+    semanage port -a -t boundary_siem_port_t -p udp 5514 2>/dev/null || true
+    semanage port -a -t boundary_siem_port_t -p udp 5516 2>/dev/null || true
     semanage port -a -t kafka_port_t -p tcp 9092 2>/dev/null || true
     semanage port -a -t kafka_port_t -p tcp 9093 2>/dev/null || true
     semanage port -a -t clickhouse_port_t -p tcp 8123 2>/dev/null || true
@@ -111,13 +114,13 @@ install_selinux() {
     mkdir -p /var/lib/boundary-siem
 
     # Apply file contexts from .fc file
-    semanage fcontext -a -t boundary_siem_exec_t '/usr/local/bin/boundary-siem' 2>/dev/null || true
+    semanage fcontext -a -t boundary_siem_exec_t '/usr/local/bin/siem-ingest' 2>/dev/null || true
     semanage fcontext -a -t boundary_siem_conf_t '/etc/boundary-siem(/.*)?' 2>/dev/null || true
     semanage fcontext -a -t boundary_siem_log_t '/var/log/boundary-siem(/.*)?' 2>/dev/null || true
     semanage fcontext -a -t boundary_siem_var_t '/var/lib/boundary-siem(/.*)?' 2>/dev/null || true
 
     # Restore file contexts
-    restorecon -Rv /usr/local/bin/boundary-siem 2>/dev/null || true
+    restorecon -Rv /usr/local/bin/siem-ingest 2>/dev/null || true
     restorecon -Rv /etc/boundary-siem
     restorecon -Rv /var/log/boundary-siem
     restorecon -Rv /var/lib/boundary-siem
@@ -218,7 +221,7 @@ uninstall() {
         selinux)
             log_info "Removing SELinux policy..."
             semodule -r boundary_siem 2>/dev/null || true
-            semanage fcontext -d '/usr/local/bin/boundary-siem' 2>/dev/null || true
+            semanage fcontext -d '/usr/local/bin/siem-ingest' 2>/dev/null || true
             semanage fcontext -d '/etc/boundary-siem(/.*)?' 2>/dev/null || true
             semanage fcontext -d '/var/log/boundary-siem(/.*)?' 2>/dev/null || true
             semanage fcontext -d '/var/lib/boundary-siem(/.*)?' 2>/dev/null || true

@@ -11,17 +11,17 @@ import {
   PieChart,
   Pie,
   Cell,
+  Legend,
 } from "recharts";
-import { getEventStats, getAlertStats, listAlerts } from "../services/api";
+import {
+  getEventStats,
+  getAlertStats,
+  listAlerts,
+  describeError,
+} from "../services/api";
+import { alertCounts, severityBreakdown } from "../services/severity";
 import { SeverityBadge } from "../components/SeverityBadge";
 import { StatusBadge } from "../components/StatusBadge";
-
-const SEVERITY_COLORS: Record<string, string> = {
-  critical: "#dc2626",
-  high: "#f97316",
-  medium: "#eab308",
-  low: "#3b82f6",
-};
 
 const MetricCard: React.FC<{
   title: string;
@@ -40,6 +40,7 @@ export const DashboardPage: React.FC = () => {
   const {
     data: stats,
     isError: statsError,
+    error: statsErrorDetail,
     refetch: refetchStats,
   } = useQuery({
     queryKey: ["event-stats"],
@@ -59,10 +60,7 @@ export const DashboardPage: React.FC = () => {
     refetchInterval: 30_000,
   });
 
-  const totalAlerts =
-    typeof alertStats?.total_alerts === "number" ? alertStats.total_alerts : 0;
-  const openAlerts =
-    typeof alertStats?.open === "number" ? alertStats.open : 0;
+  const { total: totalAlerts, open: openAlerts } = alertCounts(alertStats);
 
   const histogramData = (stats?.time_histogram || []).map((b) => ({
     time:
@@ -75,10 +73,7 @@ export const DashboardPage: React.FC = () => {
     count: b.count,
   }));
 
-  const severityData = (stats?.by_severity || []).map((b) => ({
-    name: String(b.key),
-    value: b.count,
-  }));
+  const severityData = severityBreakdown(stats?.by_severity);
 
   return (
     <div className="space-y-6">
@@ -87,7 +82,7 @@ export const DashboardPage: React.FC = () => {
       {statsError && (
         <div className="bg-gray-800 border border-red-800 rounded-lg px-4 py-3 flex items-center justify-between">
           <span className="text-red-400 text-sm">
-            Failed to load dashboard data
+            Failed to load dashboard data: {describeError(statsErrorDetail)}
           </span>
           <button
             onClick={() => refetchStats()}
@@ -184,10 +179,7 @@ export const DashboardPage: React.FC = () => {
                   paddingAngle={2}
                 >
                   {severityData.map((entry) => (
-                    <Cell
-                      key={entry.name}
-                      fill={SEVERITY_COLORS[entry.name] || "#6b7280"}
-                    />
+                    <Cell key={entry.severity} fill={entry.color} />
                   ))}
                 </Pie>
                 <Tooltip
@@ -196,6 +188,12 @@ export const DashboardPage: React.FC = () => {
                     border: "1px solid #374151",
                     borderRadius: 6,
                   }}
+                />
+                <Legend
+                  verticalAlign="bottom"
+                  height={24}
+                  iconSize={10}
+                  wrapperStyle={{ fontSize: 12, color: "#d1d5db" }}
                 />
               </PieChart>
             </ResponsiveContainer>

@@ -49,7 +49,9 @@ func TestCSRFProtection_Middleware_SkipSafeMethods(t *testing.T) {
 
 	handler := csrf.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		if _, err := w.Write([]byte("OK")); err != nil {
+			t.Errorf("failed to write response: %v", err)
+		}
 	}))
 
 	tests := []struct {
@@ -95,7 +97,9 @@ func TestCSRFProtection_Middleware_ValidatePOST(t *testing.T) {
 
 	handler := csrf.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		if _, err := w.Write([]byte("OK")); err != nil {
+			t.Errorf("failed to write response: %v", err)
+		}
 	}))
 
 	t.Run("POST without token fails", func(t *testing.T) {
@@ -316,6 +320,33 @@ func TestCSRFProtection_GetToken(t *testing.T) {
 			t.Errorf("expected ErrCSRFTokenMissing, got %v", err)
 		}
 	})
+}
+
+// TestCSRFProtection_UnsetSameSiteDefaultsToStrict tests that a custom config
+// without SameSite still yields a SameSite=Strict cookie.
+func TestCSRFProtection_UnsetSameSiteDefaultsToStrict(t *testing.T) {
+	csrf := NewCSRFProtection(&CSRFConfig{CookieSecure: true})
+
+	for name, set := range map[string]func(http.ResponseWriter){
+		"SetToken":   func(w http.ResponseWriter) { csrf.SetToken(w, "token") },
+		"ClearToken": csrf.ClearToken,
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			set(w)
+
+			cookies := w.Result().Cookies()
+			if len(cookies) != 1 {
+				t.Fatalf("expected 1 cookie, got %d", len(cookies))
+			}
+			if cookies[0].SameSite != http.SameSiteStrictMode {
+				t.Errorf("expected SameSite=Strict, got %v", cookies[0].SameSite)
+			}
+			if !cookies[0].Secure {
+				t.Error("expected Secure=true")
+			}
+		})
+	}
 }
 
 // TestCSRFProtection_ClearToken tests token removal.
