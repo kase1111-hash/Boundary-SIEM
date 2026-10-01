@@ -748,6 +748,10 @@ func (c *Config) applyEnvOverrides() {
 		c.Correlation.RulesDir = dir
 	}
 
+	if dir := os.Getenv("SIEM_SEED_RULES_DIR"); dir != "" {
+		c.Correlation.SeedRulesDir = dir
+	}
+
 	if dir := os.Getenv("SIEM_WEB_DIR"); dir != "" {
 		c.Server.WebDir = dir
 	}

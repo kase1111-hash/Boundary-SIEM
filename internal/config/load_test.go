@@ -18,6 +18,7 @@ func TestLoad_EnvOverridesWithoutConfigFile(t *testing.T) {
 	t.Setenv("CLICKHOUSE_PASSWORD", "s3cret")
 	t.Setenv("SIEM_STORAGE_ENABLED", "true")
 	t.Setenv("SIEM_RULES_DIR", "/var/lib/siem/rules")
+	t.Setenv("SIEM_SEED_RULES_DIR", "/usr/share/boundary-siem/rules")
 	t.Setenv("SIEM_SHUTDOWN_TIMEOUT", "5s")
 
 	cfg, err := Load()
@@ -41,6 +42,9 @@ func TestLoad_EnvOverridesWithoutConfigFile(t *testing.T) {
 	}
 	if cfg.Correlation.RulesDir != "/var/lib/siem/rules" {
 		t.Errorf("RulesDir = %q, want /var/lib/siem/rules", cfg.Correlation.RulesDir)
+	}
+	if cfg.Correlation.SeedRulesDir != "/usr/share/boundary-siem/rules" {
+		t.Errorf("SeedRulesDir = %q, want /usr/share/boundary-siem/rules", cfg.Correlation.SeedRulesDir)
 	}
 	if cfg.Server.ShutdownTimeout != 5*time.Second {
 		t.Errorf("ShutdownTimeout = %v, want 5s", cfg.Server.ShutdownTimeout)

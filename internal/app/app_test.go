@@ -751,12 +751,18 @@ func TestSeedRules(t *testing.T) {
 		t.Errorf("second seedRules = %d, %v; want nothing copied", n, err)
 	}
 
-	// Seeding a directory into itself, or from a missing directory, is a no-op.
+	// Seeding a directory into itself is a no-op.
 	if n, err := seedRules(seed, seed); err != nil || n != 0 {
 		t.Errorf("self seed = %d, %v", n, err)
 	}
-	if n, err := seedRules(filepath.Join(t.TempDir(), "x"), filepath.Join(t.TempDir(), "missing")); err != nil || n != 0 {
-		t.Errorf("missing seed dir = %d, %v", n, err)
+	// A missing seed directory is reported, so a relocated deployment does not
+	// silently run without the shipped community rules (E2E round 3).
+	if n, err := seedRules(filepath.Join(t.TempDir(), "x"), filepath.Join(t.TempDir(), "missing")); !errors.Is(err, errSeedDirMissing) || n != 0 {
+		t.Errorf("missing seed dir = %d, %v; want errSeedDirMissing", n, err)
+	}
+	// An empty seed directory setting disables seeding without an error.
+	if n, err := seedRules(filepath.Join(t.TempDir(), "x"), ""); err != nil || n != 0 {
+		t.Errorf("seeding disabled = %d, %v", n, err)
 	}
 }
 

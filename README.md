@@ -290,6 +290,7 @@ See `configs/config.yaml` for every option and its default.
 | `CLICKHOUSE_HOST` | `host:port` (native protocol, 9000) |
 | `CLICKHOUSE_DATABASE`, `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD` | ClickHouse database and credentials |
 | `SIEM_RULES_DIR` | `correlation.rules_dir` |
+| `SIEM_SEED_RULES_DIR` | `correlation.seed_rules_dir` |
 | `SIEM_WEB_DIR` | `server.web_dir` |
 | `SIEM_SHUTDOWN_TIMEOUT` | `server.shutdown_timeout` (a duration such as `8s`) |
 | `SIEM_CORS_ENABLED=false`, `SIEM_CORS_ORIGINS` | CORS on/off, comma-separated origins |

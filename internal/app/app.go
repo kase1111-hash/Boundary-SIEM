@@ -324,7 +324,11 @@ func (a *App) initCorrelation() error {
 
 	// Custom and community rules. The shipped rules are copied into the
 	// API-writable rules directory the first time.
-	if n, err := seedRules(cfg.Correlation.RulesDir, cfg.Correlation.SeedRulesDir); err != nil {
+	if n, err := seedRules(cfg.Correlation.RulesDir, cfg.Correlation.SeedRulesDir); errors.Is(err, errSeedDirMissing) {
+		a.logger.Warn("shipped community rules not loaded: seed rules directory not found; "+
+			"set correlation.seed_rules_dir or SIEM_SEED_RULES_DIR (empty disables seeding)",
+			"seed_rules_dir", cfg.Correlation.SeedRulesDir, "rules_dir", cfg.Correlation.RulesDir)
+	} else if err != nil {
 		a.logger.Warn("failed to seed rules directory", "rules_dir", cfg.Correlation.RulesDir,
 			"seed_rules_dir", cfg.Correlation.SeedRulesDir, "error", err)
 	} else if n > 0 {

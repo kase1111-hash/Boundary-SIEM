@@ -15,6 +15,10 @@ import (
 // LoadCustomRules ignores hidden files.
 const seededMarker = ".seeded"
 
+// errSeedDirMissing reports that the configured seed directory does not
+// exist, so the shipped community rules cannot be loaded.
+var errSeedDirMissing = errors.New("seed rules directory not found")
+
 // isRuleFile reports whether name is a rule file LoadCustomRules reads.
 func isRuleFile(name string) bool {
 	if strings.HasPrefix(name, ".") {
@@ -45,7 +49,7 @@ func seedRules(rulesDir, seedDir string) (int, error) {
 	src, err := os.OpenRoot(seedDir)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return 0, nil // nothing shipped next to the binary
+			return 0, fmt.Errorf("%w: %s", errSeedDirMissing, seedDir)
 		}
 		return 0, err
 	}
