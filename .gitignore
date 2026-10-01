@@ -1,7 +1,8 @@
-# Binaries
+# Binaries (anchored so cmd/boundary-siem/ and cmd/siem-ingest/ sources are not ignored)
 bin/
-boundary-siem
-siem-ingest
+/boundary-siem
+/siem-ingest
+/siem-rules
 *.exe
 *.exe~
 *.dll
