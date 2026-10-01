@@ -440,6 +440,87 @@ func TestAlertPersistenceClickHouse(t *testing.T) {
 	})
 }
 
+// TestEscalationAfterRestartClickHouse checks end to end that an escalation
+// step that fired before a restart is not paged again once LoadFromDB has
+// restored the alert from ClickHouse.
+func TestEscalationAfterRestartClickHouse(t *testing.T) {
+	db := openTestClickHouse(t)
+	ctx := context.Background()
+
+	// run runs two escalation checks and returns the number of
+	// notifications sent to the default channel.
+	run := func(mgr *Manager, want int) int {
+		engine := NewEscalationEngine(mgr)
+		ch := newMockChannel(DefaultChannelName)
+		engine.RegisterChannel(ch)
+		for _, p := range BuiltinEscalationPolicies() {
+			engine.AddPolicy(p)
+		}
+		for i := 0; i < 2; i++ {
+			engine.checkEscalations(ctx)
+		}
+		return waitForSends(t, map[string]*mockChannel{DefaultChannelName: ch}, map[string]int{DefaultChannelName: want})[DefaultChannelName]
+	}
+
+	before := NewManager(DefaultManagerConfig(), db)
+	corrAlert := makeCorrelationAlert("ch-esc-rule", "ch-esc-group", "Unacknowledged", 9)
+	corrAlert.Timestamp = time.Now().Add(-20 * time.Minute) // critical: the 15m step is due
+	if err := before.HandleCorrelationAlert(ctx, corrAlert); err != nil {
+		t.Fatalf("HandleCorrelationAlert: %v", err)
+	}
+	if n := run(before, 1); n != 1 {
+		t.Fatalf("before restart: %d escalation notifications, want 1", n)
+	}
+
+	after := NewManager(DefaultManagerConfig(), db)
+	if _, err := after.LoadFromDB(ctx); err != nil {
+		t.Fatalf("LoadFromDB: %v", err)
+	}
+	if n := run(after, 0); n != 0 {
+		t.Errorf("after restart: %d escalation notifications, want 0 (the step already fired)", n)
+	}
+	if notes := escalationNoteContents(t, after, corrAlert.ID); len(notes) != 1 {
+		t.Errorf("escalation notes after restart = %q, want 1", notes)
+	}
+}
+
+// TestListAlertsPaginatesClickHouse pages through alerts that are only in
+// ClickHouse and share a creation time: the database must order them the
+// same way as the in-memory listing so pages neither repeat nor skip alerts.
+func TestListAlertsPaginatesClickHouse(t *testing.T) {
+	db := openTestClickHouse(t)
+	ctx := context.Background()
+
+	writer := NewManager(DefaultManagerConfig(), db)
+	created := time.Now().Add(-time.Minute)
+	const total = 12
+	for i := 0; i < total; i++ {
+		a := makeCorrelationAlert("ch-page-rule", fmt.Sprintf("group-%d", i), "Page", 4)
+		a.Timestamp = created
+		if err := writer.HandleCorrelationAlert(ctx, a); err != nil {
+			t.Fatalf("HandleCorrelationAlert: %v", err)
+		}
+	}
+
+	reader := NewManager(DefaultManagerConfig(), db) // nothing in memory
+	seen := make(map[uuid.UUID]bool)
+	for offset := 0; offset < total; offset += 5 {
+		page, err := reader.ListAlerts(ctx, AlertFilter{RuleID: "ch-page-rule", Limit: 5, Offset: offset})
+		if err != nil {
+			t.Fatalf("ListAlerts(offset=%d): %v", offset, err)
+		}
+		for _, a := range page {
+			if seen[a.ID] {
+				t.Errorf("alert %s returned on more than one page", a.ID)
+			}
+			seen[a.ID] = true
+		}
+	}
+	if len(seen) != total {
+		t.Errorf("paging returned %d distinct alerts, want %d", len(seen), total)
+	}
+}
+
 func assertSameAlert(t *testing.T, got, want *Alert) {
 	t.Helper()
 	us := func(ts time.Time) time.Time { return ts.Truncate(time.Microsecond) }

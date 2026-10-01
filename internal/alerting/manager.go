@@ -2,6 +2,7 @@
 package alerting
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -274,46 +275,73 @@ func (m *Manager) GetAlert(ctx context.Context, id uuid.UUID) (*Alert, error) {
 	return nil, fmt.Errorf("%w: %s", ErrAlertNotFound, id)
 }
 
-// ListAlerts lists snapshots of alerts with optional filters.
+// ListAlerts lists snapshots of alerts with optional filters, newest first.
 // Falls back to database if in-memory store has no results and DB is available.
 func (m *Manager) ListAlerts(ctx context.Context, filter AlertFilter) ([]*Alert, error) {
-	m.mu.RLock()
-
-	var results []*Alert
-	for _, alert := range m.alerts {
-		if filter.matches(alert) {
-			results = append(results, alert.clone())
-		}
-	}
-	m.mu.RUnlock()
+	results, matched := m.listInMemory(filter)
 
 	// Fall back to database if in-memory store is empty and DB is available
-	if len(results) == 0 && m.db != nil {
+	if matched == 0 && m.db != nil {
 		dbResults, err := m.listAlertsFromDB(ctx, filter)
 		if err != nil {
 			slog.Warn("failed to list alerts from database, returning in-memory results", "error", err)
 		} else {
-			results = dbResults
+			sortAlertsNewestFirst(dbResults)
+			results = paginateAlerts(dbResults, filter.Offset, filter.Limit)
 		}
-	}
-
-	// Sort by created_at desc
-	sort.SliceStable(results, func(i, j int) bool {
-		return results[i].CreatedAt.After(results[j].CreatedAt)
-	})
-
-	// Apply pagination
-	if filter.Offset > 0 {
-		if filter.Offset >= len(results) {
-			return []*Alert{}, nil
-		}
-		results = results[filter.Offset:]
-	}
-	if filter.Limit > 0 && filter.Limit < len(results) {
-		results = results[:filter.Limit]
 	}
 
 	return results, nil
+}
+
+// listInMemory returns snapshots of the page of in-memory alerts selected by
+// filter, newest first, and the number of alerts that matched before
+// pagination. Only the alerts on the returned page are copied.
+func (m *Manager) listInMemory(filter AlertFilter) ([]*Alert, int) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var matched []*Alert
+	for _, alert := range m.alerts {
+		if filter.matches(alert) {
+			matched = append(matched, alert)
+		}
+	}
+	sortAlertsNewestFirst(matched)
+
+	page := paginateAlerts(matched, filter.Offset, filter.Limit)
+	for i, alert := range page {
+		page[i] = alert.clone()
+	}
+	return page, len(matched)
+}
+
+// sortAlertsNewestFirst orders alerts by creation time, newest first. Alerts
+// created at the same time are ordered by ID so that pagination is stable
+// between requests.
+func sortAlertsNewestFirst(alerts []*Alert) {
+	sort.Slice(alerts, func(i, j int) bool {
+		if !alerts[i].CreatedAt.Equal(alerts[j].CreatedAt) {
+			return alerts[i].CreatedAt.After(alerts[j].CreatedAt)
+		}
+		return bytes.Compare(alerts[i].ID[:], alerts[j].ID[:]) < 0
+	})
+}
+
+// paginateAlerts returns the page of alerts selected by offset and limit
+// (limit <= 0 means no limit). The result may share its backing array with
+// alerts.
+func paginateAlerts(alerts []*Alert, offset, limit int) []*Alert {
+	if offset > 0 {
+		if offset >= len(alerts) {
+			return []*Alert{}
+		}
+		alerts = alerts[offset:]
+	}
+	if limit > 0 && limit < len(alerts) {
+		alerts = alerts[:limit]
+	}
+	return alerts
 }
 
 // AlertFilter defines filters for listing alerts.

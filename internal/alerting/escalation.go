@@ -54,6 +54,10 @@ type EscalationEngine struct {
 	notifySem    chan struct{} // semaphore to limit concurrent notification goroutines
 }
 
+// escalationNoteAuthor is the author of the note the engine adds to an alert
+// for every escalation step it fires.
+const escalationNoteAuthor = "escalation-engine"
+
 // escalationStep identifies one rule of one policy. Tracking must include the
 // policy: rule indexes restart at 0 in every policy, so keying by rule index
 // alone lets one policy's step suppress another policy's step of the same
@@ -202,14 +206,14 @@ func (e *EscalationEngine) checkEscalations(ctx context.Context) {
 	copy(policies, e.policies)
 	e.mu.RUnlock()
 
-	// Get all new (unacknowledged) alerts
-	alerts, err := e.manager.ListAlerts(ctx, AlertFilter{
+	// Get all new (unacknowledged) alerts. Escalation works on the in-memory
+	// alerts, which LoadFromDB restores at startup. ListAlerts is not used:
+	// it falls back to scanning the alerts table whenever no in-memory alert
+	// matches (the normal state once every alert is triaged), and that scan
+	// can return stale versions of alerts already handled in memory.
+	alerts, _ := e.manager.listInMemory(AlertFilter{
 		Status: statusPtr(StatusNew),
 	})
-	if err != nil {
-		slog.Warn("escalation check failed to list alerts", "error", err)
-		return
-	}
 
 	now := time.Now()
 
@@ -251,8 +255,16 @@ func (e *EscalationEngine) checkEscalations(ctx context.Context) {
 					continue
 				}
 
+				// The tracking above is lost on restart, but the step's
+				// note, persisted with the alert, records that it fired.
+				note := escalationNote(&policy, &rule)
+				if hasNote(alert, escalationNoteAuthor, note) {
+					e.markEscalated(alertKey, step)
+					continue
+				}
+
 				// Trigger escalation
-				e.triggerEscalation(ctx, alert, &policy, step, &rule)
+				e.triggerEscalation(ctx, alert, &policy, step, &rule, note)
 			}
 		}
 	}
@@ -261,16 +273,32 @@ func (e *EscalationEngine) checkEscalations(ctx context.Context) {
 	e.cleanupTracking()
 }
 
-func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, policy *EscalationPolicy, step escalationStep, rule *EscalationRule) {
-	alertKey := alert.ID.String()
+// escalationNote is the note added to an alert when rule of policy fires.
+func escalationNote(policy *EscalationPolicy, rule *EscalationRule) string {
+	return fmt.Sprintf("Escalated by policy %q after %s: %s", policy.Name, rule.After, rule.Message)
+}
 
-	// Mark as escalated
+// hasNote reports whether alert has a note with the given author and content.
+func hasNote(alert *Alert, author, content string) bool {
+	for _, n := range alert.Notes {
+		if n.Author == author && n.Content == content {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *EscalationEngine) markEscalated(alertKey string, step escalationStep) {
 	e.mu.Lock()
+	defer e.mu.Unlock()
 	if _, ok := e.escalated[alertKey]; !ok {
 		e.escalated[alertKey] = make(map[escalationStep]bool)
 	}
 	e.escalated[alertKey][step] = true
-	e.mu.Unlock()
+}
+
+func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, policy *EscalationPolicy, step escalationStep, rule *EscalationRule, note string) {
+	e.markEscalated(alert.ID.String(), step)
 
 	slog.Warn("escalating alert",
 		"alert_id", alert.ID,
@@ -280,8 +308,7 @@ func (e *EscalationEngine) triggerEscalation(ctx context.Context, alert *Alert, 
 	)
 
 	// Add escalation note to alert
-	note := fmt.Sprintf("Escalated by policy %q after %s: %s", policy.Name, rule.After, rule.Message)
-	if err := e.manager.AddNote(ctx, alert.ID, "escalation-engine", note); err != nil {
+	if err := e.manager.AddNote(ctx, alert.ID, escalationNoteAuthor, note); err != nil {
 		slog.Warn("failed to add escalation note", "alert_id", alert.ID, "error", err)
 	}
 

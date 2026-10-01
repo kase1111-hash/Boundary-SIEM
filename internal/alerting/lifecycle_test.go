@@ -179,6 +179,71 @@ func TestAlertAPIConcurrentReadsAndWrites(t *testing.T) {
 	}
 }
 
+// TestListAlertsCopiesOnlyTheReturnedPage guards the cost of snapshots.
+// ListAlerts deep-copied every matching alert (with its event IDs) before
+// paginating, so GET /v1/alerts?limit=10 with 100k alerts in memory copied
+// all 100k (about 140 MB and 250 ms per request with 50 event IDs each), and
+// so did every escalation tick. Pages must still be ordered newest first,
+// with ties broken deterministically so consecutive pages neither repeat nor
+// skip alerts.
+func TestListAlertsCopiesOnlyTheReturnedPage(t *testing.T) {
+	ctx := context.Background()
+	mgr := NewManager(DefaultManagerConfig(), nil)
+	base := time.Now()
+	const total = 2000
+	for i := 0; i < total; i++ {
+		a := &Alert{
+			ID:       uuid.New(),
+			Status:   StatusNew,
+			Severity: "high",
+			// Groups of four alerts share a creation time.
+			CreatedAt: base.Add(-time.Duration(i/4) * time.Second),
+			EventIDs:  make([]uuid.UUID, 100),
+			Tags:      []string{"t"},
+			Metadata:  map[string]interface{}{"k": "v"},
+		}
+		mgr.alerts[a.ID] = a
+	}
+
+	allocs := testing.AllocsPerRun(5, func() {
+		page, err := mgr.ListAlerts(ctx, AlertFilter{Limit: 10})
+		if err != nil || len(page) != 10 {
+			t.Fatalf("ListAlerts: %d alerts, %v", len(page), err)
+		}
+	})
+	if allocs > 300 {
+		t.Errorf("ListAlerts(limit=10) over %d alerts made %.0f allocations; only the page should be copied", total, allocs)
+	}
+
+	seen := make(map[uuid.UUID]bool, total)
+	var prev *Alert
+	for offset := 0; offset < total; offset += 7 {
+		page, err := mgr.ListAlerts(ctx, AlertFilter{Limit: 7, Offset: offset})
+		if err != nil {
+			t.Fatalf("ListAlerts(offset=%d): %v", offset, err)
+		}
+		for _, a := range page {
+			if seen[a.ID] {
+				t.Fatalf("alert %s returned on more than one page", a.ID)
+			}
+			seen[a.ID] = true
+			if prev != nil && a.CreatedAt.After(prev.CreatedAt) {
+				t.Fatalf("alerts not ordered newest first at offset %d", offset)
+			}
+			prev = a
+		}
+	}
+	if len(seen) != total {
+		t.Errorf("paging returned %d distinct alerts, want %d", len(seen), total)
+	}
+
+	// A page past the end of the in-memory matches is empty; it does not
+	// fall back to the database.
+	if page, err := mgr.ListAlerts(ctx, AlertFilter{Limit: 10, Offset: total}); err != nil || len(page) != 0 {
+		t.Errorf("ListAlerts past the end = %d alerts, %v; want none", len(page), err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // State machine (regression: a resolved alert could be re-acknowledged,
 // regressing its status and hiding it from ?status=resolved)

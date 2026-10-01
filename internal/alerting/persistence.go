@@ -192,7 +192,10 @@ func (m *Manager) listAlertsFromDB(ctx context.Context, filter AlertFilter) ([]*
 		args = append(args, string(*filter.Status))
 	}
 
-	query := latestAlertsQuery(pre, post) + " ORDER BY created_at DESC"
+	// Same order as sortAlertsNewestFirst (the canonical UUID string sorts
+	// like its bytes), so that LIMIT selects the alerts of the requested page
+	// even when several share a creation time.
+	query := latestAlertsQuery(pre, post) + " ORDER BY created_at DESC, toString(alert_id) ASC"
 	if filter.Limit > 0 {
 		query += " LIMIT ?"
 		args = append(args, filter.Offset+filter.Limit)
