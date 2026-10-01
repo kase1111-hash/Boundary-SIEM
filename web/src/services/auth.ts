@@ -94,15 +94,20 @@ export function clearApiKey(): void {
 
 /**
  * Called when the server rejected a request made with usedKey. The stored
- * key is dropped only if it is still the one that was rejected, so a
- * response to an old request cannot erase a key the user just entered.
- * Listeners are told to prompt for a key.
+ * key is dropped only if it is still the one that was rejected, and
+ * listeners are told to prompt for a key. A rejection of an older key (a
+ * request that was in flight while the user entered a new one) is stale: it
+ * neither erases the new key nor reopens the prompt.
  */
 export function handleUnauthorized(
   usedKey: string | null,
   reason = "Authentication required",
 ): void {
-  if (usedKey && getApiKey() === usedKey) {
+  const current = getApiKey();
+  if (current !== null && current !== usedKey) {
+    return;
+  }
+  if (current !== null) {
     removeStored();
     memoryKey = null;
   }

@@ -118,6 +118,9 @@ func (s *SystemScene) View() string {
 			fmt.Fprintf(&b, "  %s Reason: %s\n", styles.Muted.Render("├"), s.stats.StatusReason)
 		}
 		fmt.Fprintf(&b, "  %s Uptime: %s\n", styles.Muted.Render("└"), s.stats.Uptime)
+	} else if s.stats.Reachable {
+		fmt.Fprintf(&b, "  %s Health check failed at %s\n", styles.StatusError.Render("●"), s.client.BaseURL())
+		fmt.Fprintf(&b, "  %s Reason: %s\n", styles.Muted.Render("└"), s.stats.StatusReason)
 	} else {
 		fmt.Fprintf(&b, "  %s Not connected to %s\n", styles.StatusError.Render("●"), s.client.BaseURL())
 		fmt.Fprintf(&b, "  %s Reason: %s\n", styles.Muted.Render("└"), s.stats.StatusReason)

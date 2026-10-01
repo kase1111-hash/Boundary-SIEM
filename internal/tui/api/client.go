@@ -83,7 +83,7 @@ type ComponentStatus struct {
 func (cs *ComponentStatus) UnmarshalJSON(data []byte) error {
 	var s string
 	if err := json.Unmarshal(data, &s); err == nil {
-		*cs = ComponentStatus{Status: s}
+		*cs = ComponentStatus{Status: sanitizeText(s)}
 		return nil
 	}
 	type plain ComponentStatus
@@ -92,7 +92,30 @@ func (cs *ComponentStatus) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*cs = ComponentStatus(p)
+	cs.sanitize()
 	return nil
+}
+
+// sanitize strips terminal control sequences from the server-supplied text.
+func (cs *ComponentStatus) sanitize() {
+	cs.Status = sanitizeText(cs.Status)
+	cs.Address = sanitizeText(cs.Address)
+	cs.Message = sanitizeText(cs.Message)
+}
+
+// sanitizeComponents returns components whose keys are safe to print; the
+// values were sanitized when decoded.
+func sanitizeComponents(in map[string]ComponentStatus) map[string]ComponentStatus {
+	if in == nil {
+		return nil
+	}
+	out := make(map[string]ComponentStatus, len(in))
+	for key, cs := range in {
+		if key = sanitizeText(key); key != "" {
+			out[key] = cs
+		}
+	}
+	return out
 }
 
 // Stats represents system statistics
@@ -113,8 +136,11 @@ type Stats struct {
 	Activity        string  `json:"activity"`
 	ActivityDesc    string  `json:"activity_description"`
 
-	// Connected is true when GET /health answered.
+	// Connected is true when GET /health answered successfully.
 	Connected bool `json:"connected"`
+	// Reachable is true when the server sent any HTTP response to GET
+	// /health, including an error status. Connected implies Reachable.
+	Reachable bool `json:"reachable"`
 	// AuthStatus is AuthUnknown, AuthAccepted, AuthNotRequired or
 	// AuthRejected, derived from an authenticated request.
 	AuthStatus string `json:"auth_status"`
@@ -199,14 +225,34 @@ func NewClient(baseURL string, opts ...Option) *Client {
 	c := &Client{
 		baseURL:      strings.TrimRight(baseURL, "/"),
 		apiKeyHeader: DefaultAuthHeader,
-		httpClient: &http.Client{
-			Timeout: 5 * time.Second,
-		},
+	}
+	c.httpClient = &http.Client{
+		Timeout:       5 * time.Second,
+		CheckRedirect: c.checkRedirect,
 	}
 	for _, opt := range opts {
 		opt(c)
 	}
 	return c
+}
+
+// maxRedirects matches net/http's default redirect limit.
+const maxRedirects = 10
+
+// checkRedirect drops the API key when a redirect leaves the origin of the
+// original request. net/http copies custom headers such as X-API-Key on
+// every redirect (it only strips Authorization and cookies across domains),
+// so without this a redirect to another host, or from https to http, would
+// hand the key to a third party or send it in cleartext.
+func (c *Client) checkRedirect(req *http.Request, via []*http.Request) error {
+	if len(via) >= maxRedirects {
+		return fmt.Errorf("stopped after %d redirects", maxRedirects)
+	}
+	orig := via[0].URL
+	if !strings.EqualFold(req.URL.Scheme, orig.Scheme) || !strings.EqualFold(req.URL.Host, orig.Host) {
+		req.Header.Del(c.apiKeyHeader)
+	}
+	return nil
 }
 
 // BaseURL returns the server URL the client talks to.
@@ -244,16 +290,28 @@ func checkStatus(resp *http.Response) error {
 	return &HTTPError{StatusCode: resp.StatusCode, Message: errorMessage(body)}
 }
 
-// errorMessage extracts the "error" field of a JSON error body, falling back
-// to the trimmed body text.
+// errorMessage extracts the "error" (or, as the rate limiter sends it,
+// "message") field of a JSON error body, falling back to the body text. HTML
+// error pages (reverse proxies) are dropped. The result is sanitized for
+// display on one terminal line.
 func errorMessage(body []byte) string {
 	var parsed struct {
-		Error string `json:"error"`
+		Error   string `json:"error"`
+		Message string `json:"message"`
 	}
-	if err := json.Unmarshal(body, &parsed); err == nil && parsed.Error != "" {
-		return parsed.Error
+	if err := json.Unmarshal(body, &parsed); err == nil {
+		if parsed.Error != "" {
+			return sanitizeText(parsed.Error)
+		}
+		if parsed.Message != "" {
+			return sanitizeText(parsed.Message)
+		}
 	}
-	return strings.TrimSpace(string(body))
+	text := strings.TrimSpace(string(body))
+	if strings.HasPrefix(text, "<") {
+		return ""
+	}
+	return sanitizeText(text)
 }
 
 // GetHealth fetches health status
@@ -335,12 +393,19 @@ func (c *Client) GetStats() (*Stats, error) {
 
 	if healthErr != nil {
 		stats.StatusReason = healthErr.Error()
+		var httpErr *HTTPError
+		if errors.As(healthErr, &httpErr) {
+			// The server answered, just not successfully.
+			stats.Reachable = true
+			stats.HealthStatus = "error"
+		}
 		return stats, nil
 	}
 
 	// Health endpoint returns status as "healthy" or "degraded"
 	stats.Connected = true
-	stats.Components = health.Components
+	stats.Reachable = true
+	stats.Components = sanitizeComponents(health.Components)
 	stats.HealthStatus = health.Status
 	stats.Healthy = health.Status == "healthy"
 	stats.QueueSize = health.QueueDepth

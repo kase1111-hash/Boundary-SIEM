@@ -79,9 +79,13 @@ func renderServices(client *api.Client, stats *api.Stats) string {
 		baseURL = client.BaseURL()
 	}
 
-	if stats.Connected {
+	switch {
+	case stats.Connected:
 		rows = append(rows, serviceLine("reachable", "HTTP API", baseURL))
-	} else {
+	case stats.Reachable:
+		// Answered, but /health failed (wrong port, proxy error, ...)
+		rows = append(rows, serviceLine("error", "HTTP API", baseURL))
+	default:
 		rows = append(rows, serviceLine("unreachable", "HTTP API", baseURL))
 	}
 

@@ -115,8 +115,11 @@ func (d *DashboardScene) View() string {
 
 	// Status indicator with explanation
 	var statusText string
-	if !d.stats.Connected {
+	if !d.stats.Reachable {
 		statusText = styles.StatusError.Render("● UNREACHABLE")
+	} else if !d.stats.Connected {
+		// The server answered /health with an HTTP error
+		statusText = styles.StatusError.Render("● UNHEALTHY")
 	} else if d.stats.Healthy {
 		statusText = styles.StatusOK.Render("● HEALTHY")
 	} else if d.stats.HealthStatus == "degraded" {

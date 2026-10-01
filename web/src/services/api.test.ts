@@ -140,6 +140,50 @@ describe("401 handling", () => {
     expect(getApiKey()).toBe("new-key");
   });
 
+  it.each([
+    ["an older key", "old-key" as string | null],
+    ["no key", null as string | null],
+  ])(
+    "does not reopen the prompt when a request sent with %s fails after a new key was saved",
+    async (_label, oldKey) => {
+      if (oldKey) setApiKey(oldKey);
+      let respond: (r: Response) => void = () => {};
+      fetchMock.mockReturnValue(new Promise<Response>((r) => (respond = r)));
+
+      const pending = listAlerts().catch((e: unknown) => e);
+      setApiKey("new-key");
+      const events: AuthEvent[] = [];
+      const unsubscribe = subscribeAuth((e) => events.push(e));
+      respond(jsonResponse(401, { error: "invalid API key" }));
+      const err = await pending;
+      unsubscribe();
+
+      // The request itself still fails ...
+      expect((err as ApiError).status).toBe(401);
+      // ... but the stale rejection neither erases the new key nor prompts
+      expect(getApiKey()).toBe("new-key");
+      expect(events).not.toContainEqual(
+        expect.objectContaining({ type: "required" }),
+      );
+    },
+  );
+
+  it("prompts when the key was cleared while the request was in flight", async () => {
+    setApiKey("revoked");
+    let respond: (r: Response) => void = () => {};
+    fetchMock.mockReturnValue(new Promise<Response>((r) => (respond = r)));
+
+    const pending = listAlerts().catch(() => undefined);
+    clearApiKey();
+    const events: AuthEvent[] = [];
+    const unsubscribe = subscribeAuth((e) => events.push(e));
+    respond(jsonResponse(401, { error: "invalid API key" }));
+    await pending;
+    unsubscribe();
+
+    expect(events).toContainEqual({ type: "required", reason: "invalid API key" });
+  });
+
   it("does not treat other errors as authentication failures", async () => {
     setApiKey("good-key");
     fetchMock.mockResolvedValue(jsonResponse(500, { error: "boom" }));
